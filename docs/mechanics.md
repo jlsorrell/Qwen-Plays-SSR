@@ -863,6 +863,40 @@ detail — the replay suite is the exit gate for the whole phase.
 
 ---
 
+## 12.6 Overworld replay — the new acceptance path
+
+**The overworld is not a separate scene.** Every level's island chunk sits at
+its offset in one connected space; `merged_binary`'s `offsets` table is that
+layout. `level.load_overworld` builds it: 17,154 entities spanning x -107..172,
+y -85..67, with the single player taken from the level named `start` (per
+`MetaGameState.LoadBinary`'s closing lines) at world position (-4, -1, -1).
+
+This is why the `.dem` corpus is one continuous playthrough (§ corpus), and it
+makes `all.dem` the natural acceptance test: one 16,567-input replay over the
+whole game.
+
+**Status: reaches move 33 of 16,567.**
+
+The failure at move 33 is a sausage burning. Traced: sausage 4521 is
+north-south oriented, rolls east twice over grills at moves 4-5 (cooking faces
+2 and 3), then at move 33 *slides north* one cell, which puts its already-cooked
+face 3 over a fresh grill cell and burns it.
+
+Sliding along a grill genuinely does burn a sausage in SSR, so the fault is
+probably **upstream** — the sausage should not be in that position by move 33.
+Candidate causes, in order of suspicion:
+
+1. An earlier move resolved differently, leaving the sausage one cell off.
+2. Ladders are unimplemented: `ProcessInput`'s climb branches fall through to
+   ordinary movement, so any climb in the first 33 moves silently walks instead.
+3. The cook-face index (`_COOK_FACE`, §9.1) is right about *which* face but the
+   `rot` toggle may be applied at the wrong point relative to cooking.
+
+**Two guards are implemented and were not the cause.** Cooking is gated both on
+the sausage having moved (mirroring `totrycook`) and on the grill's identity
+differing from what the sausage recorded in `dat` (mirroring `DoCook`'s
+`array2[1] != bbqdatstring` test). Neither prevents this burn, correctly.
+
 ## 13. Open questions
 
 1. ~~What do the four per-face `cookdata` values mean?~~ **Answered in §9.1**:

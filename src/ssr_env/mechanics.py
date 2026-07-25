@@ -303,6 +303,32 @@ _MAX_SETTLE_STEPS = 64
 _MAX_PUSH_DEPTH = 8
 
 
+def grill_identity_at(state: GameState, cell, masks, level_name: str) -> str:
+    """Stable identifier for the grill at a cell, or "" if none.
+
+    Mirrors the `bbqdatstring` that `BBQAtDir` yields: a bbq entity's id, or for
+    a mask grill the island's dat plus the local mask coordinate. `DoCook`
+    compares this against what the sausage recorded last time to avoid cooking
+    the same face on the same grill twice.
+    """
+    entity = ent_at(state, cell, masks, level_name)
+    if entity is None:
+        return ""
+    if entity.type is EntType.BBQ:
+        return str(entity.id)
+    if entity.type is EntType.ISLAND and masks:
+        mask = resolve_island_mask(level_name, entity.dat, masks)
+        if mask is not None and bbq_direction_from_mask(
+            mask_value_at(mask, entity.pos, cell)
+        ):
+            ox, oy, oz = mask["offset"]
+            return (
+                f"{entity.dat}.{cell.x - entity.pos.x - ox}"
+                f".{cell.y - entity.pos.y - oy}.{cell.z - entity.pos.z - oz}"
+            )
+    return ""
+
+
 def grill_direction_at(state: GameState, cell, masks, level_name: str):
     """Grill facing at a cell, or None. Mirrors `GameState.BBQAtDir`.
 
@@ -349,24 +375,33 @@ def cook(
             continue
         faces = list(entity.faces)
         halves = (entity.pos, entity.pos + entity.direction.delta)
+        # dat records which grill last cooked each half, as "<flag>;<a>;<b>".
+        parts = entity.dat.split(";")
+        last = (parts[1], parts[2]) if len(parts) >= 3 else ("", "")
+        seen = list(last)
         burnt = False
         for half, cell in enumerate(halves):
-            grill = grill_direction_at(
-                state, cell + Direction.DOWN.delta, masks, level_name
-            )
+            below = cell + Direction.DOWN.delta
+            grill = grill_direction_at(state, below, masks, level_name)
             if grill is None:
+                seen[half] = ""
                 continue
+            identity = grill_identity_at(state, below, masks, level_name)
+            seen[half] = identity
+            if identity and identity == last[half]:
+                continue  # same grill as last time; the game does not re-cook
             index = _COOK_FACE[entity.rot][half]
             if faces[index] == 0:
                 faces[index] = 2 if grill.parallel_to(entity.direction) else 1
             else:
                 faces[index] = 3
                 burnt = True
-        if tuple(faces) == entity.faces:
-            continue
-        updated = replace(entity, cookdata=pack_cookdata(tuple(faces)))
-        if burnt:
-            updated = replace(updated, dat="B;" + updated.dat)
+        flag = "B" if burnt else (parts[0] if parts and parts[0] else "M")
+        updated = replace(
+            entity,
+            cookdata=pack_cookdata(tuple(faces)),
+            dat=f"{flag};{seen[0]};{seen[1]}",
+        )
         state = state.replace_entity(updated)
         if burnt:
             state = replace(state, lost_reason="Burned")
