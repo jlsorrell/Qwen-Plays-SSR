@@ -14,7 +14,15 @@ Rules and their provenance live in `docs/mechanics.md`.
 from dataclasses import dataclass, replace
 
 from .entity import Entity
-from .geometry import border_cells, ent_at, is_extended, solid_ent_at, under
+from .geometry import (
+    border_cells,
+    ent_at,
+    is_extended,
+    is_solid,
+    occupies,
+    solid_ent_at,
+    under,
+)
 from .state import GameState
 from .types import (
     ROLLABLE_TYPES,
@@ -73,16 +81,36 @@ def try_turn_player(
     """
     player = state.player
     swept = player.direction.rot_between(direction)
+
+    # The fork sweeps the diagonal between old and new facing and applies force
+    # through it, in the direction of the NEW facing — not along the diagonal.
     if swept is not None and is_extended(player, state):
         cell = player.pos + swept.delta
-        if solid_ent_at(state, cell, masks, level_name):
-            raise UnimplementedMechanic(
-                "turn-push", f"solid entity in swept cell {tuple(cell)}"
-            )
+        blocker = ent_at(state, cell, masks, level_name)
+        if blocker is not None and solid_ent_at(state, cell, masks, level_name):
+            state = try_push(state, blocker, direction, masks, level_name)
+            player = state.player
+
     turned = replace(player, direction=direction)
-    if not _free(state, turned.pos + direction.delta, masks, level_name):
-        return StepResult(state=state, moved=False, reason="fork blocked after turn")
-    return StepResult(state=state.replace_entity(turned))
+    candidate = state.replace_entity(turned)
+
+    # `TryTurn` checks `Collides()` after rotating. On a collision the whole
+    # speculative turn is rolled back and the player falls back to a *pivot*
+    # turn — rotating about the fork rather than the body. `TryPivotTurn` is not
+    # transcribed, so this raises rather than silently failing the turn.
+    fork_target = turned.pos + direction.delta
+    # The turned player occupies its own fork cell, so `ent_at` would return the
+    # player itself and mask a real blocker. Scan for any *other* solid occupant.
+    if any(
+        entity.id != turned.id
+        and is_solid(entity, candidate.tileset)
+        and occupies(entity, fork_target, candidate, masks, level_name)
+        for entity in candidate.entities
+    ):
+        raise UnimplementedMechanic(
+            "pivot-turn", "turn collides; game falls back to TryPivotTurn"
+        )
+    return StepResult(state=candidate)
 
 
 def try_push(

@@ -217,3 +217,42 @@ def test_under_finds_support_at_both_cells_of_a_sausage():
 
     state = flat(extra=(sausage(3, 3, facing=Direction.EAST),))
     assert len(under(state.by_id(50), state)) == 2
+
+
+def test_turning_pushes_a_sausage_out_of_the_swept_corner():
+    """The fork sweeps the diagonal and pushes in the direction of the new facing.
+
+    Player at (2,2) facing North turning East sweeps (3,3). A sausage lying
+    East-West there takes a push East, which is parallel to its axis: a slide.
+    """
+    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
+                 extra=(sausage(3, 3, facing=Direction.EAST),))
+    result = step(state, Direction.EAST)
+    assert result.state.player.direction is Direction.EAST
+    assert result.state.by_id(50).pos == Coord(4, 3, 1)
+
+
+def test_turn_push_perpendicular_raises_roll():
+    """A swept sausage lying across the push direction would have to roll."""
+    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
+                 extra=(sausage(3, 3, facing=Direction.NORTH),))
+    with pytest.raises(UnimplementedMechanic, match="roll"):
+        step(state, Direction.EAST)
+
+
+def test_turn_into_a_blocked_fork_raises_pivot_turn():
+    """Blocked turns fall back to TryPivotTurn, which is not transcribed.
+
+    A barrier blocks the fork's destination without being pushable, so this
+    reaches the collision check rather than raising `roll` on the way.
+    """
+    barrier = Entity(pos=Coord(3, 2, 1), type=EntType.BARRIER, id=60)
+    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
+                 extra=(barrier,))
+    with pytest.raises(UnimplementedMechanic, match="pivot-turn"):
+        step(state, Direction.EAST)
+
+
+def test_turning_with_a_clear_corner_still_works():
+    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH)
+    assert step(state, Direction.EAST).state.player.direction is Direction.EAST
