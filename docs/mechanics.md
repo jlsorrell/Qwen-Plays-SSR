@@ -832,11 +832,34 @@ the player simply walks off an edge; it is not necessarily the most valuable
 mechanic to implement next. `turn-push` is, since it blocks levels that are
 otherwise running deep.
 
-**On recovering the `.dem`-to-level mapping:** a level that completes a whole
-`.dem` without ever pushing anything is evidence of a *wrong* pairing, not a
-right one — real solutions push sausages onto grills constantly. The correct
-match is among the levels that fail on a push-family mechanic, and cannot be
-identified until rolling and cooking work.
+**The `.dem` files are not level-local — MEASURED.** The 120 level files sum to
+**16,565** input lines; `all.dem` is **16,567**. They are a partition of a single
+continuous playthrough, differing by two lines, not 120 independent solutions.
+
+Each `X-Y.dem` therefore begins wherever the previous one ended, and the inputs
+spent walking the **overworld** between temples are inside these files too. A
+`.dem` replayed from a level's start state will diverge almost immediately,
+regardless of how faithful the simulator is — which is exactly what we observe
+(median depth 5-19 moves, zero wins across 20 dems x 124 levels).
+
+**This invalidates `replay.find_matching_level` as designed.** Matching a `.dem`
+against a level in isolation cannot work. Options, none yet chosen:
+
+1. **Simulate the overworld too** and replay `all.dem` end to end. Most faithful
+   and it recovers every level boundary for free, but it needs the overworld
+   layer: island entities as levels, `SubworldTransition`, `IssueWorldSausages`,
+   level entry and exit. Substantially more scope than the level simulator.
+2. **Use the extracted `playerpositions` / `sausagepositions` tables.**
+   `merged_binary` carries per-level player and sausage start poses, which the
+   current extractor skips. These give trustworthy level start states without
+   the overworld — but the `.dem` inputs still contain overworld travel, so they
+   would need trimming to the in-level segment, and the trim points are unknown.
+3. **Drop `.dem` replay as the acceptance gate** and validate against
+   human differential testing (spec §5.2) plus the exact solver instead.
+
+Option 1 is the only one that preserves the original validation plan intact.
+Whichever is chosen, this is a Phase 0 planning decision, not an implementation
+detail — the replay suite is the exit gate for the whole phase.
 
 ---
 
