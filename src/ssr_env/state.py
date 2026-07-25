@@ -7,7 +7,7 @@ enumeration inherits a ground-truth definition of "same state" rather than a
 guessed one.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from .entity import Entity
 from .types import DYNAMIC_TYPES, Coord, Direction, EntType
@@ -30,6 +30,19 @@ class GameState:
     #: it must travel with the state rather than being recomputed.
     start_pos: Coord | None = None
     start_direction: Direction | None = None
+    #: Lazily built cell -> static entity index, mirroring the game's
+    #: `BuildStaticCaches`/`StaticEntAt`. Excluded from equality and the state
+    #: key; it is a cache, not state. Needed because the composite overworld has
+    #: ~17k entities and a linear scan per lookup does not survive a 16k-move
+    #: replay.
+    _static_index: dict | None = field(
+        default=None, compare=False, repr=False, hash=False
+    )
+    #: Cached dynamic entities. Mirrors the game's `dynamicentities` list.
+    #: Without it every lookup scans all ~17k overworld entities to find ~250.
+    _dynamic: tuple | None = field(
+        default=None, compare=False, repr=False, hash=False
+    )
 
     def state_key(self) -> StateKey:
         """Canonical identity: (id, pos, direction, cookdata, rot) per dynamic entity.
@@ -60,7 +73,18 @@ class GameState:
         )
 
     def of_type(self, entity_type: EntType) -> tuple[Entity, ...]:
-        return tuple(e for e in self.entities if e.type is entity_type)
+        """Entities of one type.
+
+        Dynamic types read from the cached dynamic list — `is_extended` calls
+        this for every occupancy check, and scanning all entities each time
+        dominated overworld replay.
+        """
+        pool = (
+            dynamic_entities(self)
+            if entity_type in DYNAMIC_TYPES
+            else self.entities
+        )
+        return tuple(e for e in pool if e.type is entity_type)
 
     def by_id(self, entity_id: int) -> Entity:
         for e in self.entities:
@@ -76,11 +100,84 @@ class GameState:
         return players[0]
 
     def replace_entity(self, entity: Entity) -> "GameState":
-        return replace(
+        """Swap one entity, carrying the static index forward where it is valid.
+
+        Islands live in the static index, so moving one invalidates it. Every
+        other dynamic entity leaves the index untouched, and rebuilding it each
+        step would be prohibitive on the composite overworld.
+        """
+        updated = replace(
             self,
             entities=tuple(entity if e.id == entity.id else e for e in self.entities),
         )
+        if entity.type is EntType.ISLAND:
+            object.__setattr__(updated, "_static_index", None)
+        if self._dynamic is not None:
+            object.__setattr__(
+                updated,
+                "_dynamic",
+                tuple(entity if e.id == entity.id else e for e in self._dynamic),
+            )
+        return updated
 
     @property
     def lost(self) -> bool:
         return bool(self.lost_reason)
+
+
+def build_static_index(state: GameState, masks=None, level_name: str = "") -> dict:
+    """Cell -> static entity, including every cell an island mask covers.
+
+    Islands are expanded here rather than probed per lookup. The composite
+    overworld has 249 island chunks, and testing each one's mask on every query
+    dominated the cost; expanding once turns lookups into a dict hit.
+    """
+    from .level import mask_value_at, resolve_island_mask
+    from .types import STATIC_TYPES
+
+    index: dict = {}
+    for entity in state.entities:
+        if entity.type in STATIC_TYPES and entity.type is not EntType.ISLAND:
+            index.setdefault(entity.pos, entity)
+
+    if not masks:
+        return index
+    for entity in state.entities:
+        if entity.type is not EntType.ISLAND:
+            continue
+        mask = resolve_island_mask(level_name, entity.dat, masks)
+        if mask is None:
+            continue
+        ox, oy, oz = mask["offset"]
+        grid = mask["mask"]
+        for lx, plane in enumerate(grid):
+            for ly, row in enumerate(plane):
+                for lz, value in enumerate(row):
+                    if value > 0 or (entity.cookdata == 0 and value == -1):
+                        cell = Coord(
+                            entity.pos.x + ox + lx,
+                            entity.pos.y + oy + ly,
+                            entity.pos.z + oz + lz,
+                        )
+                        index.setdefault(cell, entity)
+    return index
+
+
+def static_index_of(state: GameState, masks=None, level_name: str = "") -> dict:
+    """Index for `state`, built once and cached on it."""
+    if state._static_index is None:
+        object.__setattr__(
+            state, "_static_index", build_static_index(state, masks, level_name)
+        )
+    return state._static_index
+
+
+def dynamic_entities(state: GameState) -> tuple:
+    """Dynamic entities, cached. Mirrors the game's `dynamicentities`."""
+    if state._dynamic is None:
+        object.__setattr__(
+            state,
+            "_dynamic",
+            tuple(e for e in state.entities if e.type in DYNAMIC_TYPES),
+        )
+    return state._dynamic

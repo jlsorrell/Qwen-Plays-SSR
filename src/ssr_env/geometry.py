@@ -113,19 +113,16 @@ def ent_at(
     falls back to `StaticEntAt`. Order matters: a sausage resting on ground must
     be found before the ground.
     """
-    from .types import DYNAMIC_TYPES
+    from .state import dynamic_entities, static_index_of
 
-    for pool in (DYNAMIC_TYPES, None):
-        for entity in state.entities:
-            if pool is not None and entity.type not in pool:
-                continue
-            if pool is None and entity.type in DYNAMIC_TYPES:
-                continue
-            if ignore_laden_forks and entity.type is EntType.FORK:
-                continue
-            if occupies(entity, pos, state, masks, level_name):
-                return entity
-    return None
+    for entity in dynamic_entities(state):
+        if ignore_laden_forks and entity.type is EntType.FORK:
+            continue
+        if occupies(entity, pos, state, masks, level_name):
+            return entity
+
+    # Statics, including island-covered cells, come from the cached index.
+    return static_index_of(state, masks, level_name).get(pos)
 
 
 def solid_ent_at(

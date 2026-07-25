@@ -64,8 +64,17 @@ def island_mask_key(level_name: str, dat: str) -> str:
 def resolve_island_mask(
     level_name: str, dat: str, masks: dict[str, dict]
 ) -> dict | None:
-    key = island_mask_key(level_name, dat)
-    return masks.get(key) or masks.get(level_name)
+    """Mask for an island entity.
+
+    Tries `<level>__<dat>`, then `dat` as an already-qualified global key (the
+    composite overworld rewrites island `dat` this way, since its islands come
+    from many different levels), then the level name itself for `island0`.
+    """
+    return (
+        masks.get(island_mask_key(level_name, dat))
+        or masks.get(dat)
+        or masks.get(level_name)
+    )
 
 
 def mask_value_at(mask: dict, entity_pos: Coord, pos: Coord) -> int:
@@ -247,3 +256,63 @@ def playable_full_levels(levels_dir: Path = LEVELS_DIR) -> list[str]:
         for name in playable_levels(levels_dir)
         if len(load_full_level(name, levels_dir).of_type(EntType.PLAYER)) == 1
     ]
+
+
+def load_overworld_meta(levels_dir: Path = LEVELS_DIR) -> dict:
+    """Overworld layout: island offsets, per-level start poses, temple grouping."""
+    path = Path(levels_dir) / "__overworld_meta__.json"
+    return json.loads(path.read_text()) if path.is_file() else {}
+
+
+def load_overworld(levels_dir: Path = LEVELS_DIR) -> GameState:
+    """The whole game as one composite state.
+
+    SSR's overworld is not a separate scene — every level's island chunk is
+    placed at its offset in a single connected space, which is why the `.dem`
+    corpus is one continuous playthrough rather than 120 independent solutions.
+
+    Entity ids are renumbered across the merge; the player start pose comes from
+    the level named `start`, per `MetaGameState.LoadBinary`'s final lines.
+    """
+    meta = load_overworld_meta(levels_dir)
+    offsets = meta.get("offsets", {})
+    merged: list[Entity] = []
+    for name in sorted(offsets):
+        path = Path(levels_dir) / f"{name}.json"
+        if not path.is_file():
+            continue
+        shift = Coord(*offsets[name])
+        masks = load_island_masks(levels_dir)
+        for entity in load_level(path).entities:
+            moved = replace(entity, pos=entity.pos + shift)
+            if entity.type is EntType.ISLAND:
+                # Qualify dat to a global mask key: overworld islands come from
+                # many levels, so a level-relative dat cannot resolve here.
+                qualified = island_mask_key(name, entity.dat)
+                moved = replace(
+                    moved, dat=qualified if qualified in masks else name
+                )
+            merged.append(moved)
+
+    # Every level file carries its own player spawn marker. The composite world
+    # has exactly one player, taken from the level named `start` — per the final
+    # lines of `MetaGameState.LoadBinary`, which set
+    # `startpos = islands["start"].player.pos + offsets["start"]`.
+    start_shift = Coord(*offsets["start"]) if "start" in offsets else Coord(0, 0, 0)
+    start_players = [
+        replace(e, pos=e.pos + start_shift)
+        for e in load_level(Path(levels_dir) / "start.json").entities
+        if e.type is EntType.PLAYER
+    ] if (Path(levels_dir) / "start.json").is_file() else []
+
+    merged = [e for e in merged if e.type is not EntType.PLAYER]
+    merged.extend(start_players[:1])
+
+    renumbered = tuple(replace(e, id=i) for i, e in enumerate(merged))
+    state = GameState(entities=renumbered, tileset=0)
+    players = state.of_type(EntType.PLAYER)
+    if players:
+        state = replace(
+            state, start_pos=players[0].pos, start_direction=players[0].direction
+        )
+    return state

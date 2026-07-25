@@ -68,7 +68,7 @@ class BinaryReader:
         return self.pos == len(self.data)
 
 
-def parse_merged_binary(data: bytes) -> tuple[dict[str, str], dict[str, dict]]:
+def parse_merged_binary(data: bytes) -> tuple[dict[str, str], dict[str, dict], dict]:
     """Return (levels, island_masks), following MetaGameState.LoadBinary.
 
     levels maps level name -> state string; island_masks maps island name ->
@@ -76,30 +76,34 @@ def parse_merged_binary(data: bytes) -> tuple[dict[str, str], dict[str, dict]]:
     """
     r = BinaryReader(data)
     island_masks: dict[str, dict] = {}
+    meta: dict[str, dict] = {"offsets": {}, "sausages": {}, "player": {}, "temples": {}}
 
-    # offsets: name -> coord
+    # offsets: name -> coord. This is the overworld layout — where each level's
+    # island chunk sits in overworld space.
     for _ in range(r.read_int32()):
-        r.read_string()
-        r.read_coord()
+        name = r.read_string()
+        meta["offsets"][name] = list(r.read_coord())
 
     # sausagepositions: name -> [(coord, direction)]
     for _ in range(r.read_int32()):
-        r.read_string()
-        for _ in range(r.read_int32()):
-            r.read_coord()
-            r.read_int32()
+        name = r.read_string()
+        meta["sausages"][name] = [
+            {"pos": list(r.read_coord()), "direction": r.read_int32()}
+            for _ in range(r.read_int32())
+        ]
 
     # playerpositions: name -> (coord, direction)
     for _ in range(r.read_int32()):
-        r.read_string()
-        r.read_coord()
-        r.read_int32()
+        name = r.read_string()
+        meta["player"][name] = {
+            "pos": list(r.read_coord()),
+            "direction": r.read_int32(),
+        }
 
-    # templedat: name -> [string]
+    # templedat: temple name -> [level names], the overworld grouping
     for _ in range(r.read_int32()):
-        r.read_string()
-        for _ in range(r.read_int32()):
-            r.read_string()
+        name = r.read_string()
+        meta["temples"][name] = [r.read_string() for _ in range(r.read_int32())]
 
     # islandmasks: name -> (int[a][b][c], coord offset)
     # Kept: masks carry each island chunk's shape and its ladder encoding
@@ -156,7 +160,7 @@ def parse_merged_binary(data: bytes) -> tuple[dict[str, str], dict[str, dict]]:
             f"parse desynchronised: {len(r.data) - r.pos} bytes left after "
             f"reading {len(levels) - 1} levels"
         )
-    return levels, island_masks
+    return levels, island_masks, meta
 
 
 @dataclass(frozen=True)
@@ -255,7 +259,7 @@ def main() -> None:
         raise SystemExit("merged_binary TextAsset not found in resources.assets")
 
     print(f"merged_binary: {len(blob):,} bytes")
-    levels, island_masks = parse_merged_binary(blob)
+    levels, island_masks, meta = parse_merged_binary(blob)
     print(
         f"parsed {len(levels) - 1} levels + overworld and "
         f"{len(island_masks)} island masks, landed exactly on EOF"
@@ -273,6 +277,7 @@ def main() -> None:
             payload["raw"] = text
         (args.dest / f"{name}.json").write_text(json.dumps(payload, indent=1))
     (args.dest / "__islandmasks__.json").write_text(json.dumps(island_masks))
+    (args.dest / "__overworld_meta__.json").write_text(json.dumps(meta, indent=1))
     print(f"wrote {len(levels)} levels + island masks -> {args.dest}")
 
 
