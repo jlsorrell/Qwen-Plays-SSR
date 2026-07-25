@@ -144,10 +144,7 @@ def try_push(
             "push-island", "pushing an island the player is not standing on"
         )
 
-    if entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction):
-        raise UnimplementedMechanic(
-            "roll", f"sausage {entity.id} pushed perpendicular to its axis"
-        )
+    rolls = entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction)
 
     for cell in border_cells(entity, state, direction):
         if solid_ent_at(state, cell, masks, level_name):
@@ -156,6 +153,26 @@ def try_push(
             )
 
     moved = replace(entity, pos=entity.pos + direction.delta)
+    if rolls:
+        # A perpendicular push translates the sausage and toggles `rot`, which
+        # selects which face meets a grill (docs/mechanics.md §7.1, §9.1).
+        # `cookdata` is untouched — faces live in a canonical frame.
+        moved = replace(moved, rot=1 - moved.rot)
+        # An orthogonal fork stuck to the sausage flips with it.
+        fork = next(
+            (
+                e
+                for e in state.entities
+                if e.type is EntType.FORK
+                and e.id == entity.stuckto
+                and e.direction.normal_to(entity.direction)
+            ),
+            None,
+        )
+        if fork is not None:
+            state = state.replace_entity(
+                replace(fork, direction=fork.direction.inverse())
+            )
     candidate = state.replace_entity(moved)
     if not under(moved, candidate, masks, level_name):
         raise UnimplementedMechanic(

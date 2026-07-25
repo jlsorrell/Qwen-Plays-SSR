@@ -64,12 +64,15 @@ def test_walking_off_the_edge_raises_falling():
         step(state, Direction.SOUTH)
 
 
-def test_walking_into_a_sausage_raises_push():
-    sausage = Entity(pos=Coord(2, 4, 1), type=EntType.SAUSAGE, id=50,
-                     direction=Direction.EAST)
-    state = flat(extra=(sausage,))
-    with pytest.raises(UnimplementedMechanic, match="push"):
-        step(state, Direction.NORTH)
+def test_walking_into_a_sausage_pushes_it():
+    """Player faces North with its fork at (2,3); walking North rolls the
+    East-West sausage at (2,4) northward."""
+    s = Entity(pos=Coord(2, 4, 1), type=EntType.SAUSAGE, id=50,
+               direction=Direction.EAST)
+    state = flat(width=8, height=8, extra=(s,))
+    result = step(state, Direction.NORTH)
+    assert result.state.by_id(50).pos == Coord(2, 5, 1)
+    assert result.state.by_id(50).rot == 1
 
 
 def test_unimplemented_mechanic_names_itself():
@@ -144,16 +147,41 @@ def test_sliding_preserves_cook_faces():
     assert result.state.by_id(50).cookdata == 9
 
 
-def test_perpendicular_push_raises_roll():
-    """Rolling needs the face permutation, which is not yet established.
-
-    Player at (2,1) facing North puts its fork at (2,2); moving North sends the
-    fork into (2,3), where an East-West sausage takes a perpendicular push.
-    """
-    state = flat(player_at=(2, 1), facing=Direction.NORTH,
+def test_perpendicular_push_rolls_the_sausage():
+    """A roll translates the sausage and toggles rot; cookdata is untouched."""
+    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
                  extra=(sausage(2, 3, facing=Direction.EAST),))
-    with pytest.raises(UnimplementedMechanic, match="roll"):
-        step(state, Direction.NORTH)
+    before = state.by_id(50)
+    after = step(state, Direction.NORTH).state.by_id(50)
+    assert after.pos == Coord(2, 4, 1)
+    assert after.rot == 1 - before.rot
+    assert after.cookdata == before.cookdata
+
+
+def test_two_rolls_restore_the_original_rot():
+    """rot is mod 2, so rolling back and forth returns the exposed face."""
+    state = flat(width=9, height=9, player_at=(2, 1), facing=Direction.NORTH,
+                 extra=(sausage(2, 3, facing=Direction.EAST),))
+    once = step(state, Direction.NORTH).state
+    twice = step(once, Direction.NORTH).state
+    assert twice.by_id(50).rot == state.by_id(50).rot
+
+
+def test_rolling_changes_state_identity():
+    """rot is in the state key, so a roll is a genuinely different state."""
+    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
+                 extra=(sausage(2, 3, facing=Direction.EAST),))
+    rolled = step(state, Direction.NORTH).state
+    assert rolled.state_key() != state.state_key()
+
+
+def test_sliding_still_leaves_rot_alone():
+    """A parallel push is a slide: no rotation, so rot must not change."""
+    state = flat(player_at=(1, 2), facing=Direction.EAST,
+                 extra=(sausage(2, 2, facing=Direction.EAST),))
+    before = state.by_id(50)
+    after = step(state, Direction.EAST).state.by_id(50)
+    assert after.rot == before.rot
 
 
 def test_pushing_a_sausage_into_a_void_raises():
@@ -232,12 +260,13 @@ def test_turning_pushes_a_sausage_out_of_the_swept_corner():
     assert result.state.by_id(50).pos == Coord(4, 3, 1)
 
 
-def test_turn_push_perpendicular_raises_roll():
-    """A swept sausage lying across the push direction would have to roll."""
+def test_turn_push_can_roll_the_swept_sausage():
+    """A swept sausage lying across the push direction rolls."""
     state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
                  extra=(sausage(3, 3, facing=Direction.NORTH),))
-    with pytest.raises(UnimplementedMechanic, match="roll"):
-        step(state, Direction.EAST)
+    result = step(state, Direction.EAST)
+    assert result.state.by_id(50).pos == Coord(4, 3, 1)
+    assert result.state.by_id(50).rot == 1
 
 
 def test_turn_into_a_blocked_fork_raises_pivot_turn():
