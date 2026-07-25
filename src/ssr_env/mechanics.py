@@ -18,6 +18,7 @@ from .geometry import (
     border_cells,
     ent_at,
     is_extended,
+    floor_under,
     is_solid,
     occupies,
     solid_ent_at,
@@ -132,7 +133,16 @@ def try_push(
     if entity.type is EntType.BARRIER:
         return state  # barriers never move; the push simply fails
     if entity.type is EntType.ISLAND:
-        raise UnimplementedMechanic("push-island", "island pushing not implemented")
+        # `TryPushEnt` refuses a horizontal push of the island the player is
+        # standing on (unless `canchangeplayerfooting`). Players stand *on*
+        # island terrain, so the wall they walk into is usually that same
+        # entity, and the push simply fails — a blocked move, not a mechanic.
+        footing = floor_under(state.player, state, masks, level_name)
+        if not direction.is_vertical and footing is not None and footing.id == entity.id:
+            return state
+        raise UnimplementedMechanic(
+            "push-island", "pushing an island the player is not standing on"
+        )
 
     if entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction):
         raise UnimplementedMechanic(
