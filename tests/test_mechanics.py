@@ -72,16 +72,12 @@ def test_walking_into_a_sausage_pushes_it():
 
 def test_unimplemented_mechanic_names_itself():
     """Points at a mechanic that is still genuinely unimplemented."""
-    island = Entity(pos=Coord(2, 2, 0), type=EntType.ISLAND, id=70, dat="island0")
-    barrier = Entity(pos=Coord(3, 2, 1), type=EntType.BARRIER, id=60)
-    player = Entity(pos=Coord(2, 2, 1), type=EntType.PLAYER, id=1,
-                    direction=Direction.NORTH)
-    masks = {"lvl__island0": {"offset": [0, 0, 0], "mask": [[[1]]]}}
-    state = GameState(entities=(island, barrier, player), tileset=0)
+    from ssr_env.mechanics import is_solved
+
     try:
-        step(state, Direction.EAST, None, masks, "lvl")
+        is_solved(flat())
     except UnimplementedMechanic as exc:
-        assert exc.mechanic == "pivot-turn"
+        assert exc.mechanic == "win condition"
     else:
         raise AssertionError("expected UnimplementedMechanic")
 
@@ -272,16 +268,42 @@ def test_turn_push_can_roll_the_swept_sausage():
     assert result.state.by_id(50).rot == 1
 
 
-def test_collided_turn_on_an_island_raises_pivot_turn():
-    """On an island, a collided turn falls back to TryPivotTurn — untranscribed."""
+def island_state(barrier_at=(3, 2, 1), facing=Direction.NORTH):
+    """Player on a 3x3 island chunk, optionally with a barrier blocking the fork."""
     island = Entity(pos=Coord(2, 2, 0), type=EntType.ISLAND, id=70, dat="island0")
+    player = Entity(pos=Coord(2, 2, 1), type=EntType.PLAYER, id=1, direction=facing)
+    ents = [island, player]
+    if barrier_at is not None:
+        ents.append(Entity(pos=Coord(*barrier_at), type=EntType.BARRIER, id=60))
+    masks = {"lvl__island0": {"offset": [-1, -1, 0], "mask": [[[1]] * 3] * 3}}
+    return GameState(entities=tuple(ents), tileset=0), masks
+
+
+def test_collided_turn_on_an_island_pivots():
+    """A blocked turn on an island pivots: pos += pushdir, facing the target.
+
+    pushdir is the inverse of the new facing, so turning East shifts West.
+    """
+    state, masks = island_state()
+    result = step(state, Direction.EAST, None, masks, "lvl")
+    assert result.state.player.direction is Direction.EAST
+    assert result.state.player.pos == Coord(1, 2, 1)
+
+
+def test_an_unblocked_turn_does_not_pivot():
+    state, masks = island_state(barrier_at=None)
+    result = step(state, Direction.EAST, None, masks, "lvl")
+    assert result.state.player.direction is Direction.EAST
+    assert result.state.player.pos == Coord(2, 2, 1)
+
+
+def test_pivot_is_refused_off_an_island():
+    """TryPivotTurn returns false unless Floor(player) is an island."""
     barrier = Entity(pos=Coord(3, 2, 1), type=EntType.BARRIER, id=60)
-    player = Entity(pos=Coord(2, 2, 1), type=EntType.PLAYER, id=1,
-                    direction=Direction.NORTH)
-    masks = {"lvl__island0": {"offset": [0, 0, 0], "mask": [[[1]]]}}
-    state = GameState(entities=(island, barrier, player), tileset=0)
-    with pytest.raises(UnimplementedMechanic, match="pivot-turn"):
-        step(state, Direction.EAST, None, masks, "lvl")
+    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
+                 extra=(barrier,))
+    result = step(state, Direction.EAST)
+    assert not result.moved and "not on island" in result.reason
 
 
 def test_turning_with_a_clear_corner_still_works():

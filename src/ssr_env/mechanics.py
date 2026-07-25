@@ -27,6 +27,7 @@ from .geometry import (
 )
 from .state import GameState
 from .types import (
+    _continue_rot as _continue,
     ROLLABLE_TYPES,
     STATIC_TYPES,
     Action,
@@ -72,55 +73,160 @@ def _free(state: GameState, pos, masks, level_name: str) -> bool:
     return not solid_ent_at(state, pos, masks, level_name)
 
 
+def _force_at(
+    state: GameState, cell, direction: Direction, masks, level_name: str
+) -> GameState:
+    """Apply a force at one cell. Mirrors `ApplyForce(pos, dir, ...)`.
+
+    All pivot forces are *weak*, which per §5.11a only suppresses two special
+    cases inside `TryPushEnt` that this simulator does not implement yet — so
+    weak and strong are currently identical here. Recorded so the distinction is
+    not lost when those branches land.
+    """
+    target = ent_at(state, cell, masks, level_name)
+    if target is None or not is_solid(target, state.tileset):
+        return state
+    return try_push(state, target, direction, masks, level_name)
+
+
+def apply_pivot_forces_1(
+    state: GameState, entity: Entity, movedir, fromdir, todir, masks, level_name
+) -> GameState:
+    """Mirrors `ApplyPivotForces1`. See docs/mechanics.md §5.11a."""
+    if fromdir.is_ortho:
+        if not fromdir.parallel_to(movedir) and fromdir.rot_between(movedir) is todir:
+            return _force_at(state, entity.pos + todir.delta, fromdir, masks, level_name)
+    elif not todir.parallel_to(movedir) and _continue(todir, fromdir) is not movedir:
+        return _force_at(state, entity.pos + todir.delta, todir, masks, level_name)
+    return state
+
+
+def apply_pivot_forces_2(
+    state: GameState, entity: Entity, movedir, fromdir, todir, masks, level_name
+) -> GameState:
+    """Mirrors `ApplyPivotForces2`. See the table in docs/mechanics.md §5.11a."""
+    p = entity.pos
+    m, td = movedir.delta, todir.delta
+    cont = _continue(todir, fromdir)
+
+    if fromdir.is_ortho:
+        if fromdir is movedir:
+            cells = [(p + m + fromdir.delta, movedir), (p + m + td, movedir)]
+        elif fromdir is movedir.inverse() or fromdir.rot_between(movedir) is todir:
+            cells = [(p + m, movedir), (p + m + td, movedir)]
+        else:
+            cells = [(p + m, movedir)]
+    else:
+        if todir is movedir:
+            cells = [
+                (p + m + fromdir.delta, movedir),
+                (p + m + td, movedir),
+                (p + m, cont.inverse()),
+            ]
+        elif todir is movedir.inverse():
+            cells = [(p + m, movedir), (p - m, cont.inverse())]
+        elif cont is movedir:
+            cells = [(p + m, movedir)]
+        else:
+            cells = [(p + m, movedir), (p + m + td, movedir)]
+
+    for cell, direction in cells:
+        state = _force_at(state, cell, direction, masks, level_name)
+    return state
+
+
+def try_pivot_turn(
+    state: GameState, target_facing: Direction, masks=None, level_name: str = ""
+) -> StepResult:
+    """Recovery path when a turn's diagonal phase collides. See §5.11a-b.
+
+    Precondition: the player must be standing on an island. Off one,
+    `TryPivotTurn` returns false immediately and the turn is simply refused.
+
+    The transformation is `pos += pushdir; direction = <swept diagonal>`, with
+    the second turn phase then carrying the facing to the target cardinal.
+    """
+    player = state.player
+    footing = floor_under(player, state, masks, level_name)
+    if footing is None or footing.type is not EntType.ISLAND:
+        return StepResult(
+            state=state, moved=False, reason="turn blocked (no pivot: not on island)"
+        )
+
+    diagonal = player.direction.rot_between(target_facing)
+    if diagonal is None:
+        return StepResult(state=state, moved=False, reason="no diagonal to pivot through")
+    pushdir = target_facing.inverse()
+
+    state = apply_pivot_forces_1(
+        state, player, pushdir, player.direction, diagonal, masks, level_name
+    )
+    # The player braces against its own footing — the one place the game passes
+    # canchangeplayerfooting, because a pivot moves the island underneath.
+    state = _force_at(
+        state, player.pos + Direction.DOWN.delta, pushdir, masks, level_name
+    )
+    player = state.player
+    state = apply_pivot_forces_2(
+        state, player, pushdir, player.direction, diagonal, masks, level_name
+    )
+
+    player = state.player
+    pivoted = replace(player, pos=player.pos + pushdir.delta, direction=target_facing)
+    settled = settle(state.replace_entity(pivoted), masks, level_name)
+    return StepResult(
+        state=settled, lost=settled.lost, reason=settled.lost_reason or None
+    )
+
+
 def try_turn_player(
     state: GameState, direction: Direction, masks=None, level_name: str = ""
 ) -> StepResult:
-    """Rotate in place. See docs/mechanics.md §5.9.
+    """Turn in place. Two-phase, per docs/mechanics.md §5.11b.
 
-    Turning sweeps the diagonal between old and new facing and applies force
-    through it, so a sausage in that corner would be pushed. Not implemented —
-    raises if anything solid occupies the swept cell.
+    A turn is `TurnIn` to the diagonal between old and new facing, then a second
+    phase to the target cardinal. The diagonal is a real intermediate state —
+    `Entity.Turning()` is `direction.Diagonal()` — and it is where the fork
+    sweeps and collisions are evaluated. A collision there is what triggers a
+    pivot turn.
+
+    Only settled states are returned, and no settled state faces a diagonal, so
+    the intermediate never reaches the state key.
     """
     player = state.player
-    swept = player.direction.rot_between(direction)
+    diagonal = player.direction.rot_between(direction)
 
-    # The fork sweeps the diagonal between old and new facing and applies force
-    # through it, in the direction of the NEW facing — not along the diagonal.
-    if swept is not None and is_extended(player, state):
-        cell = player.pos + swept.delta
-        blocker = ent_at(state, cell, masks, level_name)
-        if blocker is not None and solid_ent_at(state, cell, masks, level_name):
+    # Phase 1 (TurnIn): the fork sweeps into the diagonal cell, pushing in the
+    # direction of the new facing.
+    if diagonal is not None and is_extended(player, state):
+        swept = player.pos + diagonal.delta
+        blocker = ent_at(state, swept, masks, level_name)
+        if blocker is not None and is_solid(blocker, state.tileset):
             state = try_push(state, blocker, direction, masks, level_name)
             player = state.player
+        if _blocked_for(state, player, swept, masks, level_name):
+            return try_pivot_turn(state, direction, masks, level_name)
 
+    # Phase 2 (TurnOut): complete to the target cardinal.
     turned = replace(player, direction=direction)
     candidate = state.replace_entity(turned)
+    if _blocked_for(candidate, turned, turned.pos + direction.delta, masks, level_name):
+        return try_pivot_turn(state, direction, masks, level_name)
 
-    # `TryTurn` checks `Collides()` after rotating. On a collision the whole
-    # speculative turn is rolled back and the player falls back to a *pivot*
-    # turn — rotating about the fork rather than the body. `TryPivotTurn` is not
-    # transcribed, so this raises rather than silently failing the turn.
-    fork_target = turned.pos + direction.delta
-    # The turned player occupies its own fork cell, so `ent_at` would return the
-    # player itself and mask a real blocker. Scan for any *other* solid occupant.
-    if any(
-        entity.id != turned.id
-        and is_solid(entity, candidate.tileset)
-        and occupies(entity, fork_target, candidate, masks, level_name)
-        for entity in candidate.entities
-    ):
-        # `TryPivotTurn` has a hard precondition: it returns false immediately
-        # unless the player is standing on an ISLAND. Off an island a collided
-        # turn is simply a failed move, not a pivot.
-        footing = floor_under(player, state, masks, level_name)
-        if footing is None or footing.type is not EntType.ISLAND:
-            return StepResult(
-                state=state, moved=False, reason="turn blocked (no pivot: not on island)"
-            )
-        raise UnimplementedMechanic(
-            "pivot-turn", "collided turn on an island falls back to TryPivotTurn"
-        )
-    return StepResult(state=candidate)
+    settled = settle(candidate, masks, level_name)
+    return StepResult(
+        state=settled, lost=settled.lost, reason=settled.lost_reason or None
+    )
+
+
+def _blocked_for(state: GameState, entity: Entity, cell, masks, level_name: str) -> bool:
+    """Whether any entity other than `entity` solidly occupies `cell`."""
+    return any(
+        e.id != entity.id
+        and is_solid(e, state.tileset)
+        and occupies(e, cell, state, masks, level_name)
+        for e in state.entities
+    )
 
 
 #: Below this z an entity has left the world. Matches the player test in
