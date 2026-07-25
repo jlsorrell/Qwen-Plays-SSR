@@ -369,7 +369,51 @@ directions are perpendicular.
 
 Source: `GameState.cs TryTurn`, `DirectionUtil.cs:65-71,176-179,259-266`.
 
-### 5.10 Still to transcribe
+### 5.10 Movement construction — CONFIRMED
+
+All three constructors set `remaining = Fraction(1, 1 << (speed - 1))`. **Speed
+is a power-of-two divisor of duration**: speed 1 lasts 1, speed 2 lasts 1/2,
+speed 3 lasts 1/4. Higher speed finishes sooner.
+
+`Movement.Translation(target, direction, torsion, speed, mtype, left)` zeroes
+torsion when the push direction is parallel to the target's own direction —
+sliding a sausage along its axis imparts no roll. This is a second, independent
+place the slide/roll distinction is enforced, after §5.6.
+
+`Movement.Rotation(target, from, to, mtype, speed)` sets `left = to.LeftOf(from)`
+— **note the argument order is reversed** relative to `TryTurnPlayer`, which
+computes `player.direction.LeftOf(dir)`. Same predicate, opposite operands.
+
+`Movement.Fixed(target, speed)` pins an entity in place for a duration with
+`MType.Fixed` and no direction.
+
+Source: `Movement.cs:296-375`.
+
+### 5.11 The tick loop — CONFIRMED
+
+`MovementsTick()` is the resolution step. Per tick:
+
+1. Clear `totrycook`, take `deltaTime = MoveTickLength()`.
+2. Walk `movements` **backwards** (so finished entries can be removed in place).
+3. `movement.Tick(deltaTime)` decrements `remaining`.
+4. When `remaining.num == 0` the movement is finished:
+   - A `Fixed` movement whose player is still turning gets its speed refreshed
+     rather than resolving — it stays pinned for the duration of the turn.
+   - Otherwise `Resolve()` commits the change, the entity's `movement` clears,
+     and the entry is removed.
+   - If the direction was `Down`, the appropriate landing check fires:
+     `CheckSausageLanded` / `CheckForkLanded` / `CheckPlayerLanded`.
+   - Sausages are queued into `totrycook`.
+   - Moving islands set a recalculation flag.
+5. After the loop, `DoCook` runs over `totrycook` (`GameState.cs:1468-1477`).
+
+**Cooking is deferred to the end of the tick**, not applied at the moment of
+contact. Ordering therefore matters: a sausage that moves onto a grill and off
+again within one tick is a different case from one that settles there.
+
+Source: `GameState.cs:1394 MovementsTick`.
+
+### 5.12 Still to transcribe
 
 `TryPushEnt` (the recursion's other half), `PassiveForceSweep`, `Movement.Translation`
 construction, `AddTranslation`, `AddTranslationOK`, `AddRotation`, `AddPivot`,
@@ -399,7 +443,22 @@ Note `Entity.cs:341` performs a base-4 *reversal* of `cookdata`
 (`f3 + 4*f2 + 16*f1 + 64*f0`), evidence that face order is positional and that
 some operation mirrors the sausage. Identify which. TODO.
 
-## 8. Falling — NOT TRANSCRIBED
+## 8. Falling — PARTIAL
+
+Falls are ordinary movements with `direction == Direction.Down`. When one
+finishes, `MovementsTick` dispatches by type to `CheckSausageLanded`,
+`CheckForkLanded` or `CheckPlayerLanded`.
+
+**Sausage drowning — CONFIRMED.** When a sausage's fall resolves with
+`pos.z < -2`, it is teleported to `z = -100` and its `dat` field is rewritten
+with a leading `'L'` (from `'M'`, or from empty to `"L ; ; "`). So **`dat` on a
+sausage is a status field**, not decoration — the fifth field in this codebase
+that looks cosmetic and is not. The `z < -2` threshold matches the player's
+out-of-world test in `Lost()` and `ProcessInput`.
+
+Source: `GameState.cs:1394 MovementsTick`.
+
+### 8.1 Still to transcribe
 
 `CanFall`, `CanFall_Liberal`, `CheckSausageLanded`, `CheckForkLanded`,
 `CheckPlayerLanded`, `GetSurfaceType`, `OverWaterMovements`,
