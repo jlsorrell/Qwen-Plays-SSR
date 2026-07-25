@@ -84,6 +84,56 @@ def ladder_direction_from_mask(value: int) -> Direction | None:
     return Direction(value - 3) if 3 <= value <= 6 else None
 
 
+def pedestal_direction_from_mask(value: int) -> Direction | None:
+    """Mask values 9..12 encode pedestal directions. Mirrors `GameState.PedastalAt`."""
+    return Direction(value - 9) if 9 <= value <= 12 else None
+
+
+def bbq_direction_from_mask(value: int) -> Direction | None:
+    """Mask value 2 is a grill facing East, 20 a grill facing North.
+
+    Mirrors `GameState.BBQAt` (`value == 2 or value == 20`) and `BBQAtDir`.
+    """
+    if value == 2:
+        return Direction.EAST
+    if value == 20:
+        return Direction.NORTH
+    return None
+
+
+def decoration_type_from_mask(value: int) -> int | None:
+    """Mask values <= -10 are decorations of type `-10 - value`.
+
+    Mirrors `GameState.DecorationAt`. Decorations are cosmetic and are excluded
+    from force propagation (`ApplyForce` skips `Decoration()` entities).
+    """
+    return -10 - value if value <= -10 else None
+
+
+def is_solid_mask_value(value: int, cookdata: int = 0) -> bool:
+    """Whether an island mask cell is solid.
+
+    Mirrors `Entity.IslandAt`: positive values are solid. When the island
+    entity's `cookdata` is 0 the value -1 also counts as solid — an exception
+    whose purpose is not yet established (see §13 of docs/mechanics.md).
+    """
+    return value > 0 or (cookdata == 0 and value == -1)
+
+
+def footprint_type_from_mask(value: int) -> int:
+    """Surface category used for footstep effects. Mirrors `GameState.FootprintTypeAt`.
+
+    Category 3 is the grill surface, which `CalcBBQAshSteps` keys on.
+    """
+    if value == 13:
+        return 1
+    if value == 14:
+        return 2
+    if value in (2, 20):
+        return 3
+    return 0
+
+
 def load_level(path: Path) -> GameState:
     raw = json.loads(Path(path).read_text())
     return GameState(entities=tuple(entity_from_raw(e) for e in raw["entities"]))

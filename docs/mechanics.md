@@ -265,12 +265,47 @@ primary island (`island0`) is keyed by the level name itself.
 
 Implemented in `level.resolve_island_mask` / `level.mask_value_at`.
 
-### 10.3 Still to transcribe
+### 10.3 Mask value semantics — DECODED
 
-Only values 3..6 are decoded. The corpus also contains 0, 1, 2, 14..20 and a
-range of negatives (-25..-9) whose meanings are unknown — 0 dominates at 52,839
-cells, 1 at 5,481, 17 at 4,822. These almost certainly encode solidity, surface
-type and slope. Decode before implementing movement over island terrain.
+Every consumer of `IslandMaskVal` has been read. The encoding is a flat tagged
+integer, not a bitfield:
+
+| Value | Meaning | Source |
+|---|---|---|
+| `> 0` | **solid** | `Entity.IslandAt` |
+| `-1` | solid **only when the island entity's `cookdata == 0`** | `Entity.IslandAt` |
+| `0` | empty (52,839 cells — the bulk) | |
+| `1` | plain solid ground (5,481) | |
+| `2` | **grill facing East** (413) | `GameState.BBQAt`, `BBQAtDir` |
+| `20` | **grill facing North** (92) | `GameState.BBQAt`, `BBQAtDir` |
+| `3..6` | **ladder**, direction `Direction(v - 3)` (365 total) | `GameState.LadderAt` |
+| `9..12` | **pedestal**, direction `Direction(v - 9)` | `GameState.PedastalAt` |
+| `13` | solid, footprint category 1 | `GameState.FootprintTypeAt` |
+| `14` | solid, footprint category 2 | `GameState.FootprintTypeAt` |
+| `<= -10` | **decoration** of type `-10 - v` | `GameState.DecorationAt` |
+
+Footprint categories are cosmetic (footstep effects); category 3 is the grill
+surface and is what `CalcBBQAshSteps` keys on.
+
+Implemented in `level.py`: `is_solid_mask_value`, `bbq_direction_from_mask`,
+`ladder_direction_from_mask`, `pedestal_direction_from_mask`,
+`decoration_type_from_mask`, `footprint_type_from_mask`.
+
+**Note the grill count coincidence.** Mask values 2 and 20 total 505 cells, and
+the corpus contains exactly 505 `EntType.bbq` entities. Either grills are
+represented twice — once as an entity, once in the mask — or this is chance.
+Establish which before implementing cooking, since double-counting grills would
+corrupt every cook transition.
+
+### 10.4 Still unresolved
+
+Values `15`, `16`, `17`, `18` (297-4,822 cells each) are solid by the `> 0` rule
+but hit no decoder — they fall through `FootprintTypeAt` to category 0. Likely
+tileset or slope variants that only affect appearance. Value `8` (1 cell) and
+`-9` (288 cells) are unexplained; `-9` is notably *not* a decoration, since the
+decoration test is `<= -10`.
+
+None of these block movement: solidity is decided by sign alone.
 
 `LadderUpInDir`, `LadderDownInDir`, `TryClimbUp`, `TryClimbDown`,
 `AutomaticClimbUp`, `AutomaticClimbDown`, `AutomaticTurn`, `AutomaticPlayerTick`,

@@ -9,10 +9,15 @@ import pytest
 from ssr_env.entity import Entity
 from ssr_env.level import (
     available_levels,
+    bbq_direction_from_mask,
+    decoration_type_from_mask,
+    footprint_type_from_mask,
+    is_solid_mask_value,
     ladder_direction_from_mask,
     load_island_masks,
     load_level_by_name,
     parent_level,
+    pedestal_direction_from_mask,
     playable_levels,
     resolve_island_mask,
 )
@@ -167,3 +172,59 @@ def test_ladder_encoded_cells_exist_in_the_corpus():
 def test_sidecars_are_not_treated_as_levels():
     assert "__islandmasks__" not in available_levels()
     assert "__overworld__" not in available_levels()
+
+
+def test_pedestal_directions_decode():
+    assert pedestal_direction_from_mask(9) is Direction.NORTH
+    assert pedestal_direction_from_mask(12) is Direction.EAST
+    assert pedestal_direction_from_mask(8) is None
+    assert pedestal_direction_from_mask(13) is None
+
+
+def test_bbq_directions_decode():
+    assert bbq_direction_from_mask(2) is Direction.EAST
+    assert bbq_direction_from_mask(20) is Direction.NORTH
+    assert bbq_direction_from_mask(1) is None
+
+
+def test_solidity_is_decided_by_sign():
+    assert is_solid_mask_value(1)
+    assert is_solid_mask_value(17)
+    assert not is_solid_mask_value(0)
+    assert not is_solid_mask_value(-14)
+
+
+def test_minus_one_is_solid_only_when_cookdata_zero():
+    assert is_solid_mask_value(-1, cookdata=0)
+    assert not is_solid_mask_value(-1, cookdata=1)
+
+
+def test_decorations_are_ten_or_more_negative():
+    assert decoration_type_from_mask(-10) == 0
+    assert decoration_type_from_mask(-25) == 15
+    assert decoration_type_from_mask(-9) is None
+    assert decoration_type_from_mask(0) is None
+
+
+def test_footprint_categories():
+    assert footprint_type_from_mask(13) == 1
+    assert footprint_type_from_mask(14) == 2
+    assert footprint_type_from_mask(2) == 3
+    assert footprint_type_from_mask(20) == 3
+    assert footprint_type_from_mask(1) == 0
+
+
+def test_grill_cells_and_bbq_entities_both_exist():
+    """Flagged in mechanics.md 10.3: grills may be double-represented."""
+    grill_cells = sum(
+        1
+        for m in load_island_masks().values()
+        for plane in m["mask"]
+        for row in plane
+        for v in row
+        if v in (2, 20)
+    )
+    bbq_entities = sum(
+        len(load_level_by_name(n).of_type(EntType.BBQ)) for n in playable_levels()
+    )
+    assert grill_cells > 0 and bbq_entities > 0
