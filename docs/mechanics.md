@@ -579,6 +579,38 @@ solve-rate metric must withhold it.
 
 ---
 
+## 12.5 Implementation status (2026-07-24)
+
+`step()` runs real `.dem` inputs against real extracted geometry. Implemented:
+turning, walking forward/backward, sausage **sliding** along its own axis,
+one-cell pushes, undo, out-of-world rejection.
+
+Everything else raises `UnimplementedMechanic` naming itself, so a partial
+simulator fails loudly rather than plausibly.
+
+Measured blocker distribution, replaying `1-1.dem` against all 124 candidate
+levels — this is the work queue, ordered by what actually blocks progress:
+
+| Blocker | Levels |
+|---|---|
+| `falling` | 66 |
+| `turn-push` | 38 |
+| `push` (chains, islands, statics) | 14 |
+| `roll` | 4 |
+
+Note `falling` dominates because most of these are *wrong* level pairings where
+the player simply walks off an edge; it is not necessarily the most valuable
+mechanic to implement next. `turn-push` is, since it blocks levels that are
+otherwise running deep.
+
+**On recovering the `.dem`-to-level mapping:** a level that completes a whole
+`.dem` without ever pushing anything is evidence of a *wrong* pairing, not a
+right one — real solutions push sausages onto grills constantly. The correct
+match is among the levels that fail on a push-family mechanic, and cannot be
+identified until rolling and cooking work.
+
+---
+
 ## 13. Open questions
 
 1. What do the four per-face `cookdata` values mean? Raw / cooked / burnt leaves
