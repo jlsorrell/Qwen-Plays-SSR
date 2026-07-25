@@ -95,3 +95,33 @@ def test_with_faces_is_immutable():
     e = Entity(pos=Coord(0, 0), type=EntType.SAUSAGE, id=1)
     updated = e.with_faces((1, 0, 0, 0))
     assert e.cookdata == 0 and updated.cookdata == 1
+
+
+def test_static_matches_the_games_predicate():
+    """Utility.Static: NOT static = player, sausage, barrier, fork, island."""
+    from ssr_env.types import STATIC_TYPES
+
+    assert STATIC_TYPES == {
+        EntType.GROUND,
+        EntType.BBQ,
+        EntType.LADDER,
+        EntType.SPECTRALSAUSAGE,
+    }
+
+
+def test_spectral_sausage_is_static_despite_the_name():
+    from ssr_env.types import STATIC_TYPES
+
+    assert EntType.SPECTRALSAUSAGE in STATIC_TYPES
+
+
+def test_islands_and_barriers_are_dynamic():
+    """Islands are pushed around in world 6, so they carry state identity."""
+    assert EntType.ISLAND in DYNAMIC_TYPES
+    assert EntType.BARRIER in DYNAMIC_TYPES
+
+
+def test_only_sausages_roll():
+    from ssr_env.types import ROLLABLE_TYPES
+
+    assert ROLLABLE_TYPES == {EntType.SAUSAGE}

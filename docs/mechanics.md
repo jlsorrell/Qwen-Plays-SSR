@@ -277,7 +277,53 @@ keep their raw names ("bridge1", "fillerisland"). **These are a likely shortcut
 for the `.dem`-to-level mapping** (§ replay), since the owner can recognise them
 directly.
 
-### 5.6 Still to transcribe
+### 5.6 TryPushEnt — the force recursion's other half — PARTIAL
+
+Rejected outright: static types, entities already moving, and **`barrier`**
+(barriers are never pushable). Vertical pushes force zero torsion.
+
+Islands additionally refuse to move when: in the overworld with no pushes
+budgeted; when the island is the current push target; or when the player is
+standing on it and the push is horizontal (unless `canchangeplayerfooting`).
+
+**Torsion is inherited from below, not computed locally.** `Under(e)` gives the
+supporting entities. If the entity cannot roll or has no support, torsion is 0.
+Otherwise torsion is taken from the supporters' movements — and **only if every
+supporter agrees**; any disagreement collapses it to 0. This is how a sausage
+resting on a rolling sausage rolls along with it.
+
+**`TORSIONPLACEHOLDER = -666` is a deferred marker, not a magnitude.** A sausage
+pushed *non-parallel* to its own direction gets `-666`; everything else gets 0.
+The real torsion is resolved later during movement resolution
+(`GameState.cs:4116, 4257`). An earlier note here guessed "0 = slide, 1 = roll";
+that was wrong, which is why it was recorded as unconfirmed.
+
+Source: `GameState.cs:2703 TryPushEnt`, `GameState.cs:315`.
+
+### 5.7 Type predicates — CONFIRMED, and counter-intuitive
+
+`Utility.Static` is defined negatively: **not** static = player, sausage,
+**barrier**, fork, **island**. Therefore:
+
+| Type | Static? |
+|---|---|
+| ground, bbq, ladder | yes |
+| **spectralsausage** | **yes** — despite the name |
+| **barrier**, **island** | **no** — islands are pushed around in world 6 |
+| player, sausage, fork | no |
+
+This matters beyond pushing: `state_key()` is built from the dynamic types, so
+getting the partition wrong silently drops moving islands out of state identity
+— and the oracle's whole notion of "same state" with it. The initial
+implementation here had barrier and island as static and spectralsausage as
+dynamic; wrong on three of nine types.
+
+`Utility.CanRoll` is sausage only. `Vertical(d)` is `d > None` (Up/Down);
+`Horizontal(d)` is `d <= None`, so `None` counts as horizontal.
+
+Source: `Utility.cs:117-133`, `DirectionUtil.cs:156-164`.
+
+### 5.8 Still to transcribe
 
 `TryPushEnt` (the recursion's other half), `PassiveForceSweep`, `Movement.Translation`
 construction, `AddTranslation`, `AddTranslationOK`, `AddRotation`, `AddPivot`,

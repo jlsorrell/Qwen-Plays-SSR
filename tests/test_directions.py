@@ -133,3 +133,18 @@ def test_diagonal_deltas_are_the_sum_of_their_cardinals():
     assert Direction.SOUTHWEST.delta == Coord(-1, -1, 0)
     assert Direction.NORTHWEST.delta == Coord(-1, 1, 0)
     assert Direction.SOUTHEAST.delta == Coord(1, -1, 0)
+
+
+def test_vertical_is_exactly_up_and_down():
+    assert {d for d in Direction if d.is_vertical} == {Direction.UP, Direction.DOWN}
+
+
+def test_none_counts_as_horizontal():
+    """Mirrors the game: Horizontal is `d <= None`, so NONE is horizontal."""
+    assert Direction.NONE.is_horizontal
+    assert not Direction.NONE.is_vertical
+
+
+def test_vertical_and_horizontal_partition_all_directions():
+    for d in Direction:
+        assert d.is_vertical != d.is_horizontal

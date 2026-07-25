@@ -89,6 +89,16 @@ class Direction(IntEnum):
             and other is not Direction.NONE
         )
 
+    @property
+    def is_vertical(self) -> bool:
+        """Mirrors `DirectionUtil.Vertical`: `d > None`, i.e. Up or Down."""
+        return self > Direction.NONE
+
+    @property
+    def is_horizontal(self) -> bool:
+        """Mirrors `DirectionUtil.Horizontal`: `d <= None`. Note NONE counts as horizontal."""
+        return self <= Direction.NONE
+
     def left_of(self, other: "Direction") -> bool:
         """Mirrors `DirectionUtil.LeftOf` — the turn-handedness flag.
 
@@ -173,15 +183,34 @@ class EntType(IntEnum):
     ISLAND = 8
 
 
-#: Types that never move. Excluded from the canonical state key.
+#: Types that cannot be pushed. Mirrors `Utility.Static`, which defines this
+#: negatively: everything except player, sausage, barrier, fork and island.
+#:
+#: Note two counter-intuitive members. `spectralsausage` IS static despite the
+#: name. `barrier` and `island` are NOT — islands are pushed around in world 6,
+#: so they must participate in state identity.
 STATIC_TYPES: frozenset[EntType] = frozenset(
-    {EntType.GROUND, EntType.BBQ, EntType.LADDER, EntType.BARRIER, EntType.ISLAND}
+    {EntType.GROUND, EntType.BBQ, EntType.LADDER, EntType.SPECTRALSAUSAGE}
 )
 
 #: Types that can move or change cook state. These define the state key.
 DYNAMIC_TYPES: frozenset[EntType] = frozenset(
-    {EntType.PLAYER, EntType.SAUSAGE, EntType.SPECTRALSAUSAGE, EntType.FORK}
+    {
+        EntType.PLAYER,
+        EntType.SAUSAGE,
+        EntType.BARRIER,
+        EntType.FORK,
+        EntType.ISLAND,
+    }
 )
+
+#: `Utility.CanRoll` — only sausages roll.
+ROLLABLE_TYPES: frozenset[EntType] = frozenset({EntType.SAUSAGE})
+
+#: `GameState.TORSIONPLACEHOLDER`. Not a roll magnitude but a *deferred* marker:
+#: a sausage pushed non-parallel to its own direction gets this, and the real
+#: torsion is resolved during movement resolution.
+TORSION_PLACEHOLDER = -666
 
 
 class Action(IntEnum):

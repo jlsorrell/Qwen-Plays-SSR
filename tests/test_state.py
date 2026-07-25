@@ -72,8 +72,21 @@ def test_direction_change_does_affect_state_key():
 
 
 def test_static_entities_are_excluded_from_state_key():
+    """Island (id 0) is dynamic per `Utility.Static`; bbq (id 1) is static.
+
+    Islands are pushable in world 6, so they must carry state identity. This
+    test previously asserted the opposite and was wrong.
+    """
     key = make_state().state_key()
-    assert {entry[0] for entry in key} == {2, 3}
+    assert {entry[0] for entry in key} == {0, 2, 3}
+
+
+def test_moving_an_island_changes_the_state_key():
+    base = make_state()
+    shifted = base.replace_entity(
+        Entity(pos=Coord(1, 0), type=EntType.ISLAND, id=0)
+    )
+    assert base.state_key() != shifted.state_key()
 
 
 def test_state_key_is_order_independent():
