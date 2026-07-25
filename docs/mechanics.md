@@ -413,6 +413,44 @@ again within one tick is a different case from one that settles there.
 
 Source: `GameState.cs:1394 MovementsTick`.
 
+### 5.11a Pivot turns — PARTIAL, and the largest remaining gap
+
+`TryPivotTurn(e, clockwise, pushdir = None)`.
+
+**Precondition — CONFIRMED and implemented.** It returns false immediately
+unless `Floor(player)` is an `EntType.island`. Off an island, a collided turn is
+an ordinary failed move and no pivot machinery is involved. This alone resolved
+most observed cases.
+
+**Structure — transcribed, not implemented.**
+
+```
+direction  = e.direction.Rot90(clockwise)          # target facing
+direction2 = RotBetween(e.direction, direction)    # the swept diagonal
+pushdir    = pushdir or direction.Inverse()
+Movement.Pivot(e, pushdir, e.direction, direction2, MType.TurnIn, 1)
+ApplyPivotForces1(e, pushdir, e.direction, direction2)
+if e is player:
+    ApplyForce(e.pos + Down, pushdir, 0, 1, canchangeplayerfooting: true)
+ApplyPivotForces2(e, pushdir, e.direction, direction2)
+... then recurse into GetHat(e) with the same pushdir
+```
+
+Note the player branch pushes **the island underneath itself** — that is the
+whole point of a pivot: the player braces against its own footing, which is why
+`canchangeplayerfooting` is true here and false everywhere else.
+
+**Why this is not implemented yet.** `ApplyPivotForces1` and `2` are case
+analyses over `(fromdir, movedir, todir)`, each branch applying *weak* forces at
+one or two derived cells, with separate handling for orthogonal versus diagonal
+`fromdir`. Reproducing them needs `weakforce` semantics (untranscribed — see
+§5.2) and `Movement.Pivot`. Guessing here is unusually dangerous because a pivot
+moves the island under the player, so an error propagates into the terrain
+rather than staying local to one entity.
+
+Estimated remaining: read `ApplyPivotForces1/2` in full, `Movement.Pivot`,
+`GetHat`, and the `weakforce` path through `TryPushEnt`.
+
 ### 5.12 Still to transcribe
 
 `TryPushEnt` (the recursion's other half), `PassiveForceSweep`, `Movement.Translation`
