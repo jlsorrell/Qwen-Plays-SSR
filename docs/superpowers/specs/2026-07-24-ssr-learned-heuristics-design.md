@@ -130,11 +130,32 @@ For each level, enumerate the **entire reachable state graph once**, then BFS
 Computed offline, once per level. This is the instrument the entire experimental
 design rests on.
 
-**Tractability bound.** Rough state count per sausage: position x orientation x
-2^4 cook-faces ~= 3x10^3. Three sausages on a modest grid reaches ~10^10-10^13 in
-the worst case, though the reachable component is far smaller. Early-to-mid
-levels enumerate fine; the hardest official levels will not. This is acceptable
-and useful — it sets a principled ceiling on generator difficulty.
+**State identity is not guessed.** `GameState.BakStruct` — the snapshot the game
+itself takes for undo — compares two states on exactly `pos`, `direction`, and
+`cookdata` per entity. Enumeration inherits that as its definition of "same
+state". `rot`, `pivot`, `turndir` and in-flight `movement` are transient within a
+move's resolution and are excluded.
+
+**Tractability bound — UNVERIFIED, and the project's load-bearing assumption.**
+An earlier estimate here (position x orientation x 2^4 cook-faces ~= 3x10^3 per
+sausage) was made before the encoding was known and is **wrong**. `cookdata`
+packs four faces in **base 4** (`cookdata%4`, `cookdata/4%4`, `cookdata/16%4`,
+`cookdata/64%4`), range 0-255 — 16x the assumed range — and every entity carries
+a `direction` drawn from an eleven-member enum. How much of that is reachable is
+unknown; burnt faces terminate the episode and so cannot appear in live states,
+which cuts it back by an unquantified amount.
+
+This is measured in two stages, not estimated:
+
+- **Phase 0 Task 6.5** computes a combinatorial *upper bound* from geometry alone.
+  Cheap, available before mechanics exist. A small bound proves tractability; a
+  large one proves nothing but flags risk.
+- **Phase 0 Task 13.5** measures the true reachable component by BFS once `step()`
+  works, and sets the generator's difficulty ceiling from the measurement.
+
+If reachable counts prove too large at useful difficulty, the oracle is
+unavailable and §6.2's probe targets go with it. That is a project-level risk,
+tracked in §8.
 
 ### 4.2 Model and training
 

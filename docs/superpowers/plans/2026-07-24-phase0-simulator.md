@@ -23,9 +23,10 @@ Tasks 9–13 cannot ship pre-written rule implementations, and a plan that prete
 ```
 src/ssr_env/
   __init__.py       Public API re-exports
-  types.py          Enums: Direction, Tile, CookState, Orientation
-  level.py          Level geometry: grid, heights, grills, spawn
-  state.py          GameState, PlayerState, Sausage — immutable, hashable
+  types.py          Enums: Direction (11 members), EntType (9 members), Action
+  entity.py         Entity — the game's single uniform entity model
+  level.py          Level: the initial entity list, loaded from extracted data
+  state.py          GameState + state_key(); immutable, hashable
   mechanics.py      step(); the derived rules
   dem.py            .dem parsing
   render.py         ASCII rendering
@@ -379,344 +380,85 @@ git add tools/extract_levels.py docs/level-format.md data/levels && git commit -
 
 ---
 
-### Task 5: Level data model
+### Task 5: Entity model and level loading
+
+The game models **everything** as one `Entity` type — ground, island, bbq, ladder,
+barrier, player, fork, sausage, spectralsausage. There is no separate terrain grid.
+Mirror that; a grid-plus-sausage-list model does not survive contact with world 6.
+
+Semantic fields, taken from `EntitySkeleton`: `pos` (Coord x,y,z), `type`
+(EntType), `id`, `direction`, `stuckto`, `cookdata`, plus transient `rot`,
+`turndir`, `pivot`. `tilenum`/`tileset` are cosmetic and are dropped.
+
+**Coordinate convention (from the game's `Coord`):** `North = (0, +1)`,
+`South = (0, -1)`, `East = (+1, 0)`, `West = (-1, 0)`, `Up = (0, 0, +1)`.
+y increases **northward**. `Direction` has eleven members — the four cardinals,
+four diagonals, `None`, `Up`, `Down` — of which `.dem` input uses only cardinals.
 
 **Files:**
-- Create: `src/ssr_env/level.py`, `tests/test_level.py`
+- Create: `src/ssr_env/entity.py`, `tests/test_entity.py`
+- Modify: `src/ssr_env/types.py` (correct Direction deltas; add EntType)
 
-Schema, chosen to be human-writable so hand-transcription stays viable:
-
-```json
-{
-  "name": "1-1",
-  "width": 5, "height": 5,
-  "tiles": [["water","water"], ["ground","grill"]],
-  "heights": [[0,0],[0,1]],
-  "player": {"x": 1, "y": 1, "z": 0, "facing": "North"},
-  "sausages": [{"x": 2, "y": 2, "z": 0, "orientation": "horizontal"}]
-}
-```
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/test_level.py
-import pytest
-
-from ssr_env.level import Level
-from ssr_env.types import Direction, Orientation, Tile
-
-RAW = {
-    "name": "test", "width": 2, "height": 2,
-    "tiles": [["ground", "grill"], ["water", "ground"]],
-    "heights": [[0, 1], [0, 0]],
-    "player": {"x": 0, "y": 0, "z": 0, "facing": "North"},
-    "sausages": [{"x": 1, "y": 1, "z": 0, "orientation": "horizontal"}],
-}
-
-
-def test_loads_dimensions():
-    lvl = Level.from_dict(RAW)
-    assert (lvl.width, lvl.height) == (2, 2)
-
-
-def test_tile_lookup_is_xy_indexed():
-    lvl = Level.from_dict(RAW)
-    assert lvl.tile(0, 0) is Tile.GROUND
-    assert lvl.tile(1, 0) is Tile.GRILL
-    assert lvl.tile(0, 1) is Tile.WATER
-
-
-def test_height_lookup():
-    assert Level.from_dict(RAW).height_at(1, 0) == 1
-
-
-def test_out_of_bounds_reads_as_water():
-    assert Level.from_dict(RAW).tile(-1, 0) is Tile.WATER
-
-
-def test_initial_player_and_sausages():
-    lvl = Level.from_dict(RAW)
-    assert lvl.player_start.facing is Direction.NORTH
-    assert lvl.sausage_starts[0].orientation is Orientation.HORIZONTAL
-
-
-def test_rejects_ragged_grid():
-    bad = {**RAW, "tiles": [["ground"], ["water", "ground"]]}
-    with pytest.raises(ValueError, match="ragged"):
-        Level.from_dict(bad)
-```
-
-- [ ] **Step 2: Run to verify failure**
-
-```bash
-uv run pytest tests/test_level.py -q
-```
-
-Expected: `ModuleNotFoundError: ssr_env.level`.
-
-- [ ] **Step 3: Extend types**
-
-Append to `src/ssr_env/types.py`:
-
-```python
-class Tile(Enum):
-    GROUND = "ground"
-    WATER = "water"
-    GRILL = "grill"
-
-
-class Orientation(Enum):
-    HORIZONTAL = "horizontal"
-    VERTICAL = "vertical"
-```
-
-- [ ] **Step 4: Implement `Level`**
-
-```python
-# src/ssr_env/level.py
-"""Static level geometry. Immutable; shared across all states of a puzzle."""
-from dataclasses import dataclass
-from pathlib import Path
-import json
-
-from .types import Direction, Orientation, Tile
-
-
-@dataclass(frozen=True)
-class PlayerStart:
-    x: int
-    y: int
-    z: int
-    facing: Direction
-
-
-@dataclass(frozen=True)
-class SausageStart:
-    x: int
-    y: int
-    z: int
-    orientation: Orientation
-
-
-@dataclass(frozen=True)
-class Level:
-    name: str
-    width: int
-    height: int
-    tiles: tuple[tuple[Tile, ...], ...]      # indexed [y][x]
-    heights: tuple[tuple[int, ...], ...]     # indexed [y][x]
-    player_start: PlayerStart
-    sausage_starts: tuple[SausageStart, ...]
-
-    @classmethod
-    def from_dict(cls, raw: dict) -> "Level":
-        rows = raw["tiles"]
-        if any(len(r) != raw["width"] for r in rows) or len(rows) != raw["height"]:
-            raise ValueError(f"ragged grid in level {raw['name']!r}")
-        p = raw["player"]
-        return cls(
-            name=raw["name"],
-            width=raw["width"],
-            height=raw["height"],
-            tiles=tuple(tuple(Tile(t) for t in row) for row in rows),
-            heights=tuple(tuple(int(h) for h in row) for row in raw["heights"]),
-            player_start=PlayerStart(p["x"], p["y"], p["z"], Direction[p["facing"].upper()]),
-            sausage_starts=tuple(
-                SausageStart(s["x"], s["y"], s["z"], Orientation(s["orientation"]))
-                for s in raw["sausages"]
-            ),
-        )
-
-    @classmethod
-    def load(cls, path: Path) -> "Level":
-        return cls.from_dict(json.loads(Path(path).read_text()))
-
-    def in_bounds(self, x: int, y: int) -> bool:
-        return 0 <= x < self.width and 0 <= y < self.height
-
-    def tile(self, x: int, y: int) -> Tile:
-        """Out-of-bounds reads as water: the island is surrounded by sea."""
-        return self.tiles[y][x] if self.in_bounds(x, y) else Tile.WATER
-
-    def height_at(self, x: int, y: int) -> int:
-        return self.heights[y][x] if self.in_bounds(x, y) else 0
-```
-
-- [ ] **Step 5: Run to verify pass**
-
-```bash
-uv run pytest tests/test_level.py -q
-```
-
-Expected: 6 passed.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/ssr_env/level.py tests/test_level.py && git commit -m "feat: level geometry model"
-```
+- [ ] **Step 1** Rewrite `Direction` to match the game exactly, including diagonals
+      and `None`/`Up`/`Down`. Add `INPUT_DIRECTIONS` for the four `.dem` cardinals.
+      Add `EntType` with all nine members.
+- [ ] **Step 2** Write failing tests: North delta is `(0, 1)`; `INPUT_DIRECTIONS`
+      has exactly four members; `EntType` has exactly nine.
+- [ ] **Step 3** Implement. `Entity` is a frozen dataclass; `STATIC_TYPES` and
+      `DYNAMIC_TYPES` partition `EntType`.
+- [ ] **Step 4** Test that `cookdata` unpacks base-4 into four faces and repacks
+      losslessly across the full 0-255 range.
+- [ ] **Step 5** Run and commit.
 
 ---
 
-### Task 6: Game state — immutable and hashable
+### Task 6: Game state and the canonical state key
 
-Hashability is not cosmetic: Phase 1 enumerates the full reachable state graph and needs states as dict keys.
+`GameState.BakStruct` — the game's own undo snapshot — compares states for equality
+on exactly `pos`, `direction`, `cookdata` per entity. That is authoritative: it is
+the identity relation the game itself uses, so Phase 1's enumeration inherits a
+ground-truth definition of "same state" rather than a guessed one. `rot`, `pivot`,
+`turndir` and in-flight `movement` are transient within a move's resolution and
+must be excluded from the key.
 
 **Files:**
 - Create: `src/ssr_env/state.py`, `tests/test_state.py`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1** Write failing tests: two states differing only in `rot` share a
+      state key; two differing in `cookdata` do not; the key is hashable and
+      stable across reconstruction.
+- [ ] **Step 2** Implement `GameState` holding `tuple[Entity, ...]`, with
+      `state_key()` returning a hashable tuple of `(id, pos, direction, cookdata)`
+      over dynamic entities only — static geometry cannot change.
+- [ ] **Step 3** Test that static entities are excluded from the key.
+- [ ] **Step 4** Run and commit.
 
-```python
-# tests/test_state.py
-from ssr_env.level import Level
-from ssr_env.state import GameState, Sausage
-from ssr_env.types import CookState, Direction, Orientation
-from tests.test_level import RAW
+---
 
+### Task 6.5: Configuration-space upper bound
 
-def test_initial_state_matches_level():
-    st = GameState.initial(Level.from_dict(RAW))
-    assert st.player.x == 0 and st.player.facing is Direction.NORTH
-    assert len(st.sausages) == 1
+Spec §4.1's tractability estimate is the load-bearing assumption of the whole
+project, and it was made before the `cookdata` encoding was known. This task
+bounds the risk as early as it can be bounded.
 
+**Scope limit, stated honestly:** the *reachable* state count cannot be measured
+without a working `step()`, which does not exist until Task 13. What is computable
+from geometry alone is a combinatorial **upper bound** on configuration space. A
+small upper bound proves tractability; a large one proves nothing but flags risk.
+The true reachable measurement is Task 13.5.
 
-def test_state_is_hashable_and_value_equal():
-    lvl = Level.from_dict(RAW)
-    assert hash(GameState.initial(lvl)) == hash(GameState.initial(lvl))
-    assert GameState.initial(lvl) == GameState.initial(lvl)
+**Files:**
+- Create: `tools/state_space.py`, `docs/state-space.md`
 
-
-def test_states_differing_in_facing_are_distinct():
-    lvl = Level.from_dict(RAW)
-    a = GameState.initial(lvl)
-    b = a.with_player(a.player.turned(Direction.SOUTH))
-    assert a != b and hash(a) != hash(b)
-
-
-def test_sausage_starts_raw_on_all_four_faces():
-    s = GameState.initial(Level.from_dict(RAW)).sausages[0]
-    assert s.faces == (CookState.RAW,) * 4
-
-
-def test_sausage_is_burnt_when_any_face_burnt():
-    s = Sausage(1, 1, 0, Orientation.HORIZONTAL,
-                (CookState.RAW, CookState.BURNT, CookState.RAW, CookState.RAW))
-    assert s.is_burnt
-
-
-def test_sausage_is_cooked_only_when_all_faces_cooked():
-    s = Sausage(1, 1, 0, Orientation.HORIZONTAL, (CookState.COOKED,) * 4)
-    assert s.is_cooked
-```
-
-- [ ] **Step 2: Run to verify failure**
-
-```bash
-uv run pytest tests/test_state.py -q
-```
-
-Expected: `ModuleNotFoundError: ssr_env.state`.
-
-- [ ] **Step 3: Add `CookState` to types**
-
-```python
-class CookState(Enum):
-    RAW = "raw"
-    COOKED = "cooked"
-    BURNT = "burnt"
-```
-
-- [ ] **Step 4: Implement state**
-
-Face indices `0..3` are the sausage's four cookable surfaces (two halves x two sides). The mapping from index to physical surface, and how rolling permutes it, is derived in Task 10 — the container is defined here, the permutation is not.
-
-```python
-# src/ssr_env/state.py
-"""Mutable-by-copy game state. Frozen dataclasses so states are hashable."""
-from dataclasses import dataclass, replace
-
-from .level import Level
-from .types import CookState, Direction, Orientation
-
-
-@dataclass(frozen=True)
-class Player:
-    x: int
-    y: int
-    z: int
-    facing: Direction
-
-    def turned(self, facing: Direction) -> "Player":
-        return replace(self, facing=facing)
-
-    def moved(self, x: int, y: int, z: int) -> "Player":
-        return replace(self, x=x, y=y, z=z)
-
-
-@dataclass(frozen=True)
-class Sausage:
-    x: int
-    y: int
-    z: int
-    orientation: Orientation
-    faces: tuple[CookState, CookState, CookState, CookState]
-
-    @property
-    def is_burnt(self) -> bool:
-        return CookState.BURNT in self.faces
-
-    @property
-    def is_cooked(self) -> bool:
-        return all(f is CookState.COOKED for f in self.faces)
-
-    @property
-    def cells(self) -> tuple[tuple[int, int], tuple[int, int]]:
-        """The two grid cells this sausage occupies."""
-        if self.orientation is Orientation.HORIZONTAL:
-            return ((self.x, self.y), (self.x + 1, self.y))
-        return ((self.x, self.y), (self.x, self.y + 1))
-
-
-@dataclass(frozen=True)
-class GameState:
-    level: Level
-    player: Player
-    sausages: tuple[Sausage, ...]
-
-    @classmethod
-    def initial(cls, level: Level) -> "GameState":
-        p = level.player_start
-        return cls(
-            level=level,
-            player=Player(p.x, p.y, p.z, p.facing),
-            sausages=tuple(
-                Sausage(s.x, s.y, s.z, s.orientation, (CookState.RAW,) * 4)
-                for s in level.sausage_starts
-            ),
-        )
-
-    def with_player(self, player: Player) -> "GameState":
-        return replace(self, player=player)
-
-    def with_sausages(self, sausages: tuple[Sausage, ...]) -> "GameState":
-        return replace(self, sausages=sausages)
-```
-
-- [ ] **Step 5: Run to verify pass**
-
-```bash
-uv run pytest tests/test_state.py -q
-```
-
-Expected: 6 passed.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/ssr_env/types.py src/ssr_env/state.py tests/test_state.py && git commit -m "feat: hashable game state"
-```
+- [ ] **Step 1** For each level, compute `product over dynamic entities of
+      (walkable cells x directions x reachable cookdata values)`.
+- [ ] **Step 2** Report per level, sorted, against world and level number.
+- [ ] **Step 3** Write `docs/state-space.md` with the distribution and the
+      resulting recommendation for the generator's difficulty ceiling.
+- [ ] **Step 4** If world-1 upper bounds already exceed ~10^9, escalate to the
+      spec's §8 risk table before proceeding — this is the early warning the task
+      exists to produce.
+- [ ] **Step 5** Commit.
 
 ---
 
@@ -1029,6 +771,22 @@ Worlds 2–5 introduce ladders, standing on sausages, and fork separation. Each 
 - [ ] **Step 3** Derive the missing rule with the owner; record it in `docs/mechanics.md`.
 - [ ] **Step 4** Implement, add a unit test pinning the rule in isolation, add the level to `PASSING`, commit.
 - [ ] **Step 5** Repeat until all 120 pass. **This is the Phase 0 exit gate.**
+
+---
+
+### Task 13.5: Measure the true reachable state space
+
+Now that `step()` exists, replace Task 6.5's upper bound with the real number.
+
+- [ ] **Step 1** Enumerate the full reachable component for every world-1 level via
+      BFS over `state_key()`, recording state count and wall-clock time.
+- [ ] **Step 2** Repeat for worlds 2-3 until enumeration exceeds ten minutes or
+      memory, and record where it breaks.
+- [ ] **Step 3** Update `docs/state-space.md` and spec §4.1 with measured counts,
+      replacing the estimate.
+- [ ] **Step 4** Set the generator difficulty ceiling from the measurement. This is
+      the number Phase 2 is built on.
+- [ ] **Step 5** Commit.
 
 ---
 

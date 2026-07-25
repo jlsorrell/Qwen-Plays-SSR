@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from ssr_env.dem import parse_dem, parse_dem_file
-from ssr_env.types import Action, Direction
+from ssr_env.types import Action, Coord, Direction
 
 DEM_DIR = Path(__file__).parent.parent / "data" / "dem"
 
@@ -44,8 +44,8 @@ def test_level_5_1_contains_undo():
 
 
 def test_direction_deltas_are_opposite_in_pairs():
-    assert Direction.NORTH.delta == (-Direction.SOUTH.delta[0], -Direction.SOUTH.delta[1])
-    assert Direction.EAST.delta == (-Direction.WEST.delta[0], -Direction.WEST.delta[1])
+    for a, b in ((Direction.NORTH, Direction.SOUTH), (Direction.EAST, Direction.WEST)):
+        assert a.delta == Coord(-b.delta.x, -b.delta.y, -b.delta.z)
 
 
 @pytest.mark.parametrize(
