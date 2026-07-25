@@ -45,6 +45,96 @@ class Direction(IntEnum):
     def delta(self) -> Coord:
         return _DELTAS[self]
 
+    def inverse(self) -> "Direction":
+        """Opposite direction. Mirrors `DirectionUtil.Inverse` (`invrot` table)."""
+        return Direction(_INVROT[self])
+
+    def rot_clockwise_90(self) -> "Direction":
+        """Quarter turn clockwise viewed from above. Mirrors `RotClockwise90`."""
+        return Direction(_ROT_CLOCKWISE[self])
+
+    def flip_h(self) -> "Direction":
+        """Mirror across the vertical axis. Mirrors `DirectionUtil.FlipH`."""
+        return Direction(_FLIP_H[self])
+
+    def flip_v(self) -> "Direction":
+        """Mirror across the horizontal axis. Mirrors `DirectionUtil.FlipV`."""
+        return Direction(_FLIP_V[self])
+
+    @property
+    def is_ortho(self) -> bool:
+        """One of the four cardinals. Mirrors `Ortho()`: `d < NorthEast`."""
+        return self < Direction.NORTHEAST
+
+    @property
+    def is_diagonal(self) -> bool:
+        """Mirrors `Diagonal()`: `NorthEast <= d < None`."""
+        return Direction.NORTHEAST <= self < Direction.NONE
+
+    @property
+    def is_valid(self) -> bool:
+        return self is not Direction.NONE
+
+    def parallel_to(self, other: "Direction") -> bool:
+        """Mirrors `ParallelTo`: same or opposite, and both valid."""
+        if not self.is_valid or not other.is_valid:
+            return False
+        return self is other or self.inverse() is other
+
+    def normal_to(self, other: "Direction") -> bool:
+        """Mirrors `NormalTo`: not parallel, and neither is None."""
+        return (
+            not self.parallel_to(other)
+            and self is not Direction.NONE
+            and other is not Direction.NONE
+        )
+
+    def left_of(self, other: "Direction") -> bool:
+        """Mirrors `DirectionUtil.LeftOf` — the turn-handedness flag.
+
+        Despite the name this asks whether `other` is a quarter turn *clockwise*
+        from `self`. `TryTurnPlayer` passes the result to `TryTurn` as its `left`
+        argument, which selects between the `StrafeL`/`StrafeR` movement types.
+        """
+        if self.is_ortho and other.is_ortho:
+            return self.rot_clockwise_90() is other
+        return _continue_rot(self, other) is self.rot_clockwise_90()
+
+
+# Lookup tables transcribed verbatim from DirectionUtil. Indices are Direction
+# ordinals. Kept as raw tuples rather than rewritten as arithmetic: the game is
+# the specification, and a clever reimplementation would be a place to be subtly
+# wrong.
+_INVROT = (1, 0, 3, 2, 5, 4, 7, 6, 8, 10, 9)
+_ROT_CLOCKWISE = (3, 2, 0, 1, 7, 6, 4, 5, 8, 9, 10)
+_ROT_CLOCKWISE_45 = (4, 5, 7, 6, 2, 3, 0, 1, 8, 9, 10)
+_FLIP_H = (0, 1, 3, 2, 6, 7, 4, 5, 8, 9, 10)
+_FLIP_V = (1, 0, 2, 3, 7, 6, 5, 4, 8, 9, 10)
+
+#: `continuerot[to][from]` — note the index order is reversed relative to the
+#: call signature `ContinueRot(from, to)`. Value 8 is Direction.NONE.
+_CONTINUE_ROT = (
+    (8, 8, 8, 8, 6, 8, 4, 8),
+    (8, 8, 8, 8, 8, 7, 8, 5),
+    (8, 8, 8, 8, 8, 6, 5, 8),
+    (8, 8, 8, 8, 7, 8, 8, 4),
+    (3, 8, 8, 0, 8, 8, 8, 8),
+    (8, 2, 1, 8, 8, 8, 8, 8),
+    (2, 8, 0, 8, 8, 8, 8, 8),
+    (8, 3, 8, 1, 8, 8, 8, 8),
+)
+
+
+def _continue_rot(from_dir: "Direction", to_dir: "Direction") -> "Direction":
+    """Mirrors `DirectionUtil.ContinueRot(from, to)` = `continuerot[to, from]`.
+
+    Only defined over the eight compass directions; `None`/`Up`/`Down` are out of
+    the table's range.
+    """
+    if from_dir >= Direction.NONE or to_dir >= Direction.NONE:
+        return Direction.NONE
+    return Direction(_CONTINUE_ROT[to_dir][from_dir])
+
 
 _DELTAS: dict[Direction, Coord] = {
     Direction.NORTH: Coord(0, 1, 0),

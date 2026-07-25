@@ -65,6 +65,37 @@ so the Python enum matches it exactly. `.dem` input uses only the four cardinals
 **Fraction / FractCoord** (`Fraction.cs`, `FractCoord.cs`) — exact rational
 arithmetic for sub-tick movement. Not yet transcribed; see §5.
 
+### 2.1 Direction algebra — CONFIRMED
+
+`DirectionUtil` is table-driven. The tables are transcribed verbatim into
+`types.py` rather than rewritten as arithmetic — the game is the specification,
+and a clever reimplementation is a place to be subtly wrong.
+
+| Operation | Rule |
+|---|---|
+| `Inverse` | pairwise swap; `Up`<->`Down`; `None` fixed |
+| `RotClockwise90` | N->E->S->W->N (clockwise from above, North = +y); diagonals cycle likewise; `None`/`Up`/`Down` fixed |
+| `FlipH` | mirrors East<->West, fixes North/South |
+| `FlipV` | mirrors North<->South, fixes East/West |
+| `Ortho(d)` | `d < NorthEast` — the four cardinals |
+| `Diagonal(d)` | `NorthEast <= d < None` |
+| `Valid(d)` | `d != None` |
+| `ParallelTo(a,b)` | `a == b or a.Inverse() == b`, **and both valid** |
+| `NormalTo(a,b)` | not parallel, and neither is `None` |
+
+**`LeftOf(a, b)` is a trap.** Despite the name it asks whether `b` is a quarter
+turn *clockwise* from `a`: for orthogonal inputs it is `a.RotClockwise90() == b`.
+`TryTurnPlayer` passes its result to `TryTurn` as the `left` flag, which selects
+between the `StrafeL` and `StrafeR` movement types. For non-orthogonal inputs it
+consults `continuerot[to, from]` — note the index order is reversed relative to
+the call signature `ContinueRot(from, to)`.
+
+Note `ParallelTo` returns false when either direction is `None`, so `None` is
+parallel to nothing, *including itself*. Consequently `parallel` and `normal`
+partition every pair of planar directions exactly — asserted as a test invariant.
+
+Source: `DirectionUtil.cs:73-149,181-237`.
+
 ---
 
 ## 3. Entity model — CONFIRMED
