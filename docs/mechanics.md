@@ -467,7 +467,40 @@ Source: `GameState.cs:1394 MovementsTick`.
 Two fall predicates exist, one stricter than the other; establish where each
 applies. TODO.
 
-## 9. Cooking and burning — NOT TRANSCRIBED
+## 9. Cooking and burning — PARTIAL
+
+### 9.1 The four per-face values — CONFIRMED
+
+`DoCook` (`GameState.cs:~3200-3280`) writes faces back with
+`cookdata = a0 + 4*a1 + 16*a2 + 64*a3`, matching the base-4 packing in §3.
+The per-face values are:
+
+| Value | Meaning |
+|---|---|
+| 0 | raw |
+| 1 | cooked (grill perpendicular to the sausage's axis) |
+| 2 | cooked (grill parallel to the sausage's axis) |
+| 3 | **burnt** |
+
+The 1-versus-2 split comes from `direction2.ParallelTo(e.direction)` — the grill
+direction relative to the sausage — so both are cooked states differing only in
+how the sausage met the grill. Values below 3 emit sparks; 3 emits smoke.
+
+**This resolves open question 1.** The face alphabet is four wide because
+"cooked" is recorded two ways, not because there is an ash state.
+
+### 9.2 Burnt marks the sausage's `dat` — CONFIRMED
+
+When any face reaches 3, `dat` becomes `"B;<bbqdat>;<bbqdat2>"`. Together with
+the drowning marker from §8 (`'L'` prefix), **`dat` on a sausage is a status
+field** carrying its failure mode.
+
+### 9.3 Still to transcribe
+
+The `totrycook` collection path, when a face is selected for cooking, and how
+`AllCooked` reads these values for the win condition.
+
+## 9.4 Old notes — NOT TRANSCRIBED
 
 `DoCook`, the `totrycook` list, `CalcBBQAshSteps`, `sausagescooked`,
 `haveevercookedall`.
@@ -625,8 +658,8 @@ identified until rolling and cooking work.
 
 ## 13. Open questions
 
-1. What do the four per-face `cookdata` values mean? Raw / cooked / burnt leaves
-   one unaccounted for. `CalcBBQAshSteps` hints at an ash state.
+1. ~~What do the four per-face `cookdata` values mean?~~ **Answered in §9.1**:
+   0 raw, 1 cooked-perpendicular, 2 cooked-parallel, 3 burnt.
 2. Which operation triggers the base-4 face reversal at `Entity.cs:341`?
 3. When do the `Automatic*` player actions fire without input?
 4. What is `stuckto`? Suspected: sausage skewered on the fork.
