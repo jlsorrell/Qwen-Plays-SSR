@@ -48,6 +48,10 @@ class Entity:
     #: mask table — the mask carries the chunk's shape and its ladder encoding,
     #: so this is load-bearing geometry, not decoration.
     dat: str = ""
+    #: Not cosmetic despite the names: `Entity.Decoration()` consults both, and
+    #: `Solid()` is `!Decoration()`. Dropping them makes ground solidity wrong.
+    tilenum: int = 0
+    tileset: int = 0
     # Transient within a move's resolution; never part of the state key.
     rot: int = 0
     turndir: Direction = Direction.NONE

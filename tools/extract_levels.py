@@ -179,11 +179,31 @@ class RawEntity:
     pivot: int
 
 
+def parse_level_metadata(text: str) -> dict:
+    """Parse the '*'-separated metadata that follows the entity records.
+
+    Field order, per `GameState.LoadDat`:
+        0 entities | 1 levelcompleted | 2 worldsausagesissued | 3 tileset
+        4 displayname | 5 sausagescooked | 6 musicseed
+
+    `tileset` is load-bearing: `Entity.Decoration()` consults the level-wide
+    tileset alongside each entity's own, and `Solid()` is `!Decoration()`.
+    """
+    f = text.split("*")
+    def field(i: int, default: str = "") -> str:
+        return f[i] if len(f) > i and f[i] else default
+    return {
+        "tileset": int(field(3, "0")),
+        "display_name": field(4),
+        "music_seed": int(field(6, "0")),
+    }
+
+
 def parse_level_string(text: str) -> list[RawEntity]:
     """Parse a level state string into entities, following `GameState.LoadDat`.
 
     Only the segment before the first '*' holds entity records; everything after
-    is level metadata (display name, music seed, ...). Records are '|'-separated.
+    is level metadata (see `parse_level_metadata`). Records are '|'-separated.
     A leading record beginning 'F' or 'I' is a flag rather than an entity: 'I'
     carries pushtargetlevel, 'F' is a bare marker. Both are skipped here.
 
@@ -244,7 +264,11 @@ def main() -> None:
     args.dest.mkdir(parents=True, exist_ok=True)
     for name, text in levels.items():
         ents = parse_level_string(text)
-        payload = {"name": name, "entities": [asdict(e) for e in ents]}
+        payload = {
+            "name": name,
+            **parse_level_metadata(text),
+            "entities": [asdict(e) for e in ents],
+        }
         if args.dump_raw:
             payload["raw"] = text
         (args.dest / f"{name}.json").write_text(json.dumps(payload, indent=1))

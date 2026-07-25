@@ -217,7 +217,63 @@ way from the key you pressed. Confirm against replay before trusting it.
 
 Source: `GameState.cs:1810 TryMovePlayer`.
 
-### 5.4 Still to transcribe
+### 5.4 Occupancy and solidity — CONFIRMED
+
+`Entity.Extended()` decides whether an entity occupies one cell or two: sausages
+and islands always; **the player only while the fork is attached**. Once the fork
+detaches into its own `EntType.fork` entity, the player becomes a single cell.
+An extended entity occupies `pos` and `pos + direction`.
+
+`Entity.At(pos)` resolves islands through the mask and everything else through
+that cell list. `EntAt(pos)` searches dynamic entities before static ones —
+order matters, since a sausage resting on ground must be found before the ground.
+`SolidEntAt(pos)` is `EntAt(pos)?.Solid() ?? false`.
+
+**`Utility.Solid(e)` is `!e.Decoration()`** — solidity is defined negatively.
+`Entity.Decoration()` applies only to `EntType.ground` and reads the entity's
+`tileset`/`tilenum` **and** the level-wide tileset:
+
+- level tileset 4: tilesets 7/8/9 with `4 <= tilenum <= 7` are **not** decorative;
+  nor is tileset 9 with `tilenum < 4`
+- level tileset 0: tilesets 5/13 with `tilenum >= 6` **are** decorative
+- otherwise: decorative iff tileset is 7, 8 or 9
+
+This is why `tilenum`/`tileset` cannot be discarded as cosmetic — they decide
+whether ground can be stood on. Second time a "decorative" field turned out to
+be geometry; the first was `dat` (§10.2).
+
+Other type predicates from `Utility.cs`: `Directional` (player, ladder, sausage),
+`SubjectToPassiveForces` (sausage, fork, island), `NeedsGround` (player, sausage,
+fork), `CanHatTurn` (sausage, fork).
+
+Implemented in `geometry.py`. **Validated end-to-end: 104/104 players in real
+levels stand on something solid**, which requires the mask join, mask decoding,
+occupancy and solidity all to be simultaneously correct.
+
+Source: `Entity.cs Extended/At/Decoration`, `GameState.cs:5030 SolidEntAt`,
+`Utility.cs:60-95`.
+
+### 5.5 Level string metadata — CONFIRMED
+
+The `*`-separated fields after the entity records, per `GameState.LoadDat`:
+
+| Index | Field |
+|---|---|
+| 0 | entity records |
+| 1 | levelcompleted (CSV) |
+| 2 | worldsausagesissued (CSV) |
+| 3 | **tileset** — feeds `Decoration()`, defaults 0 |
+| 4 | **displayname** — the in-game level name |
+| 5 | sausagescooked |
+| 6 | musicseed |
+
+All 206 extracted levels carry a display name. Many are the names players know
+("Cold Gate", "Pressure Points", "Shy Dragon", "Emerson Jetty"); internal chunks
+keep their raw names ("bridge1", "fillerisland"). **These are a likely shortcut
+for the `.dem`-to-level mapping** (§ replay), since the owner can recognise them
+directly.
+
+### 5.6 Still to transcribe
 
 `TryPushEnt` (the recursion's other half), `PassiveForceSweep`, `Movement.Translation`
 construction, `AddTranslation`, `AddTranslationOK`, `AddRotation`, `AddPivot`,

@@ -21,6 +21,9 @@ StateKey = tuple[EntityKey, ...]
 @dataclass(frozen=True, slots=True)
 class GameState:
     entities: tuple[Entity, ...]
+    #: Level-wide tileset, from field 3 of the level string. Feeds
+    #: `Entity.Decoration()` and therefore solidity.
+    tileset: int = 0
     lost_reason: str = ""
 
     def state_key(self) -> StateKey:

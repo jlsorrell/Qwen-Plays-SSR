@@ -1,11 +1,15 @@
 """Load extracted level geometry into a GameState.
 
 Input is the JSON emitted by `tools/extract_levels.py`, one file per level.
-`tilenum` and `tileset` are dropped — they affect appearance only.
 
-`dat` is **kept**. For `EntType.ISLAND` it names the island and is the key into
-the island-mask table, and masks carry both the chunk's shape and its ladder
-encoding (`GameState.LadderAt` reads mask values 3..6 as ladder directions).
+Nothing here is dropped as cosmetic, because twice now a field that looked
+decorative turned out to be geometry:
+
+- `dat` on `EntType.ISLAND` is the island-mask key, and masks carry the chunk's
+  shape and its ladder encoding (`GameState.LadderAt` reads values 3..6).
+- `tilenum` and `tileset` feed `Entity.Decoration()`, and `Utility.Solid` is
+  `!Decoration()` — so they decide whether ground can be stood on.
+- The level-wide `tileset` (field 3 of the level string) feeds the same test.
 """
 
 import json
@@ -30,6 +34,8 @@ def entity_from_raw(raw: dict) -> Entity:
         turndir=Direction(raw["turndir"]),
         pivot=raw["pivot"],
         dat=raw.get("dat", ""),
+        tilenum=raw.get("tilenum", 0),
+        tileset=raw.get("tileset", 0),
     )
 
 
@@ -136,7 +142,16 @@ def footprint_type_from_mask(value: int) -> int:
 
 def load_level(path: Path) -> GameState:
     raw = json.loads(Path(path).read_text())
-    return GameState(entities=tuple(entity_from_raw(e) for e in raw["entities"]))
+    return GameState(
+        entities=tuple(entity_from_raw(e) for e in raw["entities"]),
+        tileset=raw.get("tileset", 0),
+    )
+
+
+def level_display_name(name: str, levels_dir: Path = LEVELS_DIR) -> str:
+    """The level's in-game name, e.g. `leveltest7` -> "Sludge Coast"."""
+    raw = json.loads((Path(levels_dir) / f"{name}.json").read_text())
+    return raw.get("display_name", "")
 
 
 def load_level_by_name(name: str, levels_dir: Path = LEVELS_DIR) -> GameState:
