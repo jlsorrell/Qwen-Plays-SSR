@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .dem import parse_dem_file
-from .level import load_level_by_name, playable_levels
-from .mechanics import StepResult, step
+from .level import load_island_masks, load_level_by_name, playable_levels
+from .mechanics import StepResult, UnimplementedMechanic, is_solved, step
 from .render import render
 from .state import GameState
 from .types import Input
@@ -42,16 +42,29 @@ class ReplayReport:
         )
 
 
-def replay(state: GameState, inputs: list[Input], name: str = "") -> ReplayReport:
+def replay(
+    state: GameState, inputs: list[Input], name: str = "", masks=None
+) -> ReplayReport:
+    if masks is None:
+        masks = load_island_masks()
     history: list[GameState] = []
     for i, action in enumerate(inputs):
-        result: StepResult = step(state, action, history)
+        try:
+            result: StepResult = step(state, action, history, masks, name)
+        except UnimplementedMechanic as exc:
+            return ReplayReport(
+                name, False, i, len(inputs), i,
+                f"unimplemented mechanic: {exc}", render(state, name),
+            )
         if result.lost:
             return ReplayReport(
                 name, False, i, len(inputs), i, result.reason, render(result.state, name)
             )
         state = result.state
-    solved = step(state, None, history).solved
+    try:
+        solved = step(state, None, history).solved
+    except UnimplementedMechanic:
+        solved = False
     return ReplayReport(
         name,
         solved,

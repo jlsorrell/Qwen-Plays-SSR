@@ -228,3 +228,29 @@ def test_grill_cells_and_bbq_entities_both_exist():
         len(load_level_by_name(n).of_type(EntType.BBQ)) for n in playable_levels()
     )
     assert grill_cells > 0 and bbq_entities > 0
+
+
+def test_merged_levels_have_exactly_one_player():
+    """Fragments must be merged, and ids renumbered, or the player is missing."""
+    from ssr_env.level import load_full_level, playable_full_levels
+
+    for name in playable_full_levels()[:30]:
+        assert len(load_full_level(name).of_type(EntType.PLAYER)) == 1
+
+
+def test_merging_recovers_entities_from_fragments():
+    """A multi-island parent holds only island placeholders until merged."""
+    from ssr_env.level import load_full_level
+
+    parent = load_level_by_name("islandshape21e")
+    assert all(e.type is EntType.ISLAND for e in parent.entities)
+    merged = load_full_level("islandshape21e")
+    assert len(merged.entities) > len(parent.entities)
+    assert merged.of_type(EntType.PLAYER)
+
+
+def test_merged_entity_ids_are_unique():
+    from ssr_env.level import load_full_level
+
+    ents = load_full_level("islandshape21e").entities
+    assert len({e.id for e in ents}) == len(ents)

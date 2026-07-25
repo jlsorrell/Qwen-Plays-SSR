@@ -13,6 +13,7 @@ decorative turned out to be geometry:
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from .entity import Entity
@@ -183,6 +184,38 @@ def parent_level(name: str) -> str:
     return name.split(FRAGMENT_MARKER)[0]
 
 
+def load_full_level(name: str, levels_dir: Path = LEVELS_DIR) -> GameState:
+    """Load a level with its island fragments merged in.
+
+    A multi-island level stores only positioned `EntType.ISLAND` placeholders in
+    the parent file; the entities of each chunk live in `<parent>__<dat>` and are
+    expressed in that chunk's own coordinates. Merging translates each fragment's
+    entities by its placeholder's position.
+
+    `island0` normally has no fragment file — it is pure mask terrain, and its
+    mask is keyed by the parent name. That is the same fallback `resolve_island_mask`
+    applies, which is why the join rule works out.
+
+    Entity ids are renumbered across fragments, since each file numbers from its
+    own sequence and collisions would break `by_id` and the state key.
+    """
+    directory = Path(levels_dir)
+    parent = load_level(directory / f"{name}.json")
+    merged: list[Entity] = list(parent.entities)
+
+    for placeholder in parent.entities:
+        if placeholder.type is not EntType.ISLAND:
+            continue
+        fragment_path = directory / f"{island_mask_key(name, placeholder.dat)}.json"
+        if not fragment_path.is_file():
+            continue  # pure mask terrain, no entities of its own
+        for entity in load_level(fragment_path).entities:
+            merged.append(replace(entity, pos=entity.pos + placeholder.pos))
+
+    renumbered = tuple(replace(e, id=i) for i, e in enumerate(merged))
+    return replace(parent, entities=renumbered)
+
+
 def playable_levels(levels_dir: Path = LEVELS_DIR) -> list[str]:
     """Candidate levels for a `.dem` replay, as parent-level names.
 
@@ -199,3 +232,12 @@ def playable_levels(levels_dir: Path = LEVELS_DIR) -> list[str]:
         if len(load_level_by_name(name, levels_dir).of_type(EntType.PLAYER)) == 1:
             parents.add(parent_level(name))
     return sorted(parents)
+
+
+def playable_full_levels(levels_dir: Path = LEVELS_DIR) -> list[str]:
+    """Playable levels that merge to exactly one player — the replay candidates."""
+    return [
+        name
+        for name in playable_levels(levels_dir)
+        if len(load_full_level(name, levels_dir).of_type(EntType.PLAYER)) == 1
+    ]
