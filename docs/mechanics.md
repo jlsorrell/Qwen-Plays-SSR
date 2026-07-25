@@ -117,15 +117,75 @@ TODO: transcribe the perpendicular/unladen branch and the meaning of
 
 ---
 
-## 5. Player movement — NOT TRANSCRIBED
+## 5. Player movement — PARTIAL
 
-Entry: `TryMovePlayer`, `TryFork`.
-Movement construction: `AddTranslation`, `AddTranslationOK`, `AddRotation`,
-`AddPivot`.
-Resolution: `MovementsTick`, `MoveTickLength`, `MaxSpeed`, `SortDynamicEnts`,
-`InsertionSort`.
+### 5.1 Moves are speculative and can be rolled back
 
-TODO.
+`TryMovePlayer` calls `BakEntities()` before doing anything, then either
+`DiscardLastBackup()` on success or `RestoreEntities()` when the attempt turns
+out not to work. The game *tries* a move, inspects the result, and rewinds if it
+doesn't like it.
+
+This is a gift for the Python port. `GameState` is already immutable, so a
+"backup" is just holding a reference to the previous value and a "restore" is
+returning it — no snapshot machinery needed. Where the game mutates and rewinds,
+we build candidate states and discard them.
+
+Source: `GameState.cs:1810 TryMovePlayer`.
+
+### 5.2 Force propagation is the core primitive
+
+Pushing is recursive: `ApplyForce(...)` → `TryPushEnt(...)` → `ApplyForce(...)`.
+
+`ApplyForce` is overloaded four ways (entity, coord, coord-with-`entsfound`,
+bounding-box-with-cell-array) but they converge: find the entities occupying the
+target cells, filter out ineligible ones, and call `TryPushEnt` on the first
+eligible one.
+
+Parameters and what they carry:
+
+| Parameter | Meaning |
+|---|---|
+| `dir` | push direction |
+| `torsion` | rotational component — the roll-versus-slide selector. Confirm 0 = slide, 1 = roll. |
+| `speed` | feeds `Movement` timing; interacts with `MaxSpeed` |
+| `weakforce` | a weaker push variant; establish where it applies |
+| `canchangeplayerfooting` | whether the push may move what the player stands on |
+| `recurse` | whether the push chains onward |
+
+Entities are **ineligible** to receive force when any of:
+- already moving (`current.movement != null`)
+- a decoration (`Decoration()`)
+- a laden fork (`type == fork && Laden()`)
+
+And the push **fails outright** if the target's `LadenTarget()` is the player —
+you cannot push something that is carrying you.
+
+`Entity.Border(dir)` supplies the pushing cells; `RoughOccupancyBounds_Wide()`
+bounds the search.
+
+Source: `GameState.cs:3396-3453 ApplyForce`.
+
+### 5.3 Standing on a sausage
+
+If `Floor(player)` is a sausage and the input is perpendicular to that sausage's
+direction (`dir.NormalTo(entity.direction)`), the game applies force at the
+player's feet in the **inverse** direction — the sausage rolls out from under
+you. It then inspects `movement.torsion` and whether any entity under the
+sausage's lower footprint is stationary, and if so **inverts the player's own
+movement direction** (`dir = dir.Inverse()`).
+
+So walking perpendicular while standing on a sausage can move you the opposite
+way from the key you pressed. Confirm against replay before trusting it.
+
+Source: `GameState.cs:1810 TryMovePlayer`.
+
+### 5.4 Still to transcribe
+
+`TryPushEnt` (the recursion's other half), `PassiveForceSweep`, `Movement.Translation`
+construction, `AddTranslation`, `AddTranslationOK`, `AddRotation`, `AddPivot`,
+`MovementsTick`, `MoveTickLength`, `MaxSpeed`, `SortDynamicEnts`, `Floor`,
+`Direction.NormalTo`, `Direction.Inverse`.
 
 ## 6. The fork — NOT TRANSCRIBED
 
