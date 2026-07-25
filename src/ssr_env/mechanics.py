@@ -276,6 +276,9 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
 #: Enough for any real level; a runaway means the fall rules are wrong.
 _MAX_SETTLE_STEPS = 64
 
+#: Longest push chain we attempt before treating it as unmodelled.
+_MAX_PUSH_DEPTH = 8
+
 
 def try_push(
     state: GameState,
@@ -283,6 +286,7 @@ def try_push(
     direction: Direction,
     masks=None,
     level_name: str = "",
+    depth: int = 0,
 ) -> GameState:
     """Push one entity. Mirrors `GameState.TryPushEnt`, partially.
 
@@ -311,11 +315,24 @@ def try_push(
 
     rolls = entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction)
 
+    # Push chains: `ApplyForce` recurses, so a pushed entity pushes whatever it
+    # meets. If the chain fails to clear, the whole push fails and the move is
+    # blocked — `TryPushEnt` returns false rather than partially applying.
     for cell in border_cells(entity, state, direction):
-        if solid_ent_at(state, cell, masks, level_name):
+        blocker = ent_at(state, cell, masks, level_name)
+        if blocker is None or not is_solid(blocker, state.tileset):
+            continue
+        if blocker.id == entity.id:
+            continue
+        if depth >= _MAX_PUSH_DEPTH:
             raise UnimplementedMechanic(
-                "push-chain", f"pushed entity blocked at {tuple(cell)}"
+                "push-chain", f"chain deeper than {_MAX_PUSH_DEPTH}"
             )
+        pushed = try_push(state, blocker, direction, masks, level_name, depth + 1)
+        if pushed is state:
+            return state  # chain refused; the whole push fails
+        state = pushed
+        entity = state.by_id(entity.id)
 
     moved = replace(entity, pos=entity.pos + direction.delta)
     if rolls:
@@ -338,12 +355,9 @@ def try_push(
             state = state.replace_entity(
                 replace(fork, direction=fork.direction.inverse())
             )
-    candidate = state.replace_entity(moved)
-    if not under(moved, candidate, masks, level_name):
-        raise UnimplementedMechanic(
-            "push-into-fall", f"entity {entity.id} unsupported after push"
-        )
-    return candidate
+    # A pushed entity left unsupported simply falls; `settle` handles it and
+    # marks a drowned sausage lost.
+    return settle(state.replace_entity(moved), masks, level_name)
 
 
 def try_move_player(

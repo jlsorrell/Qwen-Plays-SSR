@@ -183,7 +183,7 @@ def test_sliding_still_leaves_rot_alone():
     assert after.rot == before.rot
 
 
-def test_pushing_a_sausage_into_a_void_raises():
+def test_pushing_a_sausage_into_a_void_loses_it():
     """Both of the sausage's cells must lose support before it falls.
 
     A sausage half over a ledge is still supported, so the void has to be wide
@@ -199,8 +199,9 @@ def test_pushing_a_sausage_into_a_void_raises():
     # both cells past the ground and it loses support entirely.
     s = Entity(pos=Coord(1, 0, 1), type=EntType.SAUSAGE, id=50, direction=Direction.EAST)
     state = GameState(entities=(*ground, s), tileset=0)
-    with pytest.raises(UnimplementedMechanic, match="push-into-fall"):
-        try_push(state, s, Direction.EAST)
+    after = try_push(state, s, Direction.EAST)
+    assert after.lost_reason == "SausageLost"
+    assert after.by_id(50).dat.startswith("L")
 
 
 def test_a_sausage_half_over_a_ledge_is_still_supported():
@@ -363,3 +364,25 @@ def test_settle_is_idempotent_once_resting():
 
     once = settle(flat())
     assert settle(once).state_key() == once.state_key()
+
+
+def test_push_chain_moves_two_sausages():
+    """ApplyForce recurses, so a pushed sausage pushes the next one."""
+    a = sausage(2, 2, ident=50, facing=Direction.EAST)
+    b = sausage(4, 2, ident=51, facing=Direction.EAST)
+    state = flat(width=10, height=6, player_at=(1, 2), facing=Direction.EAST,
+                 extra=(a, b))
+    result = step(state, Direction.EAST)
+    assert result.state.by_id(50).pos == Coord(3, 2, 1)
+    assert result.state.by_id(51).pos == Coord(5, 2, 1)
+
+
+def test_a_refused_chain_blocks_the_whole_push():
+    """TryPushEnt returns false rather than partially applying a chain."""
+    a = sausage(2, 2, ident=50, facing=Direction.EAST)
+    wall = Entity(pos=Coord(4, 2, 1), type=EntType.BARRIER, id=61)
+    state = flat(width=10, height=6, player_at=(1, 2), facing=Direction.EAST,
+                 extra=(a, wall))
+    result = step(state, Direction.EAST)
+    assert result.state.by_id(50).pos == Coord(2, 2, 1)
+    assert not result.moved
