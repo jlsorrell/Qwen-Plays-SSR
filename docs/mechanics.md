@@ -457,18 +457,43 @@ So a weak force is an ordinary push with the sausage-and-fork special cases
 skipped. That demystifies the flag; the remaining question is only what those
 two branches do when they *are* active.
 
-**Why this is still not implemented.** What remains is `ApplyPivotForces1` and
-`2` in full: case analyses over `(fromdir, movedir, todir)`, each branch applying
-weak forces at one or two derived cells, with separate orthogonal and diagonal
-handling. Only the orthogonal half of each has been read.
+**`ApplyPivotForces1` — CONFIRMED, complete.** All forces are weak, torsion 1.
 
-Guessing here is unusually dangerous because a pivot moves the island *under the
-player*, so an error propagates into the terrain every later move reads rather
-than staying local to one entity. Every other approximation in this simulator is
-local and surfaces loudly; this one would not.
+```
+if fromdir.Ortho():
+    if fromdir not parallel to movedir and RotBetween(fromdir, movedir) == todir:
+        force at pos+todir, direction fromdir, speed 2
+elif todir not parallel to movedir and ContinueRot(todir, fromdir) != movedir:
+        force at pos+todir, direction todir,   speed 2
+```
 
-Remaining to read: the diagonal halves of `ApplyPivotForces1/2`, the two
-suppressed branches in `TryPushEnt`, and `GetHat`.
+**`ApplyPivotForces2` — CONFIRMED, complete.** All weak, torsion 1, speed 1
+unless noted. `C = ContinueRot(todir, fromdir)`.
+
+| `fromdir` | condition | forces applied |
+|---|---|---|
+| ortho | `== movedir` | `pos+movedir+fromdir` and `pos+movedir+todir`, both toward `movedir` |
+| ortho | `== movedir.Inverse()` | `pos+movedir` and `pos+movedir+todir`, toward `movedir` |
+| ortho | `RotBetween(fromdir,movedir) == todir` | `pos+movedir` and `pos+movedir+todir`, toward `movedir` |
+| ortho | otherwise | `pos+movedir` toward `movedir` |
+| diagonal | `todir == movedir` | `pos+movedir+fromdir`, `pos+movedir+todir` toward `movedir`; plus `pos+movedir` toward `C.Inverse()` |
+| diagonal | `todir == movedir.Inverse()` | `pos+movedir` toward `movedir`; `pos-movedir` toward `C.Inverse()` at speed 2 |
+| diagonal | `C == movedir` | `pos+movedir` toward `movedir` |
+| diagonal | otherwise | `pos+movedir` and `pos+movedir+todir` toward `movedir` |
+
+**The remaining blocker is not the forces.** Transcribing these revealed that
+the forces only describe what a pivot *displaces*; they say nothing about what
+the pivot does to the pivoting entity itself. That transformation lives in
+`Movement.Resolve`'s `MoveType.Pivot` branch, which is **unread**. Without it we
+know what a pivot pushes but not where the player ends up — so the forces are
+not implementable in isolation.
+
+Remaining to read, in priority order:
+1. `Movement.Resolve`, `MoveType.Pivot` branch — the actual transformation.
+2. The tail of `TryPivotTurn` after the `GetHat` recursion (collision check and
+   return value).
+3. The two `weakforce`-suppressed branches in `TryPushEnt`.
+4. `GetHat`.
 
 ### 5.12 Still to transcribe
 
