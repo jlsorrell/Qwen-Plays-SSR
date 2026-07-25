@@ -2,7 +2,7 @@
 
 import pytest
 
-from ssr_env.entity import Entity
+from ssr_env.entity import Entity, pack_cookdata
 from ssr_env.mechanics import UnimplementedMechanic, fork_cell, step, try_move_player
 from ssr_env.state import GameState
 from ssr_env.types import Action, Coord, Direction, EntType
@@ -10,10 +10,12 @@ from ssr_env.types import Action, Coord, Direction, EntType
 
 def flat(width=6, height=6, z=0, player_at=(2, 2), facing=Direction.NORTH, extra=()):
     """A flat plain of solid ground with a player on it."""
+    occupied = {(e.pos.x, e.pos.y) for e in extra if e.pos.z == z}
     ents = [
         Entity(pos=Coord(x, y, z), type=EntType.GROUND, id=100 + y * width + x, tileset=1)
         for x in range(width)
         for y in range(height)
+        if (x, y) not in occupied
     ]
     ents.append(
         Entity(pos=Coord(player_at[0], player_at[1], z + 1), type=EntType.PLAYER,
@@ -410,3 +412,58 @@ def test_the_island_underfoot_is_not_pushable():
     state, masks = island_state(barrier_at=None)
     island = state.by_id(70)
     assert try_push(state, island, Direction.EAST, masks, "lvl") is state
+
+
+def grill(x, y, z=0, ident=80, facing=Direction.EAST):
+    return Entity(pos=Coord(x, y, z), type=EntType.BBQ, id=ident, direction=facing)
+
+
+def test_rolling_onto_a_grill_cooks_a_face():
+    """Perpendicular grill cooks to 1; rot 0 cooks face 0 of the second half."""
+    s = sausage(2, 3, ident=50, facing=Direction.EAST)
+    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
+                 extra=(s, grill(2, 4, facing=Direction.NORTH)))
+    after = step(state, Direction.NORTH).state.by_id(50)
+    assert after.faces != (0, 0, 0, 0)
+    assert 1 in after.faces
+
+
+def test_a_parallel_grill_cooks_to_two():
+    s = sausage(2, 3, ident=50, facing=Direction.EAST)
+    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
+                 extra=(s, grill(2, 4, facing=Direction.EAST)))
+    after = step(state, Direction.NORTH).state.by_id(50)
+    assert 2 in after.faces
+
+
+def test_cooking_the_same_face_twice_burns_it():
+    """A face that is already non-zero goes to 3, which is fatal."""
+    from ssr_env.mechanics import cook
+
+    # rot 0 cooks face 3 of the half at `pos`, so face 3 is the one pre-cooked
+    # and the grill must sit directly beneath that half.
+    s = Entity(pos=Coord(2, 2, 1), type=EntType.SAUSAGE, id=50,
+               direction=Direction.EAST, cookdata=pack_cookdata((0, 0, 0, 1)))
+    state = flat(width=8, height=8, extra=(s, grill(2, 2, facing=Direction.NORTH)))
+    after = cook(state, [50])
+    assert 3 in after.by_id(50).faces
+    assert after.lost_reason == "Burned"
+    assert after.by_id(50).dat.startswith("B;")
+
+
+def test_a_stationary_sausage_is_not_recooked():
+    """Only sausages that moved enter totrycook, so resting does not burn."""
+    s = sausage(4, 4, ident=50, facing=Direction.EAST)
+    state = flat(width=8, height=8, extra=(s, grill(4, 3, facing=Direction.NORTH)))
+    once = step(state, Direction.NORTH).state
+    twice = step(once, Direction.NORTH).state
+    assert twice.by_id(50).faces == state.by_id(50).faces
+
+
+def test_grills_are_read_from_island_masks_too():
+    from ssr_env.mechanics import grill_direction_at
+
+    island = Entity(pos=Coord(0, 0, 0), type=EntType.ISLAND, id=70, dat="island0")
+    masks = {"lvl__island0": {"offset": [0, 0, 0], "mask": [[[2]]]}}
+    state = GameState(entities=(island,), tileset=0)
+    assert grill_direction_at(state, Coord(0, 0, 0), masks, "lvl") is Direction.EAST

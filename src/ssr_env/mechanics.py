@@ -13,7 +13,7 @@ Rules and their provenance live in `docs/mechanics.md`.
 
 from dataclasses import dataclass, replace
 
-from .entity import Entity
+from .entity import Entity, pack_cookdata
 from .geometry import (
     NEEDS_GROUND_TYPES,
     border_cells,
@@ -24,6 +24,11 @@ from .geometry import (
     occupies,
     solid_ent_at,
     under,
+)
+from .level import (
+    bbq_direction_from_mask,
+    mask_value_at,
+    resolve_island_mask,
 )
 from .state import GameState
 from .types import (
@@ -173,10 +178,7 @@ def try_pivot_turn(
 
     player = state.player
     pivoted = replace(player, pos=player.pos + pushdir.delta, direction=target_facing)
-    settled = settle(state.replace_entity(pivoted), masks, level_name)
-    return StepResult(
-        state=settled, lost=settled.lost, reason=settled.lost_reason or None
-    )
+    return StepResult(state=state.replace_entity(pivoted))
 
 
 def try_turn_player(
@@ -213,10 +215,31 @@ def try_turn_player(
     if _blocked_for(candidate, turned, turned.pos + direction.delta, masks, level_name):
         return try_pivot_turn(state, direction, masks, level_name)
 
-    settled = settle(candidate, masks, level_name)
-    return StepResult(
-        state=settled, lost=settled.lost, reason=settled.lost_reason or None
-    )
+    return StepResult(state=candidate)
+
+
+def _settle_and_cook(
+    before: GameState, after: GameState, masks, level_name: str
+) -> GameState:
+    """Settle gravity, then cook whatever sausage actually moved.
+
+    `MovementsTick` gathers sausages into `totrycook` as their movements
+    resolve, so only sausages that changed this step are cooked. Comparing
+    before and after reproduces that without modelling the movement list.
+    """
+    settled = settle(after, masks, level_name)
+    prior = {
+        e.id: (e.pos, e.direction, e.rot)
+        for e in before.entities
+        if e.type is EntType.SAUSAGE
+    }
+    moved = [
+        e.id
+        for e in settled.entities
+        if e.type is EntType.SAUSAGE
+        and prior.get(e.id) != (e.pos, e.direction, e.rot)
+    ]
+    return cook(settled, moved, masks, level_name) if moved else settled
 
 
 def _blocked_for(state: GameState, entity: Entity, cell, masks, level_name: str) -> bool:
@@ -278,6 +301,76 @@ _MAX_SETTLE_STEPS = 64
 
 #: Longest push chain we attempt before treating it as unmodelled.
 _MAX_PUSH_DEPTH = 8
+
+
+def grill_direction_at(state: GameState, cell, masks, level_name: str):
+    """Grill facing at a cell, or None. Mirrors `GameState.BBQAtDir`.
+
+    Grills come from two sources: `EntType.BBQ` entities carry their own
+    direction, and island mask values 2 and 20 encode East and North (§10.3).
+    """
+    entity = ent_at(state, cell, masks, level_name)
+    if entity is None:
+        return None
+    if entity.type is EntType.BBQ:
+        return entity.direction
+    if entity.type is EntType.ISLAND and masks:
+        mask = resolve_island_mask(level_name, entity.dat, masks)
+        if mask is not None:
+            return bbq_direction_from_mask(
+                mask_value_at(mask, entity.pos, cell)
+            )
+    return None
+
+
+#: Which cook face a grill touches, per `DoCook`. Indexed [rot][half], where
+#: half 0 is the cell at `pos` and half 1 is the cell at `pos + direction`.
+_COOK_FACE = ((3, 0), (2, 1))
+
+
+def cook(
+    state: GameState, sausage_ids, masks=None, level_name: str = ""
+) -> GameState:
+    """Cook the sausages that just moved. Mirrors `DoCook`. See §9.1.
+
+    Only sausages collected during the tick are cooked — the game gathers them
+    into `totrycook` as their movements resolve — so a sausage resting on a
+    grill is not re-cooked every turn.
+
+    A raw face (0) becomes 1 or 2 depending on whether the grill runs parallel
+    to the sausage; an already-cooked face becomes 3, which is burnt and fatal.
+    """
+    for sausage_id in sausage_ids:
+        try:
+            entity = state.by_id(sausage_id)
+        except KeyError:
+            continue
+        if entity.type is not EntType.SAUSAGE or entity.pos.z < OUT_OF_WORLD_Z:
+            continue
+        faces = list(entity.faces)
+        halves = (entity.pos, entity.pos + entity.direction.delta)
+        burnt = False
+        for half, cell in enumerate(halves):
+            grill = grill_direction_at(
+                state, cell + Direction.DOWN.delta, masks, level_name
+            )
+            if grill is None:
+                continue
+            index = _COOK_FACE[entity.rot][half]
+            if faces[index] == 0:
+                faces[index] = 2 if grill.parallel_to(entity.direction) else 1
+            else:
+                faces[index] = 3
+                burnt = True
+        if tuple(faces) == entity.faces:
+            continue
+        updated = replace(entity, cookdata=pack_cookdata(tuple(faces)))
+        if burnt:
+            updated = replace(updated, dat="B;" + updated.dat)
+        state = state.replace_entity(updated)
+        if burnt:
+            state = replace(state, lost_reason="Burned")
+    return state
 
 
 def try_push(
@@ -395,11 +488,7 @@ def try_move_player(
                 )
             player = state.player
 
-    moved_state = state.replace_entity(replace(player, pos=destination))
-    settled = settle(moved_state, masks, level_name)
-    return StepResult(
-        state=settled, lost=settled.lost, reason=settled.lost_reason or None
-    )
+    return StepResult(state=state.replace_entity(replace(player, pos=destination)))
 
 
 def step(
@@ -445,9 +534,21 @@ def step(
     else:
         result = try_turn_player(state, action, masks, level_name)
 
-    if not result.moved and history is not None:
-        history.pop()
-    return result
+    if not result.moved:
+        if history is not None:
+            history.pop()
+        return result
+
+    # Settle and cook once, against the state as it was on entry. Doing this
+    # inside the handlers would compare against a state whose pushes had already
+    # been applied, so nothing would look moved.
+    settled = _settle_and_cook(state, result.state, masks, level_name)
+    return replace(
+        result,
+        state=settled,
+        lost=settled.lost,
+        reason=settled.lost_reason or result.reason,
+    )
 
 
 def _laden(state: GameState) -> bool:
