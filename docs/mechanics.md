@@ -112,8 +112,12 @@ x, y, z, type, id, direction, dat, stuckto, rot, <unused 0>, cookdata,
 turndir, tilenum, tileset, pivot
 ```
 
-`tilenum`/`tileset` are cosmetic. `dat` carries the island name for
-`EntType.island` and links the overworld to levels.
+**No field here is safe to discard as cosmetic.** Twice a field that looked
+decorative turned out to be geometry:
+
+- `dat` names the island for `EntType.island` and is the island-mask key (§10.2).
+- `tilenum`/`tileset` feed `Entity.Decoration()`, and `Solid()` is
+  `!Decoration()`, so they decide whether ground can be stood on (§5.4).
 
 **`cookdata` packs four faces in base 4**, range 0..255:
 `cookdata%4`, `cookdata/4%4`, `cookdata/16%4`, `cookdata/64%4`. Four states per
