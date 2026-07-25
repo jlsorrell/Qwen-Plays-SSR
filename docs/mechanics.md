@@ -440,16 +440,35 @@ Note the player branch pushes **the island underneath itself** — that is the
 whole point of a pivot: the player braces against its own footing, which is why
 `canchangeplayerfooting` is true here and false everywhere else.
 
-**Why this is not implemented yet.** `ApplyPivotForces1` and `2` are case
-analyses over `(fromdir, movedir, todir)`, each branch applying *weak* forces at
-one or two derived cells, with separate handling for orthogonal versus diagonal
-`fromdir`. Reproducing them needs `weakforce` semantics (untranscribed — see
-§5.2) and `Movement.Pivot`. Guessing here is unusually dangerous because a pivot
-moves the island under the player, so an error propagates into the terrain
-rather than staying local to one entity.
+**`Movement.Pivot` — CONFIRMED.** Structurally identical to `Movement.Rotation`
+(§5.10): same `remaining = Fraction(1, 1 << (speed-1))`, same
+`left = to.LeftOf(from)`. It differs only in carrying `movetype = Pivot` and a
+`direction` (the pushdir), where a rotation has `Direction.None`. Nothing
+surprising here.
 
-Estimated remaining: read `ApplyPivotForces1/2` in full, `Movement.Pivot`,
-`GetHat`, and the `weakforce` path through `TryPushEnt`.
+**`weakforce` — CONFIRMED as a suppression flag.** It is not a different kind of
+push. Within `TryPushEnt` it appears in exactly three places: passed down to the
+recursive `ApplyForce`, and guarding two special cases that it *disables* —
+
+- a sausage branch gated on `!weakforce && e.type == sausage && !player.Extended()`
+- a fork branch gated on `!weakforce && e.type == fork && e.stuckto == -1 && e.direction == dir`
+
+So a weak force is an ordinary push with the sausage-and-fork special cases
+skipped. That demystifies the flag; the remaining question is only what those
+two branches do when they *are* active.
+
+**Why this is still not implemented.** What remains is `ApplyPivotForces1` and
+`2` in full: case analyses over `(fromdir, movedir, todir)`, each branch applying
+weak forces at one or two derived cells, with separate orthogonal and diagonal
+handling. Only the orthogonal half of each has been read.
+
+Guessing here is unusually dangerous because a pivot moves the island *under the
+player*, so an error propagates into the terrain every later move reads rather
+than staying local to one entity. Every other approximation in this simulator is
+local and surfaces loudly; this one would not.
+
+Remaining to read: the diagonal halves of `ApplyPivotForces1/2`, the two
+suppressed branches in `TryPushEnt`, and `GetHat`.
 
 ### 5.12 Still to transcribe
 
