@@ -563,10 +563,31 @@ def _laden(state: GameState) -> bool:
     )
 
 
-def is_solved(state: GameState) -> bool:
-    """All sausages cooked on all four faces, and the player back at start.
+#: Face values that count as properly cooked. `CheckGameWon` rejects 0 (raw)
+#: and 3 (burnt); 1 and 2 are the two cooked variants (§9.1).
+COOKED_FACE_VALUES = frozenset({1, 2})
 
-    Not yet transcribed — `AllCooked`, `CheckGameWon` and the return-to-start
-    condition are §11 of docs/mechanics.md.
+
+def all_cooked(state: GameState) -> bool:
+    """Every face of every sausage cooked. Mirrors `CheckGameWon`'s face loop."""
+    sausages = state.of_type(EntType.SAUSAGE)
+    if not sausages:
+        return False
+    return all(face in COOKED_FACE_VALUES for s in sausages for face in s.faces)
+
+
+def is_solved(state: GameState) -> bool:
+    """All sausages cooked on all four faces, and the player back at its start.
+
+    The face criterion is `CheckGameWon`: 0 (raw) or 3 (burnt) fails.
+
+    The return-to-start half is the game's level-exit test, whose exact form
+    (`CheckOnLevelExit`, `exitPos`/`exitDir`/`exitAttachment`) is only partly
+    transcribed — see docs/mechanics.md §11. Position is required; facing is not,
+    because it is not yet established whether the exit checks direction.
     """
-    raise UnimplementedMechanic("win condition", "AllCooked/CheckGameWon not transcribed")
+    if state.lost or not all_cooked(state):
+        return False
+    if state.start_pos is None:
+        return False
+    return state.player.pos == state.start_pos

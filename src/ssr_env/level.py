@@ -213,7 +213,13 @@ def load_full_level(name: str, levels_dir: Path = LEVELS_DIR) -> GameState:
             merged.append(replace(entity, pos=entity.pos + placeholder.pos))
 
     renumbered = tuple(replace(e, id=i) for i, e in enumerate(merged))
-    return replace(parent, entities=renumbered)
+    state = replace(parent, entities=renumbered)
+    players = state.of_type(EntType.PLAYER)
+    if len(players) == 1:
+        state = replace(
+            state, start_pos=players[0].pos, start_direction=players[0].direction
+        )
+    return state
 
 
 def playable_levels(levels_dir: Path = LEVELS_DIR) -> list[str]:

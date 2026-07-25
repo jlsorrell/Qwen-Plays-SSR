@@ -2,6 +2,8 @@
 
 import pytest
 
+from dataclasses import replace
+
 from ssr_env.entity import Entity, pack_cookdata
 from ssr_env.mechanics import UnimplementedMechanic, fork_cell, step, try_move_player
 from ssr_env.state import GameState
@@ -74,12 +76,13 @@ def test_walking_into_a_sausage_pushes_it():
 
 def test_unimplemented_mechanic_names_itself():
     """Points at a mechanic that is still genuinely unimplemented."""
-    from ssr_env.mechanics import is_solved
-
+    s = sausage(4, 4, ident=50, facing=Direction.EAST)
+    skewered = replace(s, stuckto=1)
+    state = flat(width=8, height=8, extra=(skewered,))
     try:
-        is_solved(flat())
+        step(state, Direction.NORTH)
     except UnimplementedMechanic as exc:
-        assert exc.mechanic == "win condition"
+        assert exc.mechanic == "laden movement"
     else:
         raise AssertionError("expected UnimplementedMechanic")
 
@@ -467,3 +470,46 @@ def test_grills_are_read_from_island_masks_too():
     masks = {"lvl__island0": {"offset": [0, 0, 0], "mask": [[[2]]]}}
     state = GameState(entities=(island,), tileset=0)
     assert grill_direction_at(state, Coord(0, 0, 0), masks, "lvl") is Direction.EAST
+
+
+def test_all_cooked_requires_every_face_in_one_or_two():
+    from ssr_env.mechanics import all_cooked
+
+    done = sausage(4, 4, ident=50, facing=Direction.EAST)
+    done = replace(done, cookdata=pack_cookdata((1, 2, 1, 2)))
+    assert all_cooked(flat(width=8, height=8, extra=(done,)))
+
+
+def test_a_raw_face_is_not_cooked():
+    from ssr_env.mechanics import all_cooked
+
+    s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata((1, 2, 0, 2)))
+    assert not all_cooked(flat(width=8, height=8, extra=(s,)))
+
+
+def test_a_burnt_face_is_not_cooked():
+    """CheckGameWon rejects 3 as firmly as it rejects 0."""
+    from ssr_env.mechanics import all_cooked
+
+    s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata((1, 2, 3, 2)))
+    assert not all_cooked(flat(width=8, height=8, extra=(s,)))
+
+
+def test_solved_requires_returning_to_the_start_position():
+    from ssr_env.mechanics import is_solved
+
+    s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata((1, 2, 1, 2)))
+    state = flat(width=8, height=8, extra=(s,))
+    state = replace(state, start_pos=state.player.pos)
+    assert is_solved(state)
+    away = replace(state, start_pos=Coord(7, 7, 1))
+    assert not is_solved(away)
+
+
+def test_a_lost_state_is_never_solved():
+    from ssr_env.mechanics import is_solved
+
+    s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata((1, 2, 1, 2)))
+    state = flat(width=8, height=8, extra=(s,))
+    state = replace(state, start_pos=state.player.pos, lost_reason="Burned")
+    assert not is_solved(state)

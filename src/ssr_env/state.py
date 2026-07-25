@@ -26,6 +26,10 @@ class GameState:
     #: `Entity.Decoration()` and therefore solidity.
     tileset: int = 0
     lost_reason: str = ""
+    #: Player pose at level load. The win condition requires returning here, so
+    #: it must travel with the state rather than being recomputed.
+    start_pos: Coord | None = None
+    start_direction: Direction | None = None
 
     def state_key(self) -> StateKey:
         """Canonical identity: (id, pos, direction, cookdata, rot) per dynamic entity.
