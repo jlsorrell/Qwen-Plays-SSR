@@ -295,3 +295,15 @@ def test_collided_turn_off_an_island_is_a_failed_move_not_a_pivot():
     assert not result.moved
     assert "not on island" in result.reason
     assert result.state.player.direction is Direction.NORTH
+
+
+def test_pushing_static_terrain_is_a_blocked_move_not_a_raise():
+    """TryPushEnt returns false for static types; that is a blocked move."""
+    from ssr_env.mechanics import try_push
+
+    wall = Entity(pos=Coord(3, 2, 1), type=EntType.GROUND, id=60, tileset=1)
+    state = flat(width=8, height=8, player_at=(1, 2), facing=Direction.EAST,
+                 extra=(wall,))
+    assert try_push(state, wall, Direction.EAST) is state
+    result = step(state, Direction.EAST)
+    assert not result.moved

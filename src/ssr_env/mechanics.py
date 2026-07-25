@@ -136,10 +136,12 @@ def try_push(
     unestablished (docs/mechanics.md §7) and a wrong permutation would corrupt
     every cooking transition downstream.
     """
-    if entity.type in STATIC_TYPES:
-        raise UnimplementedMechanic("push-static", f"{entity.type.name} is not pushable")
-    if entity.type is EntType.BARRIER:
-        return state  # barriers never move; the push simply fails
+    # `TryPushEnt` returns false immediately for static types and for barriers:
+    #   if (e.type.Static() || e.moving || e.type == EntType.barrier) return false;
+    # A failed push is a blocked move, not a missing mechanic. Walking into a
+    # wall of ground or a bbq is the ordinary case, not something to raise on.
+    if entity.type in STATIC_TYPES or entity.type is EntType.BARRIER:
+        return state
     if entity.type is EntType.ISLAND:
         # `TryPushEnt` refuses a horizontal push of the island the player is
         # standing on (unless `canchangeplayerfooting`). Players stand *on*
