@@ -14,9 +14,16 @@ Rules and their provenance live in `docs/mechanics.md`.
 from dataclasses import dataclass, replace
 
 from .entity import Entity
-from .geometry import is_extended, solid_ent_at
+from .geometry import border_cells, ent_at, is_extended, solid_ent_at, under
 from .state import GameState
-from .types import Action, Direction, EntType, Input
+from .types import (
+    ROLLABLE_TYPES,
+    STATIC_TYPES,
+    Action,
+    Direction,
+    EntType,
+    Input,
+)
 
 
 class UnimplementedMechanic(NotImplementedError):
@@ -78,6 +85,47 @@ def try_turn_player(
     return StepResult(state=state.replace_entity(turned))
 
 
+def try_push(
+    state: GameState,
+    entity: Entity,
+    direction: Direction,
+    masks=None,
+    level_name: str = "",
+) -> GameState:
+    """Push one entity. Mirrors `GameState.TryPushEnt`, partially.
+
+    Implemented: sliding a sausage along its own axis, and pushing one-cell
+    entities. Rolling raises, because the cook-face permutation is still
+    unestablished (docs/mechanics.md §7) and a wrong permutation would corrupt
+    every cooking transition downstream.
+    """
+    if entity.type in STATIC_TYPES:
+        raise UnimplementedMechanic("push-static", f"{entity.type.name} is not pushable")
+    if entity.type is EntType.BARRIER:
+        return state  # barriers never move; the push simply fails
+    if entity.type is EntType.ISLAND:
+        raise UnimplementedMechanic("push-island", "island pushing not implemented")
+
+    if entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction):
+        raise UnimplementedMechanic(
+            "roll", f"sausage {entity.id} pushed perpendicular to its axis"
+        )
+
+    for cell in border_cells(entity, state, direction):
+        if solid_ent_at(state, cell, masks, level_name):
+            raise UnimplementedMechanic(
+                "push-chain", f"pushed entity blocked at {tuple(cell)}"
+            )
+
+    moved = replace(entity, pos=entity.pos + direction.delta)
+    candidate = state.replace_entity(moved)
+    if not under(moved, candidate, masks, level_name):
+        raise UnimplementedMechanic(
+            "push-into-fall", f"entity {entity.id} unsupported after push"
+        )
+    return candidate
+
+
 def try_move_player(
     state: GameState, direction: Direction, masks=None, level_name: str = ""
 ) -> StepResult:
@@ -97,10 +145,14 @@ def try_move_player(
     for cell in cells_needed:
         if cell == player.pos or cell == fork_cell(state, player):
             continue  # the player is vacating this cell as part of the move
-        if solid_ent_at(state, cell, masks, level_name):
-            raise UnimplementedMechanic(
-                "push", f"solid entity at destination {tuple(cell)}"
-            )
+        blocker = ent_at(state, cell, masks, level_name)
+        if blocker is not None and solid_ent_at(state, cell, masks, level_name):
+            state = try_push(state, blocker, direction, masks, level_name)
+            if solid_ent_at(state, cell, masks, level_name):
+                return StepResult(
+                    state=state, moved=False, reason=f"blocked at {tuple(cell)}"
+                )
+            player = state.player
 
     if not _supported(state, destination, masks, level_name):
         raise UnimplementedMechanic(

@@ -147,3 +147,56 @@ def floor_under(
 ) -> Entity | None:
     """The entity directly beneath, which is what an entity stands on."""
     return ent_at(state, entity.pos + Direction.DOWN.delta, masks, level_name)
+
+
+def border_cells(entity: Entity, state: GameState, direction: Direction) -> tuple[Coord, ...]:
+    """Cells through which `entity` pushes when moved in `direction`.
+
+    Mirrors `Entity.Border`. For a one-cell entity it is simply the next cell.
+    For an extended entity it depends on how the push relates to its own axis:
+
+    - pushed along its facing: the far end, `pos + 2*d`
+    - pushed against its facing: the near end, `pos + d`
+    - pushed perpendicular: both cells, `pos + d` and `pos + direction + d`
+
+    Diagonal pushes are not valid here; the game logs an error for them.
+    """
+    if direction.is_diagonal:
+        raise ValueError(f"border is undefined for diagonal {direction.name}")
+    if not is_extended(entity, state):
+        return (entity.pos + direction.delta,)
+    if entity.direction is direction:
+        d = direction.delta
+        return (Coord(entity.pos.x + 2 * d.x, entity.pos.y + 2 * d.y, entity.pos.z + 2 * d.z),)
+    if entity.direction is direction.inverse():
+        return (entity.pos + direction.delta,)
+    return (
+        entity.pos + direction.delta,
+        entity.pos + entity.direction.delta + direction.delta,
+    )
+
+
+def under(
+    entity: Entity,
+    state: GameState,
+    masks: dict[str, dict] | None = None,
+    level_name: str = "",
+) -> list[Entity]:
+    """Entities supporting `entity`. Mirrors `GameState.Under`.
+
+    An extended entity is supported at both of its cells; duplicates are dropped.
+    """
+    found: list[Entity] = []
+    floor = ent_at(state, entity.pos + Direction.DOWN.delta, masks, level_name)
+    if floor is not None:
+        found.append(floor)
+    if is_extended(entity, state) and entity.direction is not Direction.NONE:
+        other = ent_at(
+            state,
+            entity.pos + entity.direction.delta + Direction.DOWN.delta,
+            masks,
+            level_name,
+        )
+        if other is not None and all(f.id != other.id for f in found):
+            found.append(other)
+    return found

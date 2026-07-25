@@ -121,3 +121,99 @@ def test_walking_is_reversible_on_open_ground():
     there = step(state, Direction.NORTH).state
     back = step(there, Direction.SOUTH).state
     assert back.state_key() == state.state_key()
+
+
+def sausage(x, y, z=1, ident=50, facing=Direction.EAST):
+    return Entity(pos=Coord(x, y, z), type=EntType.SAUSAGE, id=ident, direction=facing)
+
+
+def test_sausage_slides_when_pushed_along_its_axis():
+    """Player faces East, sausage lies East-West ahead of it: a parallel push."""
+    state = flat(player_at=(1, 2), facing=Direction.EAST,
+                 extra=(sausage(2, 2, facing=Direction.EAST),))
+    result = step(state, Direction.EAST)
+    assert result.state.by_id(50).pos == Coord(3, 2, 1)
+
+
+def test_sliding_preserves_cook_faces():
+    """A slide imparts no roll, so cookdata must be untouched."""
+    s = Entity(pos=Coord(2, 2, 1), type=EntType.SAUSAGE, id=50,
+               direction=Direction.EAST, cookdata=9)
+    state = flat(player_at=(1, 2), facing=Direction.EAST, extra=(s,))
+    result = step(state, Direction.EAST)
+    assert result.state.by_id(50).cookdata == 9
+
+
+def test_perpendicular_push_raises_roll():
+    """Rolling needs the face permutation, which is not yet established.
+
+    Player at (2,1) facing North puts its fork at (2,2); moving North sends the
+    fork into (2,3), where an East-West sausage takes a perpendicular push.
+    """
+    state = flat(player_at=(2, 1), facing=Direction.NORTH,
+                 extra=(sausage(2, 3, facing=Direction.EAST),))
+    with pytest.raises(UnimplementedMechanic, match="roll"):
+        step(state, Direction.NORTH)
+
+
+def test_pushing_a_sausage_into_a_void_raises():
+    """Both of the sausage's cells must lose support before it falls.
+
+    A sausage half over a ledge is still supported, so the void has to be wide
+    enough to swallow the whole thing.
+    """
+    from ssr_env.mechanics import try_push
+
+    ground = [
+        Entity(pos=Coord(x, 0, 0), type=EntType.GROUND, id=200 + x, tileset=1)
+        for x in range(2)
+    ]
+    # Occupies (1,0) and (2,0); already half over the edge. Pushing East puts
+    # both cells past the ground and it loses support entirely.
+    s = Entity(pos=Coord(1, 0, 1), type=EntType.SAUSAGE, id=50, direction=Direction.EAST)
+    state = GameState(entities=(*ground, s), tileset=0)
+    with pytest.raises(UnimplementedMechanic, match="push-into-fall"):
+        try_push(state, s, Direction.EAST)
+
+
+def test_a_sausage_half_over_a_ledge_is_still_supported():
+    from ssr_env.geometry import under
+
+    ground = [
+        Entity(pos=Coord(x, 0, 0), type=EntType.GROUND, id=200 + x, tileset=1)
+        for x in range(2)
+    ]
+    s = Entity(pos=Coord(1, 0, 1), type=EntType.SAUSAGE, id=50, direction=Direction.EAST)
+    state = GameState(entities=(*ground, s), tileset=0)
+    assert len(under(s, state)) == 1
+
+
+def test_border_of_a_one_cell_entity_is_the_next_cell():
+    from ssr_env.geometry import border_cells
+
+    p = Entity(pos=Coord(0, 0, 0), type=EntType.BARRIER, id=9)
+    st = GameState(entities=(p,))
+    assert border_cells(p, st, Direction.NORTH) == (Coord(0, 1, 0),)
+
+
+def test_border_perpendicular_covers_both_cells():
+    from ssr_env.geometry import border_cells
+
+    s = sausage(0, 0, z=0, facing=Direction.EAST)
+    st = GameState(entities=(s,))
+    assert border_cells(s, st, Direction.NORTH) == (Coord(0, 1, 0), Coord(1, 1, 0))
+
+
+def test_border_along_axis_is_the_far_end():
+    from ssr_env.geometry import border_cells
+
+    s = sausage(0, 0, z=0, facing=Direction.EAST)
+    st = GameState(entities=(s,))
+    assert border_cells(s, st, Direction.EAST) == (Coord(2, 0, 0),)
+
+
+def test_under_finds_support_at_both_cells_of_a_sausage():
+    from ssr_env.geometry import under
+
+    state = flat(extra=(sausage(3, 3, facing=Direction.EAST),))
+    assert len(under(state.by_id(50), state)) == 2
