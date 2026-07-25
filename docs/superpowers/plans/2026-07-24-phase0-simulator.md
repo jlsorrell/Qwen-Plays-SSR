@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A Python reference implementation of Stephen's Sausage Roll that replays all 121 official `.dem` solution files to a winning state, plus the tooling to hunt divergences against the real game.
+**Goal:** A Python reference implementation of Stephen's Sausage Roll that replays all 120 official level `.dem` solution files to a winning state, plus the tooling to hunt divergences against the real game.
 
-**Architecture:** Pure-Python, dependency-light, immutable hashable state. Correctness is established empirically: the `.dem` corpus supplies 121 known-winning input sequences, and because SSR introduces mechanics gradually across worlds, replaying levels *in game order* turns the corpus into a natural development curriculum — the first failing replay tells you which mechanic to implement next. Rules are **derived from observed divergence**, not transcribed from a spec, because no authoritative machine-readable spec exists.
+**Architecture:** Pure-Python, dependency-light, immutable hashable state. Correctness is established empirically: the `.dem` corpus supplies 120 known-winning input sequences, and because SSR introduces mechanics gradually across worlds, replaying levels *in game order* turns the corpus into a natural development curriculum — the first failing replay tells you which mechanic to implement next. Rules are **derived from observed divergence**, not transcribed from a spec, because no authoritative machine-readable spec exists.
 
 **Tech Stack:** Python 3.12, `uv`, `pytest`, stdlib only for the core simulator. No numpy in `ssr_env` — Phase 1's Rust port is where speed comes from.
 
@@ -38,7 +38,7 @@ tests/
   test_dem.py  test_level.py  test_state.py
   test_render.py  test_mechanics.py  test_replay.py
 data/
-  dem/              121 vendored .dem files
+  dem/              121 vendored .dem files (120 levels + all.dem aggregate)
   levels/           Extracted level JSON
 ```
 
@@ -157,7 +157,7 @@ if __name__ == "__main__":
 uv run python tools/fetch_dem.py
 ```
 
-Expected: 121 files written to `data/dem/`.
+Expected: 121 files written (120 levels + all.dem) to `data/dem/`.
 
 - [ ] **Step 3: Write the corpus invariant test**
 
@@ -901,7 +901,12 @@ PASSING: set[str] = set()
 
 
 def _cases():
-    return sorted(p.stem for p in DEMS.glob("*.dem") if (LEVELS / f"{p.stem}.json").exists())
+    # all.dem is the injector's concatenated aggregate, not a level — skip it.
+    return sorted(
+        p.stem
+        for p in DEMS.glob("*.dem")
+        if p.stem != "all" and (LEVELS / f"{p.stem}.json").exists()
+    )
 
 
 @pytest.mark.parametrize("name", _cases())
@@ -1023,7 +1028,7 @@ Worlds 2–5 introduce ladders, standing on sausages, and fork separation. Each 
 - [ ] **Step 2** Take the lowest-numbered failing level. Read its divergence report.
 - [ ] **Step 3** Derive the missing rule with the owner; record it in `docs/mechanics.md`.
 - [ ] **Step 4** Implement, add a unit test pinning the rule in isolation, add the level to `PASSING`, commit.
-- [ ] **Step 5** Repeat until all 121 pass. **This is the Phase 0 exit gate.**
+- [ ] **Step 5** Repeat until all 120 pass. **This is the Phase 0 exit gate.**
 
 ---
 
@@ -1050,14 +1055,14 @@ Covers the region replays cannot reach: off-solution and dead states (spec §5.2
 - [ ] **Step 1** Re-export `Level`, `GameState`, `step`, `StepResult`, `render`, `replay`, `parse_dem`, and the enums.
 - [ ] **Step 2** Test that `from ssr_env import Level, GameState, step, render` works.
 - [ ] **Step 3** Write `README.md` usage showing: load a level, step it, render it, replay a `.dem`.
-- [ ] **Step 4** Run the full suite: `uv run pytest -q`. Expected: 121 replay tests passing, zero xfail.
+- [ ] **Step 4** Run the full suite: `uv run pytest -q`. Expected: 120 replay tests passing, zero xfail.
 - [ ] **Step 5** Commit and tag `phase-0-complete`.
 
 ---
 
 ## Exit criteria
 
-1. All 121 `.dem` replays reach a winning state.
+1. All 120 level `.dem` replays reach a winning state.
 2. `docs/mechanics.md` records every derived rule with level/move provenance.
 3. At least one confirmed-correct dead-state regression test per loss mode (burn, sausage drowned, player drowned).
 4. States are hashable and value-equal, ready for Phase 1 enumeration.

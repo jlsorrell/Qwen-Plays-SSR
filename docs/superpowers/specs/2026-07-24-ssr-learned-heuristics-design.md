@@ -42,6 +42,17 @@ Solve rate (§7.1) is a training-progress metric and a sanity check, not a gate.
   reimplementation. Critically, it ships **121 `.dem` files**: recorded input
   sequences (`North`/`South`/`East`/`West`/`Undo`) solving every official level.
   These are the simulator's acceptance test.
+
+  **Corpus composition (measured 2026-07-24).** 121 files, of which **120 are
+  levels**; `all.dem` is the injector's concatenation of every level's inputs and
+  has no corresponding geometry. Worlds 1-5 hold 65 levels; **world 6 holds 55**,
+  including half-numbered entries (`6-8.5`, `6-9.5`, ...). World 6 is post-game
+  content and the hardest material in the game.
+
+  **Solution lengths are long**: min 15 (`1-0`), median 104, mean 138, max
+  **1301** (`6-final`). These are demonstrations rather than optimal solutions —
+  they wander and use `Undo` — so optimal lengths are shorter, but the order of
+  magnitude stands. See §8 for the consequence.
 - **PuzzleScript demake** — PuzzleScript is strictly 2D and cannot represent SSR's
   elevation, ladders, or fork separation. Not usable.
 - **No open-source SSR simulator or RL environment exists.** Writing one is Phase 0
@@ -157,12 +168,12 @@ offloaded to the environment.
 
 ### 5.1 Replay validation (automated, covers winning trajectories)
 
-Replay all 121 `.dem` input sequences against their extracted levels; assert each
+Replay all 120 level `.dem` input sequences against their extracted levels; assert each
 one wins. This is near-total coverage of the mechanics — a real solution to a
 late-game level exercises rolling, cook-face bookkeeping, elevation, ladders, and
 fork separation, and fails loudly if any rule is off by one.
 
-**Gate: Phase 1 does not begin until all 121 pass.** Expect the last handful to
+**Gate: Phase 1 does not begin until all 120 pass.** Expect the last handful to
 take as long as the first hundred.
 
 ### 5.2 Human differential testing (covers the region replays cannot)
@@ -200,7 +211,7 @@ before any GPU time is spent.
 
 | Phase | Weeks | GPUs | Output |
 |---|---|---|---|
-| 0. Simulator | 1-3 | 0 | `ssr_env` passing all 121 replays + human divergence tests |
+| 0. Simulator | 1-3 | 0 | `ssr_env` passing all 120 replays + human divergence tests |
 | 1. Exact oracle | 3-5 | 0 | Rust port; distance-to-goal, dead-state, optimal-action maps |
 | 2. Generator + curriculum | 5-7 | 0 | Graded train/test levels; minimal-pair probe sets |
 | 3. First contact | 7 | 1 | vLLM stood up; baseline evals; state encoding locked |
@@ -239,7 +250,7 @@ bare number.
 ## 7. Evaluation design
 
 - **Primary test set:** held-out procedurally generated levels.
-- **OOD check:** the 121 official levels, held out entirely from training.
+- **OOD check:** the 120 official levels, held out entirely from training.
 
 ### 7.1 Solve rate, defined
 
@@ -264,7 +275,7 @@ Each clause is load-bearing:
 - **pass@1 greedy is the headline**; pass@k is reported alongside as a diversity
   measure, not as the score.
 
-For the 121 official levels no `d*` exists on the hard ones (enumeration will not
+For the 120 official levels no `d*` exists on the hard ones (enumeration will not
 finish). Use the `.dem` trace length as the budget there: it is a valid upper
 bound on optimal, being a real winning trace, and a generous one since those
 traces wander.
@@ -284,11 +295,39 @@ designed by a human with different intent and act as the independent check.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Phase 0 slips, silently | High | Hard gate on 121/121 replays; no Phase 1 work until green |
+| Phase 0 slips, silently | High | Hard gate on 120/120 replays; no Phase 1 work until green |
 | Generator bias contaminates all Phase 6 claims | High | Official levels held out as OOD check (§7) |
 | Oracle intractable at useful difficulty | Medium | Generator difficulty capped at enumerable sizes |
-| Model plateaus below ~60% solve rate | Medium | Curriculum depth; SFT bootstrap; accept narrower claims |
+| Model plateaus at trivial solve rate | Medium | Curriculum depth; SFT bootstrap; accept narrower claims |
+| Episode length makes Phase 5 rollouts unaffordable | High | See §8.1 |
 | Dead-state simulation wrong, poisoning main probe target | High | Human differential testing targets exactly this (§5.2) |
+
+---
+
+### 8.1 Episode length (raised by the §2 corpus measurement)
+
+Official solution lengths (median 104, max 1301) interact badly with §4.3's
+one-move-per-turn design. Each turn is a separate generation whose prompt carries
+the conversation so far, so naive prefill cost over an `N`-move episode is
+`O(N^2)`, multiplied again by the GRPO group size.
+
+Mitigations, in order of preference:
+
+1. **Small generated levels.** The §4.1 tractability bound already caps generated
+   levels well below official sizes; target optimal solution lengths of ~30 moves.
+   The oracle constraint and the rollout-cost constraint point the same way, which
+   is fortunate.
+2. **vLLM prefix caching.** Turn `k+1`'s prompt extends turn `k`'s, so the shared
+   prefix is cacheable and the quadratic term largely collapses. Verify this is
+   actually active in the verl rollout path — it is the single largest lever.
+3. **Cap per-move reasoning tokens.** A hard budget per turn, tuned in Phase 4.
+4. **Sliding history window** (last `k` states rather than full history) only if
+   1-3 prove insufficient. It changes what the model can condition on and
+   therefore what the probes in §6.2 are measuring, so it is a last resort.
+
+**Consequence for evaluation.** World 6 levels are out of scope as RL targets on
+length grounds alone, independent of the §4.1 oracle bound. Both constraints
+exclude the same material. They remain usable as qualitative OOD probes (§7.1).
 
 ---
 
