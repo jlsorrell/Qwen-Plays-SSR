@@ -7,6 +7,9 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+extract = [
+    "unitypy>=1.25.2",
+]
 
 [build-system]
 requires = ["hatchling"]

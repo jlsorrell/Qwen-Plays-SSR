@@ -9,3 +9,6 @@ uv.lock
 # independently. No decompiled source enters this repository.
 data/raw_assets/
 data/decompiled/
+# Level geometry is derived from the owner's install. Regenerate locally with
+# tools/extract_levels.py rather than redistributing it.
+data/levels/
