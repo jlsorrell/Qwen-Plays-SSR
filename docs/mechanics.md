@@ -470,7 +470,7 @@ So faces are stored in a canonical frame and `rot` selects which is currently
 up. A sideways roll changes the exposed face by flipping `rot`, not by
 permuting the stored values.
 
-### 7.2 UNRESOLVED: is `rot` part of state identity?
+### 7.2 RESOLVED: `rot` IS part of state identity
 
 This is a contradiction that must be settled before Phase 1, because the oracle
 rests on it.
@@ -482,15 +482,30 @@ rests on it.
   only `pos`, `direction` and `cookdata`. It **omits `rot` and `pivot`**.
 - `state.GameState.state_key` currently follows `BakStruct` and excludes both.
 
-At most one of these can be right. Either `rot`/`pivot` are recoverable from the
-other fields (in which case excluding them is safe), or the game's undo
-comparison is lossy and we must not copy it.
+**Answer: `DoCook` indexes by `e.rot`.**
 
-**Do not resolve this by reasoning.** Determine which face `DoCook` actually
-selects — if it indexes via `rot`/`pivot`, they are semantic and `state_key`
-must include them. Getting this wrong collapses genuinely distinct states into
-one key and silently corrupts every distance-to-goal and dead-state label the
-project depends on.
+| Half | Cell | `rot == 0` | `rot == 1` |
+|---|---|---|---|
+| first | `pos` | cooks face 3 | cooks face 2 |
+| second | `pos + direction` | cooks face 0 | cooks face 1 |
+
+So `rot` decides which face meets the grill. It is semantic, and **the game's
+`BakStruct` comparison is lossy** — two sausages identical but for `rot` will
+cook differently while comparing equal under it.
+
+`state_key` now includes `rot`. `pivot` stays excluded: `Entity.Pivot()` folds
+its effect into `cookdata` by reversing the faces, so it carries no independent
+state.
+
+**Correction to §4.1 of the spec.** The claim that "state identity is not
+guessed — the game hands it to us via BakStruct" was wrong. The game's undo
+comparison is a reasonable approximation for undo, where a lost `rot` is
+invisible to the player within a single step, but it is not a sound basis for
+deduplicating a reachable-state graph. Verify borrowed invariants against what
+they are used for.
+
+Cooking a face whose value is already non-zero sets it to 3 — burnt. That is the
+burn rule: **cooking the same face twice burns it.**
 
 ## 8. Falling — PARTIAL
 

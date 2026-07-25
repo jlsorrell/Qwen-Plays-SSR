@@ -23,16 +23,9 @@ def test_identical_states_share_a_key():
     assert make_state().state_key() == make_state().state_key()
 
 
-def test_transient_rot_does_not_affect_state_key():
-    """rot is mid-move bookkeeping; the game's own undo comparison ignores it."""
-    base = make_state()
-    rotated = base.replace_entity(
-        Entity(pos=Coord(3, 3), type=EntType.SAUSAGE, id=3, direction=Direction.EAST, rot=2)
-    )
-    assert base.state_key() == rotated.state_key()
-
 
 def test_transient_pivot_and_turndir_do_not_affect_state_key():
+    """rot is NOT transient — see test_rot_is_part_of_state_identity."""
     base = make_state()
     fiddled = base.replace_entity(
         Entity(
@@ -121,3 +114,25 @@ def test_lost_is_false_by_default():
 
 def test_lost_reflects_reason():
     assert make_state(lost_reason="Burned").lost
+
+
+def test_rot_is_part_of_state_identity():
+    """DoCook selects the cooked face via rot, so it cannot be excluded.
+
+    The game's own BakStruct comparison omits rot and is therefore lossy; see
+    docs/mechanics.md §7.2.
+    """
+    base = make_state()
+    rolled = base.replace_entity(
+        Entity(pos=Coord(3, 3), type=EntType.SAUSAGE, id=3, direction=Direction.EAST, rot=1)
+    )
+    assert base.state_key() != rolled.state_key()
+
+
+def test_pivot_is_still_excluded_from_state_identity():
+    """Entity.Pivot() folds its effect into cookdata, so pivot adds nothing."""
+    base = make_state()
+    pivoted = base.replace_entity(
+        Entity(pos=Coord(3, 3), type=EntType.SAUSAGE, id=3, direction=Direction.EAST, pivot=1)
+    )
+    assert base.state_key() == pivoted.state_key()

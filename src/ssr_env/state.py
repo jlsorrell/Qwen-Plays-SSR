@@ -12,8 +12,9 @@ from dataclasses import dataclass, replace
 from .entity import Entity
 from .types import DYNAMIC_TYPES, Coord, Direction, EntType
 
-#: One dynamic entity's contribution to the canonical state key.
-EntityKey = tuple[int, Coord, Direction, int]
+#: One dynamic entity's contribution to the canonical state key:
+#: (id, pos, direction, cookdata, rot).
+EntityKey = tuple[int, Coord, Direction, int, int]
 
 StateKey = tuple[EntityKey, ...]
 
@@ -27,15 +28,28 @@ class GameState:
     lost_reason: str = ""
 
     def state_key(self) -> StateKey:
-        """Canonical identity: dynamic entities by (id, pos, direction, cookdata).
+        """Canonical identity: (id, pos, direction, cookdata, rot) per dynamic entity.
 
-        Static geometry is excluded because it cannot change. Transient fields
-        (`rot`, `turndir`, `pivot`) are excluded because they only carry meaning
-        part-way through a move's resolution.
+        Static geometry is excluded because it cannot change.
+
+        **`rot` is included deliberately, against the game's own precedent.**
+        `GameState.BakStruct` — the game's undo comparison — checks only pos,
+        direction and cookdata. That comparison is *lossy*: `DoCook` selects
+        which cook face a grill touches via `e.rot` (rot 0 cooks faces 3 and 0,
+        rot 1 cooks faces 2 and 1), so two sausages identical but for `rot`
+        present different faces and cook differently. Copying BakStruct would
+        collapse genuinely distinct states into one key and corrupt every
+        distance-to-goal and dead-state label built on it.
+
+        `turndir` and `pivot` remain excluded. `turndir` is mid-animation
+        bookkeeping, and `Entity.Pivot()` folds its effect into `cookdata` by
+        reversing the faces, so `pivot` carries no state the key would miss.
+
+        See docs/mechanics.md §7.2.
         """
         return tuple(
             sorted(
-                (e.id, e.pos, e.direction, e.cookdata)
+                (e.id, e.pos, e.direction, e.cookdata, e.rot)
                 for e in self.entities
                 if e.type in DYNAMIC_TYPES
             )

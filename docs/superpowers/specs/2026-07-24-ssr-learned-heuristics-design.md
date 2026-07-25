@@ -130,11 +130,25 @@ For each level, enumerate the **entire reachable state graph once**, then BFS
 Computed offline, once per level. This is the instrument the entire experimental
 design rests on.
 
-**State identity is not guessed.** `GameState.BakStruct` — the snapshot the game
-itself takes for undo — compares two states on exactly `pos`, `direction`, and
-`cookdata` per entity. Enumeration inherits that as its definition of "same
-state". `rot`, `pivot`, `turndir` and in-flight `movement` are transient within a
-move's resolution and are excluded.
+**State identity — corrected 2026-07-24.** An earlier version of this section
+claimed the game hands us state identity via `GameState.BakStruct`, its undo
+comparison over `pos`/`direction`/`cookdata`. **That comparison is lossy and
+must not be copied.** `DoCook` selects which cook face a grill touches via the
+sausage's `rot` field (rot 0 cooks faces 3 and 0; rot 1 cooks faces 2 and 1), so
+two sausages identical but for `rot` cook differently while comparing equal
+under `BakStruct`.
+
+Enumeration therefore keys on `(id, pos, direction, cookdata, rot)` per dynamic
+entity. `pivot` stays excluded because `Entity.Pivot()` folds its effect into
+`cookdata` by reversing the faces; `turndir` and in-flight `movement` are
+mid-animation bookkeeping.
+
+The general lesson, worth keeping: an invariant borrowed from the source system
+must be checked against *what we use it for*. `BakStruct` is adequate for undo,
+where a dropped `rot` is invisible within one step, and inadequate for
+deduplicating a reachable-state graph, where it silently merges distinct states.
+Had this gone unnoticed, every distance-to-goal and dead-state label would have
+been quietly wrong, and §6.2's probes would have measured a corrupted target.
 
 **Tractability bound — UNVERIFIED, and the project's load-bearing assumption.**
 An earlier estimate here (position x orientation x 2^4 cook-faces ~= 3x10^3 per
