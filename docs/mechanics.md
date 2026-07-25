@@ -688,13 +688,24 @@ simulator fails loudly rather than plausibly.
 Measured blocker distribution, replaying `1-1.dem` against all 124 candidate
 levels — this is the work queue, ordered by what actually blocks progress:
 
-| Blocker | Levels |
-|---|---|
-| `falling` | 60 |
-| `push-island` | 29 |
-| `pivot-turn` | 21 |
-| `roll` | 9 |
-| `push-static` | 4 |
+| Blocker | 1-0.dem | 1-1.dem |
+|---|---|---|
+| `falling` | 71 | 65 |
+| `pivot-turn` | 20 | 39 |
+| `push-island` | 12 | 11 |
+| `push-static` | 10 | 4 |
+| `push-chain` | 3 | 3 |
+| ran to completion | 5 | 1 |
+
+`falling` dominates because most pairings are *wrong* levels where the player
+walks off an edge; it is not the most valuable next target. `pivot-turn` is.
+
+**Unresolved in the roll implementation.** `CalculateTorsions` resolves the
+`-666` placeholder and only calls `TryRotate` when the resolved torsion is
+non-zero. A zero resolution is a *drag* rather than a roll (`anydrags` versus
+`anyrolls` in `GameState.cs:4265-4272`). We currently roll unconditionally on a
+perpendicular push. `CalculateTorsion` is untranscribed, so the drag case is
+unimplemented — the replay gate will surface it as a divergence.
 
 **`push-island` is probably over-eager on our side.** Walking into a wall of
 island terrain currently attempts a push and raises. In the game islands *are*
