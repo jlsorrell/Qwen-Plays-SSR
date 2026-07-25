@@ -9,9 +9,12 @@ import pytest
 from ssr_env.entity import Entity
 from ssr_env.level import (
     available_levels,
+    ladder_direction_from_mask,
+    load_island_masks,
     load_level_by_name,
     parent_level,
     playable_levels,
+    resolve_island_mask,
 )
 from ssr_env.render import EMPTY, render
 from ssr_env.state import GameState
@@ -107,3 +110,60 @@ def test_fragments_exist_and_some_carry_the_player():
 def test_every_playable_level_renders():
     for name in playable_levels()[:30]:
         assert "Map (" in render(load_level_by_name(name), name)
+
+
+def test_island_masks_extracted():
+    assert len(load_island_masks()) > 100
+
+
+def test_every_island_entity_resolves_to_a_mask():
+    """248/248 across all playable levels; a regression here means lost geometry."""
+    masks = load_island_masks()
+    unresolved = [
+        (name, e.dat)
+        for name in playable_levels()
+        for e in load_level_by_name(name).entities
+        if e.type is EntType.ISLAND
+        and resolve_island_mask(name, e.dat, masks) is None
+    ]
+    assert not unresolved, f"unresolved island masks: {unresolved[:5]}"
+
+
+def test_island_entities_retain_dat():
+    """dat is the mask key, not decoration — dropping it loses terrain."""
+    for name in playable_levels():
+        islands = [e for e in load_level_by_name(name).entities if e.type is EntType.ISLAND]
+        if islands:
+            assert all(e.dat for e in islands)
+            return
+    pytest.skip("no island entities found")
+
+
+def test_ladder_directions_decode_from_mask_values():
+    assert ladder_direction_from_mask(3) is Direction.NORTH
+    assert ladder_direction_from_mask(4) is Direction.SOUTH
+    assert ladder_direction_from_mask(5) is Direction.WEST
+    assert ladder_direction_from_mask(6) is Direction.EAST
+
+
+def test_non_ladder_mask_values_decode_to_none():
+    for value in (-1, 0, 1, 2, 7, 14, 17):
+        assert ladder_direction_from_mask(value) is None
+
+
+def test_ladder_encoded_cells_exist_in_the_corpus():
+    """Values 3..6 really occur; if they vanish, the encoding was misread."""
+    found = sum(
+        1
+        for m in load_island_masks().values()
+        for plane in m["mask"]
+        for row in plane
+        for v in row
+        if 3 <= v <= 6
+    )
+    assert found > 0
+
+
+def test_sidecars_are_not_treated_as_levels():
+    assert "__islandmasks__" not in available_levels()
+    assert "__overworld__" not in available_levels()

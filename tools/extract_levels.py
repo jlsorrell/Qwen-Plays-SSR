@@ -68,9 +68,14 @@ class BinaryReader:
         return self.pos == len(self.data)
 
 
-def parse_merged_binary(data: bytes) -> dict[str, str]:
-    """Return {level_name: level_state_string}, following MetaGameState.LoadBinary."""
+def parse_merged_binary(data: bytes) -> tuple[dict[str, str], dict[str, dict]]:
+    """Return (levels, island_masks), following MetaGameState.LoadBinary.
+
+    levels maps level name -> state string; island_masks maps island name ->
+    {"offset": [x,y,z], "mask": int[a][b][c]}.
+    """
     r = BinaryReader(data)
+    island_masks: dict[str, dict] = {}
 
     # offsets: name -> coord
     for _ in range(r.read_int32()):
@@ -97,11 +102,18 @@ def parse_merged_binary(data: bytes) -> dict[str, str]:
             r.read_string()
 
     # islandmasks: name -> (int[a][b][c], coord offset)
+    # Kept: masks carry each island chunk's shape and its ladder encoding
+    # (GameState.LadderAt reads values 3..6 as ladder directions).
     for _ in range(r.read_int32()):
-        r.read_string()
+        name = r.read_string()
         a, b, c = r.read_int32(), r.read_int32(), r.read_int32()
-        r.read_bytes(4 * a * b * c)
-        r.read_coord()
+        flat = struct.unpack_from(f"<{a * b * c}i", r.data, r.pos)
+        r.pos += 4 * a * b * c
+        mask = [
+            [list(flat[(i * b + j) * c : (i * b + j) * c + c]) for j in range(b)]
+            for i in range(a)
+        ]
+        island_masks[name] = {"offset": list(r.read_coord()), "mask": mask}
 
     # projectioncompatibilities: name -> name -> bool[w, h]
     for _ in range(r.read_int32()):
@@ -144,7 +156,7 @@ def parse_merged_binary(data: bytes) -> dict[str, str]:
             f"parse desynchronised: {len(r.data) - r.pos} bytes left after "
             f"reading {len(levels) - 1} levels"
         )
-    return levels
+    return levels, island_masks
 
 
 @dataclass(frozen=True)
@@ -223,8 +235,11 @@ def main() -> None:
         raise SystemExit("merged_binary TextAsset not found in resources.assets")
 
     print(f"merged_binary: {len(blob):,} bytes")
-    levels = parse_merged_binary(blob)
-    print(f"parsed {len(levels) - 1} levels + overworld, landed exactly on EOF")
+    levels, island_masks = parse_merged_binary(blob)
+    print(
+        f"parsed {len(levels) - 1} levels + overworld and "
+        f"{len(island_masks)} island masks, landed exactly on EOF"
+    )
 
     args.dest.mkdir(parents=True, exist_ok=True)
     for name, text in levels.items():
@@ -233,7 +248,8 @@ def main() -> None:
         if args.dump_raw:
             payload["raw"] = text
         (args.dest / f"{name}.json").write_text(json.dumps(payload, indent=1))
-    print(f"wrote {len(levels)} files -> {args.dest}")
+    (args.dest / "__islandmasks__.json").write_text(json.dumps(island_masks))
+    print(f"wrote {len(levels)} levels + island masks -> {args.dest}")
 
 
 if __name__ == "__main__":

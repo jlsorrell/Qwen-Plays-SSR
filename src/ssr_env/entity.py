@@ -44,6 +44,10 @@ class Entity:
     direction: Direction = Direction.NONE
     cookdata: int = 0
     stuckto: int = -1
+    #: For EntType.ISLAND this is the island's name and the key into the island
+    #: mask table — the mask carries the chunk's shape and its ladder encoding,
+    #: so this is load-bearing geometry, not decoration.
+    dat: str = ""
     # Transient within a move's resolution; never part of the state key.
     rot: int = 0
     turndir: Direction = Direction.NONE

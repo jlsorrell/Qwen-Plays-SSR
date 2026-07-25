@@ -108,12 +108,18 @@ fork, `Laden(player)`) and on `dir` relative to `player.direction`:
   if `LadderDownInDir(dir)` and nothing solid below; otherwise `TryMovePlayer`.
 - **Unladen**, `dir` parallel: ladder climb if applicable and `!player.Extended()`,
   otherwise `TryMovePlayer`.
-- **Unladen**, `dir` perpendicular: *to be transcribed* — this is the turn case.
+- **Extended**, `dir` with a ladder up/down: `TryClimbUp` / `TryClimbDown`.
+- Otherwise: **`TryTurnPlayer(dir)`**, which is `TryTurn(player, player.direction.LeftOf(dir))`
+  — the turn case, parameterised by whether the target direction is to the left.
 
-Source: `GameState.cs:1560 ProcessInput`.
+After dispatch, `PassiveForceSweep()` runs unconditionally. On success
+`ProcessPetalStuff()` runs (decorative only — petals and splashes, safe to omit).
+On failure the attempt is recorded in `moveattempts[player.id]`.
 
-TODO: transcribe the perpendicular/unladen branch and the meaning of
-`Extended()`, `Laden()`, `LadenTarget()`.
+Source: `GameState.cs:1560 ProcessInput`, `GameState.cs TryTurnPlayer`.
+
+TODO: `TryTurn`, `Direction.LeftOf`, and the meaning of `Extended()`, `Laden()`,
+`LadenTarget()`.
 
 ---
 
@@ -230,14 +236,46 @@ afterwards (`GameState.cs:1396-1477`), which matters for ordering.
 
 Establish the four per-face states and the transitions between them. TODO.
 
-## 10. Ladders — NOT TRANSCRIBED
+## 10. Ladders — PARTIAL
 
-`LadderAt`, `LadderUpInDir`, `LadderDownInDir`, `TryClimbUp`, `TryClimbDown`,
+### 10.1 Ladders come from two places — CONFIRMED
+
+`LadderAt(c)` returns a `Direction`:
+
+1. If the entity at `c` is `EntType.ladder`, its `direction`.
+2. **If the entity is `EntType.island`, from the island mask**: value `v` at that
+   cell with `3 <= v <= 6` yields `Direction(v - 3)` — North, South, West, East.
+3. Otherwise `Direction.None`.
+
+Case 2 means **a large part of the terrain lives in island masks, not in
+entities**. An `EntType.island` entity is a whole terrain chunk whose shape and
+ladder placement come from a 3D int grid looked up by name.
+
+Source: `GameState.cs LadderAt`, `Entity.cs IslandMaskVal`, `IslandMask.cs`.
+
+### 10.2 Mask lookup — CONFIRMED
+
+`Entity.IslandMaskVal(pos)` indexes `mask[lx][ly][lz]` where
+`(lx,ly,lz) = pos - entity.pos - mask.offset`, returning 0 outside the grid.
+
+The mask table is keyed globally while island `dat` is level-local
+(`island0`, `island1`, ...). Join rule, verified against all 248 island entities
+in the playable corpus: try `<level>__<dat>`, else fall back to `<level>` — the
+primary island (`island0`) is keyed by the level name itself.
+
+Implemented in `level.resolve_island_mask` / `level.mask_value_at`.
+
+### 10.3 Still to transcribe
+
+Only values 3..6 are decoded. The corpus also contains 0, 1, 2, 14..20 and a
+range of negatives (-25..-9) whose meanings are unknown — 0 dominates at 52,839
+cells, 1 at 5,481, 17 at 4,822. These almost certainly encode solidity, surface
+type and slope. Decode before implementing movement over island terrain.
+
+`LadderUpInDir`, `LadderDownInDir`, `TryClimbUp`, `TryClimbDown`,
 `AutomaticClimbUp`, `AutomaticClimbDown`, `AutomaticTurn`, `AutomaticPlayerTick`,
-`RotateBack`, `GetHat`.
-
-The `Automatic*` family suggests the player takes actions without input under
-some conditions. Establish when. TODO.
+`RotateBack`, `GetHat`. The `Automatic*` family suggests the player acts without
+input under some conditions. Establish when. TODO.
 
 ## 11. Win and loss — PARTIAL
 
