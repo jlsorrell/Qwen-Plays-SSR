@@ -439,9 +439,58 @@ perpendicular it rolls, permuting the cook faces. **The exact face permutation i
 unestablished** and must be pinned by a unit test asserting that four rolls in
 one direction restore the original arrangement.
 
-Note `Entity.cs:341` performs a base-4 *reversal* of `cookdata`
-(`f3 + 4*f2 + 16*f1 + 64*f0`), evidence that face order is positional and that
-some operation mirrors the sausage. Identify which. TODO.
+### 7.1 The two rotations — CONFIRMED
+
+There are two distinct sausage rotations, and only one touches `cookdata`.
+
+**`Entity.Pivot()` — the end-over-end tumble.**
+
+```
+pos += direction;  direction = direction.Inverse();  pivot = 1 - pivot;
+cookdata faces reversed:  [f0,f1,f2,f3] -> [f3,f2,f1,f0]
+dat's two bbq fields swap
+```
+
+The sausage lands in the *same two cells* (it moves to `pos+direction` then its
+inverted direction points back at `pos`) but reversed end-for-end and inverted.
+The face reversal swaps the halves and flips up/down within each — exactly a
+tumble over one end. This is the base-4 reversal previously noted at
+`Entity.cs:341` as an unidentified mirror operation.
+
+**`Entity.TryRotate(rot_dir)` — the sideways roll.**
+
+```
+if (!rot_dir.ParallelTo(direction)) { rot = 1 - rot; ... }
+```
+
+It toggles `rot` and, if a fork is stuck to the sausage and orthogonal to it,
+inverts that fork's direction. **It does not touch `cookdata`.**
+
+So faces are stored in a canonical frame and `rot` selects which is currently
+up. A sideways roll changes the exposed face by flipping `rot`, not by
+permuting the stored values.
+
+### 7.2 UNRESOLVED: is `rot` part of state identity?
+
+This is a contradiction that must be settled before Phase 1, because the oracle
+rests on it.
+
+- §7.1 shows `rot` determines **which face is exposed**, which makes it
+  semantic: two sausages with equal `cookdata` but different `rot` present
+  different faces to a grill and will cook differently.
+- §12 shows the game's own `BakStruct` equality — its undo comparison — checks
+  only `pos`, `direction` and `cookdata`. It **omits `rot` and `pivot`**.
+- `state.GameState.state_key` currently follows `BakStruct` and excludes both.
+
+At most one of these can be right. Either `rot`/`pivot` are recoverable from the
+other fields (in which case excluding them is safe), or the game's undo
+comparison is lossy and we must not copy it.
+
+**Do not resolve this by reasoning.** Determine which face `DoCook` actually
+selects — if it indexes via `rot`/`pivot`, they are semantic and `state_key`
+must include them. Getting this wrong collapses genuinely distinct states into
+one key and silently corrupts every distance-to-goal and dead-state label the
+project depends on.
 
 ## 8. Falling — PARTIAL
 
