@@ -99,6 +99,30 @@ class Direction(IntEnum):
         """Mirrors `DirectionUtil.Horizontal`: `d <= None`. Note NONE counts as horizontal."""
         return self <= Direction.NONE
 
+    def rot_90(self, clockwise: bool) -> "Direction":
+        """Quarter turn either way. Mirrors `DirectionUtil.Rot90`.
+
+        Counter-clockwise is expressed as `RotClockwise90().Inverse()` in the
+        game rather than a separate table; kept that way here.
+        """
+        turned = self.rot_clockwise_90()
+        return turned if clockwise else turned.inverse()
+
+    def rot_between(self, other: "Direction") -> "Direction | None":
+        """The diagonal lying between two perpendicular cardinals.
+
+        Mirrors `DirectionUtil.RotBetween`, a symmetric 4x4 table over the
+        cardinals. Returns None for parallel or non-cardinal inputs, where the
+        game stores the sentinel -1.
+
+        This is the cell the fork sweeps through while turning — see §5.9 of
+        docs/mechanics.md, where that sweep applies force.
+        """
+        if not (self.is_ortho and other.is_ortho):
+            return None
+        value = _ROT_BETWEEN[self][other]
+        return None if value < 0 else Direction(value)
+
     def left_of(self, other: "Direction") -> bool:
         """Mirrors `DirectionUtil.LeftOf` — the turn-handedness flag.
 
@@ -120,6 +144,15 @@ _ROT_CLOCKWISE = (3, 2, 0, 1, 7, 6, 4, 5, 8, 9, 10)
 _ROT_CLOCKWISE_45 = (4, 5, 7, 6, 2, 3, 0, 1, 8, 9, 10)
 _FLIP_H = (0, 1, 3, 2, 6, 7, 4, 5, 8, 9, 10)
 _FLIP_V = (1, 0, 2, 3, 7, 6, 5, 4, 8, 9, 10)
+
+#: `rotbetweens[a][b]` over the four cardinals; -1 marks parallel pairs, which
+#: have no diagonal between them.
+_ROT_BETWEEN = (
+    (-1, -1, 6, 4),
+    (-1, -1, 5, 7),
+    (6, 5, -1, -1),
+    (4, 7, -1, -1),
+)
 
 #: `continuerot[to][from]` — note the index order is reversed relative to the
 #: call signature `ContinueRot(from, to)`. Value 8 is Direction.NONE.

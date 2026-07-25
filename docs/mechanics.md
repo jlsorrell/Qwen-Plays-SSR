@@ -62,8 +62,24 @@ the renderer prints rows in descending `y` so north appears at the top.
 SouthEast=7, None=8, Down=9, Up=10`. Serialised level data stores the ordinal,
 so the Python enum matches it exactly. `.dem` input uses only the four cardinals.
 
-**Fraction / FractCoord** (`Fraction.cs`, `FractCoord.cs`) — exact rational
-arithmetic for sub-tick movement. Not yet transcribed; see §5.
+**Fraction / FractCoord** (`Fraction.cs`, `FractCoord.cs`) — rational arithmetic
+for sub-tick movement.
+
+**Use Python's stdlib `fractions.Fraction`.** The game's version reduces lazily
+(only when `den > 10000`, to dodge int overflow) but `operator ==` compares by
+cross-multiplication, so equality is value-based and matches the stdlib exactly.
+Python's arbitrary-precision ints remove the overflow motivation entirely.
+
+Two quirks in the game's implementation, recorded because they are divergence
+risks rather than things to reproduce:
+
+1. **`CompareTo` casts to `float`.** Ordering is therefore approximate, and two
+   distinct rationals that are very close could tie or invert. Movement
+   denominators are small, so exact and float ordering agree in practice — but
+   if a replay ever diverges on ordering, look here first.
+2. **`GetHashCode` is `num ^ den`, inconsistent with value equality.** `1/2` and
+   `2/4` compare equal but hash differently. Harmless in the game because
+   `Fraction` is never a dictionary key; do not imitate it.
 
 ### 2.1 Direction algebra — CONFIRMED
 
@@ -323,7 +339,37 @@ dynamic; wrong on three of nine types.
 
 Source: `Utility.cs:117-133`, `DirectionUtil.cs:156-164`.
 
-### 5.8 Still to transcribe
+### 5.9 Turning — PARTIAL
+
+`TryTurn(e, clockwise, turnspeed=2)`; fails outright if the entity is already
+moving.
+
+The target facing is `e.direction.Rot90(clockwise)`. The interesting part is
+`RotBetween(old, new)` — the **diagonal** between the two facings — and
+`pos = e.pos + that diagonal`. That is the cell the fork sweeps through.
+
+**Turning applies force.** When the entity is extended (fork attached), the game
+calls `ApplyForce(pos, direction, 1, 1)` on that swept diagonal cell — so
+turning can push a sausage. If the push succeeds, `turnspeed` drops to 1. If it
+fails and the entity is the player, the blocked entities are recorded in
+`moveattempts`.
+
+Carrying something (`GetHat(e)` non-null) also forces `turnspeed = 1`.
+
+For the player specifically, whatever it is standing on gets a `Fixed` movement
+for the duration, provided that floor entity is not static.
+
+Note the parameter here is honestly named `clockwise`, while `TryTurnPlayer`
+supplies it from `LeftOf` and `Movement` stores it as `left`. The value is the
+same; only the names disagree. See §2.1.
+
+`RotBetween` is a symmetric 4x4 table over the cardinals with -1 for parallel
+pairs. Verified as a test invariant: it is defined exactly when the two
+directions are perpendicular.
+
+Source: `GameState.cs TryTurn`, `DirectionUtil.cs:65-71,176-179,259-266`.
+
+### 5.10 Still to transcribe
 
 `TryPushEnt` (the recursion's other half), `PassiveForceSweep`, `Movement.Translation`
 construction, `AddTranslation`, `AddTranslationOK`, `AddRotation`, `AddPivot`,

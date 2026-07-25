@@ -148,3 +148,47 @@ def test_none_counts_as_horizontal():
 def test_vertical_and_horizontal_partition_all_directions():
     for d in Direction:
         assert d.is_vertical != d.is_horizontal
+
+
+def test_rot_90_clockwise_matches_rot_clockwise_90():
+    for d in CARDINALS + DIAGONALS:
+        assert d.rot_90(clockwise=True) is d.rot_clockwise_90()
+
+
+def test_rot_90_counter_clockwise_is_the_inverse_turn():
+    assert Direction.NORTH.rot_90(clockwise=False) is Direction.WEST
+    assert Direction.WEST.rot_90(clockwise=False) is Direction.SOUTH
+
+
+def test_rot_90_both_ways_returns_to_start():
+    for d in CARDINALS + DIAGONALS:
+        assert d.rot_90(True).rot_90(False) is d
+
+
+def test_rot_between_gives_the_diagonal():
+    assert Direction.NORTH.rot_between(Direction.EAST) is Direction.NORTHEAST
+    assert Direction.NORTH.rot_between(Direction.WEST) is Direction.NORTHWEST
+    assert Direction.SOUTH.rot_between(Direction.EAST) is Direction.SOUTHEAST
+    assert Direction.SOUTH.rot_between(Direction.WEST) is Direction.SOUTHWEST
+
+
+def test_rot_between_is_symmetric():
+    for a in CARDINALS:
+        for b in CARDINALS:
+            assert a.rot_between(b) == b.rot_between(a)
+
+
+def test_rot_between_is_none_for_parallel_pairs():
+    assert Direction.NORTH.rot_between(Direction.NORTH) is None
+    assert Direction.NORTH.rot_between(Direction.SOUTH) is None
+
+
+def test_rot_between_is_none_for_non_cardinals():
+    assert Direction.NORTHEAST.rot_between(Direction.NORTH) is None
+    assert Direction.UP.rot_between(Direction.NORTH) is None
+
+
+def test_rot_between_is_defined_exactly_for_perpendicular_cardinals():
+    for a in CARDINALS:
+        for b in CARDINALS:
+            assert (a.rot_between(b) is not None) == a.normal_to(b)
