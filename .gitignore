@@ -4,5 +4,8 @@ __pycache__/
 .pytest_cache/
 uv.lock
 
-# Extracted from the user's own game install — not redistributable
+# Extracted or decompiled from the owner's game install — never commit.
+# Rules are read from here, documented in docs/mechanics.md, and reimplemented
+# independently. No decompiled source enters this repository.
 data/raw_assets/
+data/decompiled/
