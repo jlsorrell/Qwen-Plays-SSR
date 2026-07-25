@@ -481,19 +481,46 @@ unless noted. `C = ContinueRot(todir, fromdir)`.
 | diagonal | `C == movedir` | `pos+movedir` toward `movedir` |
 | diagonal | otherwise | `pos+movedir` and `pos+movedir+todir` toward `movedir` |
 
-**The remaining blocker is not the forces.** Transcribing these revealed that
-the forces only describe what a pivot *displaces*; they say nothing about what
-the pivot does to the pivoting entity itself. That transformation lives in
-`Movement.Resolve`'s `MoveType.Pivot` branch, which is **unread**. Without it we
-know what a pivot pushes but not where the player ends up — so the forces are
-not implementable in isolation.
+**The pivot transformation — CONFIRMED.** `Movement.Resolve`, `MoveType.Pivot`:
 
-Remaining to read, in priority order:
-1. `Movement.Resolve`, `MoveType.Pivot` branch — the actual transformation.
-2. The tail of `TryPivotTurn` after the `GetHat` recursion (collision check and
-   return value).
-3. The two `weakforce`-suppressed branches in `TryPushEnt`.
-4. `GetHat`.
+```
+target.pos       += direction     # direction is the pushdir
+target.direction  = to            # `to` is the swept DIAGONAL
+```
+
+Plus, for a sausage carrying a fork, the fork rotates 45 degrees (clockwise or
+counter- depending on `target.direction.LeftOf(to)`) and repositions to
+`target.pos + to + direction`.
+
+### 5.11b Turning is two-phase — CONFIRMED, and §5.9 was incomplete
+
+The pivot resolution sets `direction` to a **diagonal**, not to the target
+cardinal. That is not an artefact of pivots; it is how all turning works:
+
+- `TryTurn` builds its rotation toward `direction2 = RotBetween(old, new)` — the
+  diagonal — and stores the eventual cardinal in `e.turndir`.
+- `Entity.Turning()` is literally `direction.Diagonal()`: an entity is mid-turn
+  exactly while it faces a diagonal.
+- `MType` carries `TurnIn`, `TurnOut` and `TurnBackout` — the phases.
+
+So a turn is: **TurnIn** to the diagonal, then a second movement to `turndir`
+(or `TurnBackout` back the way it came, presumably when the second phase is
+blocked). The diagonal is a real intermediate state, and it is where the swept
+cell and its collisions are evaluated.
+
+**Consequence for this implementation.** `mechanics.try_turn_player` currently
+sets the final cardinal in one step. For *settled* states that is likely
+equivalent — no settled state faces a diagonal — but it means we do not model
+the intermediate, so any rule that fires during the diagonal phase is invisible
+to us. Pivot cannot be implemented correctly without it, because a pivot *is*
+the recovery path taken when the diagonal phase collides.
+
+Implementing pivot therefore means restructuring turning into two phases and
+re-verifying the existing turn behaviour, not adding an isolated branch.
+
+Remaining to read: the tail of `TryPivotTurn` after the `GetHat` recursion, the
+two `weakforce`-suppressed branches in `TryPushEnt`, `GetHat`, and the
+`TurnOut`/`TurnBackout` phase transitions.
 
 ### 5.12 Still to transcribe
 
