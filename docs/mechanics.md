@@ -884,13 +884,31 @@ face 3 over a fresh grill cell and burns it.
 
 Sliding along a grill genuinely does burn a sausage in SSR, so the fault is
 probably **upstream** — the sausage should not be in that position by move 33.
-Candidate causes, in order of suspicion:
+**Ladders are NOT the cause — measured.** Probing every cell adjacent to the
+player (and one above and below each) across the first 34 moves finds **zero**
+ladders. The climb branches are never reached. This was the leading hypothesis
+and it is wrong; do not spend time on ladders for this divergence.
 
-1. An earlier move resolved differently, leaving the sausage one cell off.
-2. Ladders are unimplemented: `ProcessInput`'s climb branches fall through to
-   ordinary movement, so any climb in the first 33 moves silently walks instead.
-3. The cook-face index (`_COOK_FACE`, §9.1) is right about *which* face but the
-   `rot` toggle may be applied at the wrong point relative to cooking.
+**Two apparent anomalies, both investigated:**
+
+- *Move 9: a sausage moves that nothing seems to push.* Explained and correct.
+  Sausage 4505 sits at (0,-4) east-west oriented, so it also occupies (1,-4) —
+  the player's destination. The push is legitimate, and the roll direction and
+  `rot` toggle are both right.
+- *Moves 10-13: four consecutive EAST inputs produce no turn.* The player stands
+  at (1,-4) facing North with sausage 4514 at the fork's destination (2,-4). The
+  swept diagonal (2,-3) is empty, so the turn-push finds nothing; the fork then
+  collides and `TryPivotTurn` refuses because the footing is `ground`, not
+  island. **This may well be correct** — `all.dem` is a recorded session and
+  repeated ineffective inputs are plausible. It is not established either way.
+
+**Remaining unexplained:** the burn at move 33. Every cheap hypothesis has been
+tested and eliminated, and further progress by inspection is guesswork.
+
+**The right next step is human differential testing (spec §5.2), not more
+reading.** The owner has the game. Playing the first ~35 inputs of `all.dem`
+and reporting where sausage 4521 ends up, and whether it burns, would settle in
+one observation what static analysis has not.
 
 **Two guards are implemented and were not the cause.** Cooking is gated both on
 the sausage having moved (mirroring `totrycook`) and on the grill's identity
