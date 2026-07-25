@@ -386,3 +386,27 @@ def test_a_refused_chain_blocks_the_whole_push():
     result = step(state, Direction.EAST)
     assert result.state.by_id(50).pos == Coord(2, 2, 1)
     assert not result.moved
+
+
+def test_pushing_an_island_carries_its_terrain():
+    """An island is a movable chunk; its mask is indexed off entity.pos."""
+    from ssr_env.geometry import solid_ent_at
+    from ssr_env.mechanics import try_push
+
+    island = Entity(pos=Coord(5, 0, 0), type=EntType.ISLAND, id=70, dat="island0")
+    masks = {"lvl__island0": {"offset": [0, 0, 0], "mask": [[[1]]]}}
+    state = GameState(entities=(island,), tileset=0)
+    assert solid_ent_at(state, Coord(5, 0, 0), masks, "lvl")
+    after = try_push(state, island, Direction.EAST, masks, "lvl")
+    assert after.by_id(70).pos == Coord(6, 0, 0)
+    assert solid_ent_at(after, Coord(6, 0, 0), masks, "lvl")
+    assert not solid_ent_at(after, Coord(5, 0, 0), masks, "lvl")
+
+
+def test_the_island_underfoot_is_not_pushable():
+    """TryPushEnt refuses a horizontal push of the player's own footing."""
+    from ssr_env.mechanics import try_push
+
+    state, masks = island_state(barrier_at=None)
+    island = state.by_id(70)
+    assert try_push(state, island, Direction.EAST, masks, "lvl") is state

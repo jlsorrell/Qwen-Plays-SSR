@@ -306,12 +306,19 @@ def try_push(
         # standing on (unless `canchangeplayerfooting`). Players stand *on*
         # island terrain, so the wall they walk into is usually that same
         # entity, and the push simply fails — a blocked move, not a mechanic.
-        footing = floor_under(state.player, state, masks, level_name)
+        players = state.of_type(EntType.PLAYER)
+        footing = (
+            floor_under(players[0], state, masks, level_name) if players else None
+        )
         if not direction.is_vertical and footing is not None and footing.id == entity.id:
             return state
-        raise UnimplementedMechanic(
-            "push-island", "pushing an island the player is not standing on"
-        )
+        # Otherwise `TryPushEnt` builds an ordinary translation: an island is a
+        # movable terrain chunk (the world-6 mechanic). Its mask is indexed
+        # relative to `entity.pos`, so moving the entity carries the terrain.
+        #
+        # Two further refusals are not modelled because their state is not
+        # represented here: `overworld && pushestotry == 0`, and
+        # `pushtargetlevel == e.dat`. Neither applies inside a level.
 
     rolls = entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction)
 
