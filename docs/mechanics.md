@@ -593,10 +593,22 @@ levels — this is the work queue, ordered by what actually blocks progress:
 
 | Blocker | Levels |
 |---|---|
-| `falling` | 66 |
-| `turn-push` | 38 |
-| `push` (chains, islands, statics) | 14 |
-| `roll` | 4 |
+| `falling` | 60 |
+| `push-island` | 29 |
+| `pivot-turn` | 21 |
+| `roll` | 9 |
+| `push-static` | 4 |
+
+**`push-island` is probably over-eager on our side.** Walking into a wall of
+island terrain currently attempts a push and raises. In the game islands *are*
+pushable (world 6), but `TryPushEnt` refuses when the player stands on the
+island, when it is the push target, or in the overworld without a push budget —
+so the ordinary case is a blocked move, not a push. Establish those conditions
+before implementing; treating every island contact as a push is wrong.
+
+**`pivot-turn` is a real mechanic, not an error path.** When a turn collides the
+game rolls back and calls `TryPivotTurn` — the player rotates about the fork
+rather than the body. Untranscribed.
 
 Note `falling` dominates because most of these are *wrong* level pairings where
 the player simply walks off an edge; it is not necessarily the most valuable
