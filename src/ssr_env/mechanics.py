@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 
 from .entity import Entity
 from .geometry import (
+    NEEDS_GROUND_TYPES,
     border_cells,
     ent_at,
     is_extended,
@@ -122,6 +123,54 @@ def try_turn_player(
     return StepResult(state=candidate)
 
 
+#: Below this z an entity has left the world. Matches the player test in
+#: `GameState.Lost()` and `ProcessInput`, and the sausage drowning threshold in
+#: `MovementsTick`.
+OUT_OF_WORLD_Z = -2
+
+
+def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
+    """Apply gravity until nothing is floating. See docs/mechanics.md §8.
+
+    `Floating(c)` is `EntAt(c + Down)?.Decoration() ?? true` — an entity floats
+    when nothing solid supports any of its cells, which is `under()` coming back
+    empty. Only `NEEDS_GROUND` types fall.
+
+    Falling below `OUT_OF_WORLD_Z` is fatal: the player drowns, and a sausage is
+    marked lost via its `dat` prefix.
+    """
+    for _ in range(_MAX_SETTLE_STEPS):
+        falling = [
+            e
+            for e in state.entities
+            if e.type in NEEDS_GROUND_TYPES
+            and not under(e, state, masks, level_name)
+            and e.pos.z >= -10
+        ]
+        if not falling:
+            break
+        for entity in falling:
+            state = state.replace_entity(
+                replace(entity, pos=entity.pos + Direction.DOWN.delta)
+            )
+    else:
+        raise UnimplementedMechanic("settle-loop", "gravity did not reach quiescence")
+
+    for entity in state.entities:
+        if entity.pos.z >= OUT_OF_WORLD_Z:
+            continue
+        if entity.type is EntType.PLAYER:
+            return replace(state, lost_reason="Drowned")
+        if entity.type is EntType.SAUSAGE and not entity.dat.startswith("L"):
+            state = state.replace_entity(replace(entity, dat="L" + entity.dat[1:]))
+            state = replace(state, lost_reason="SausageLost")
+    return state
+
+
+#: Enough for any real level; a runaway means the fall rules are wrong.
+_MAX_SETTLE_STEPS = 64
+
+
 def try_push(
     state: GameState,
     entity: Entity,
@@ -219,12 +268,11 @@ def try_move_player(
                 )
             player = state.player
 
-    if not _supported(state, destination, masks, level_name):
-        raise UnimplementedMechanic(
-            "falling", f"no support under destination {tuple(destination)}"
-        )
-
-    return StepResult(state=state.replace_entity(replace(player, pos=destination)))
+    moved_state = state.replace_entity(replace(player, pos=destination))
+    settled = settle(moved_state, masks, level_name)
+    return StepResult(
+        state=settled, lost=settled.lost, reason=settled.lost_reason or None
+    )
 
 
 def step(

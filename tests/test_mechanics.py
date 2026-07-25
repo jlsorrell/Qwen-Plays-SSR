@@ -58,11 +58,6 @@ def test_fork_sits_one_cell_ahead_of_the_player():
     assert fork_cell(state, state.player) == Coord(3, 2, 1)
 
 
-def test_walking_off_the_edge_raises_falling():
-    state = flat(player_at=(0, 0), facing=Direction.SOUTH)
-    with pytest.raises(UnimplementedMechanic, match="falling"):
-        step(state, Direction.SOUTH)
-
 
 def test_walking_into_a_sausage_pushes_it():
     """Player faces North with its fork at (2,3); walking North rolls the
@@ -76,11 +71,19 @@ def test_walking_into_a_sausage_pushes_it():
 
 
 def test_unimplemented_mechanic_names_itself():
-    state = flat(player_at=(0, 0), facing=Direction.SOUTH)
+    """Points at a mechanic that is still genuinely unimplemented."""
+    island = Entity(pos=Coord(2, 2, 0), type=EntType.ISLAND, id=70, dat="island0")
+    barrier = Entity(pos=Coord(3, 2, 1), type=EntType.BARRIER, id=60)
+    player = Entity(pos=Coord(2, 2, 1), type=EntType.PLAYER, id=1,
+                    direction=Direction.NORTH)
+    masks = {"lvl__island0": {"offset": [0, 0, 0], "mask": [[[1]]]}}
+    state = GameState(entities=(island, barrier, player), tileset=0)
     try:
-        step(state, Direction.SOUTH)
+        step(state, Direction.EAST, None, masks, "lvl")
     except UnimplementedMechanic as exc:
-        assert exc.mechanic == "falling"
+        assert exc.mechanic == "pivot-turn"
+    else:
+        raise AssertionError("expected UnimplementedMechanic")
 
 
 def test_undo_restores_the_previous_state():
@@ -307,3 +310,34 @@ def test_pushing_static_terrain_is_a_blocked_move_not_a_raise():
     assert try_push(state, wall, Direction.EAST) is state
     result = step(state, Direction.EAST)
     assert not result.moved
+
+
+def test_walking_off_an_edge_drowns_the_player():
+    """Falling below z=-2 is fatal; the threshold matches GameState.Lost()."""
+    state = flat(player_at=(0, 0), facing=Direction.SOUTH)
+    result = step(state, Direction.SOUTH)
+    assert result.lost and result.state.lost_reason == "Drowned"
+
+
+def test_a_supported_move_does_not_fall():
+    result = step(flat(), Direction.NORTH)
+    assert not result.lost
+    assert result.state.player.pos == Coord(2, 3, 1)
+
+
+def test_settle_drops_an_unsupported_entity_onto_the_ground():
+    from ssr_env.mechanics import settle
+
+    ground = Entity(pos=Coord(0, 0, 0), type=EntType.GROUND, id=9, tileset=1)
+    player = Entity(pos=Coord(0, 0, 5), type=EntType.PLAYER, id=1,
+                    direction=Direction.NONE)
+    settled = settle(GameState(entities=(ground, player), tileset=0))
+    assert settled.by_id(1).pos == Coord(0, 0, 1)
+    assert not settled.lost
+
+
+def test_settle_is_idempotent_once_resting():
+    from ssr_env.mechanics import settle
+
+    once = settle(flat())
+    assert settle(once).state_key() == once.state_key()
