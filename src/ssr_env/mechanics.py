@@ -108,8 +108,16 @@ def try_turn_player(
         and occupies(entity, fork_target, candidate, masks, level_name)
         for entity in candidate.entities
     ):
+        # `TryPivotTurn` has a hard precondition: it returns false immediately
+        # unless the player is standing on an ISLAND. Off an island a collided
+        # turn is simply a failed move, not a pivot.
+        footing = floor_under(player, state, masks, level_name)
+        if footing is None or footing.type is not EntType.ISLAND:
+            return StepResult(
+                state=state, moved=False, reason="turn blocked (no pivot: not on island)"
+            )
         raise UnimplementedMechanic(
-            "pivot-turn", "turn collides; game falls back to TryPivotTurn"
+            "pivot-turn", "collided turn on an island falls back to TryPivotTurn"
         )
     return StepResult(state=candidate)
 
