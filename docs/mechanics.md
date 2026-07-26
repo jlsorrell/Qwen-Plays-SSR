@@ -919,6 +919,40 @@ the sausage having moved (mirroring `totrycook`) and on the grill's identity
 differing from what the sausage recorded in `dat` (mirroring `DoCook`'s
 `array2[1] != bbqdatstring` test). Neither prevents this burn, correctly.
 
+## 10.5 `cookdata` on an island is the "sausages issued" flag — CONFIRMED
+
+This resolves the `-1` exception in `Entity.IslandAt` and one standing open
+question.
+
+`IslandAt` has three solidity rules:
+
+| Case | Rule |
+|---|---|
+| `weak` | `value != 0` |
+| `cookdata == 0` | `value > 0` **or** `value == -1` |
+| otherwise | `value > 0` |
+
+**`-1` marks a sausage footprint carved into the island mask.** Measured across
+the corpus: 440 `-1` cells against 220 sausages — exactly two each — always in
+pairs, present in 116 of 205 levels, in counts of 2, 4, 6, 10, 14 and 16.
+
+**`cookdata` on an `EntType.island` entity is not cook state at all.** It is set
+to 1 in exactly two places:
+
+- `SubworldTransition(levelname)`, on the island being entered
+- the tail of `IssueWorldSausages`, after that level's sausages are spawned
+
+So the flag means *"this level's sausages now exist as real entities"*. Before
+that, the sausages are not in the world and their footprints stand in as solid
+blocks — you cannot walk through the space a sausage will occupy. Afterwards the
+footprints stop being solid because actual sausage entities occupy those cells.
+
+**Consequence for the overworld:** an unentered level's sausage cells are
+genuine obstacles. A replay blocked by one is behaving correctly, not buggy.
+
+Source: `Entity.cs IslandAt`, `GameState.cs:492 SubworldTransition`,
+`GameState.cs:650 IssueWorldSausages`.
+
 ## 13. Open questions
 
 1. ~~What do the four per-face `cookdata` values mean?~~ **Answered in §9.1**:
