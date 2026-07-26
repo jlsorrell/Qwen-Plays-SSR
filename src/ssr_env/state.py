@@ -178,6 +178,20 @@ def static_index_of(state: GameState, masks=None, level_name: str = "") -> dict:
     return state._static_index
 
 
+def with_entities(state: GameState, entities: tuple, **kw) -> GameState:
+    """Replace the whole entity tuple, dropping both caches.
+
+    `replace()` copies `_dynamic` and `_static_index`, which is correct when only
+    one entity changes but silently wrong when entities are added or removed —
+    spawned sausages stayed invisible to `ent_at` because they were absent from
+    a carried-over dynamic list. Any wholesale change must go through here.
+    """
+    updated = replace(state, entities=entities, **kw)
+    object.__setattr__(updated, "_dynamic", None)
+    object.__setattr__(updated, "_static_index", None)
+    return updated
+
+
 def dynamic_entities(state: GameState) -> tuple:
     """Dynamic entities, cached. Mirrors the game's `dynamicentities`."""
     if state._dynamic is None:

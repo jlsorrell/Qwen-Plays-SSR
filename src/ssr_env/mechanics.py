@@ -30,7 +30,7 @@ from .level import (
     mask_value_at,
     resolve_island_mask,
 )
-from .state import GameState
+from .state import GameState, with_entities
 from .types import (
     Coord,
     _continue_rot as _continue,
@@ -216,7 +216,16 @@ def try_turn_player(
     # Phase 2 (TurnOut): complete to the target cardinal.
     turned = replace(player, direction=direction)
     candidate = state.replace_entity(turned)
-    if _blocked_for(candidate, turned, turned.pos + direction.delta, masks, level_name):
+    # A rotating extended entity occupies the body, the fork's old cell, and
+    # `pos + movement.to` (§12.8) — and `movement.to` is the swept **diagonal**,
+    # since `TryTurn` passes `RotBetween` as `to`. The fork's final cardinal cell
+    # is never part of a rotation's occupancy, so it must not be tested here.
+    collide_cell = (
+        player.pos + diagonal.delta
+        if diagonal is not None and is_extended(player, state)
+        else turned.pos + direction.delta
+    )
+    if _blocked_for(candidate, turned, collide_cell, masks, level_name):
         return try_pivot_turn(state, direction, masks, level_name)
 
     return StepResult(state=candidate)
@@ -677,9 +686,9 @@ def check_overworld_entry(
             )
             for i, s in enumerate(spawns)
         )
-        return replace(
+        return with_entities(
             entered,
-            entities=entered.entities + sausages,
+            entered.entities + sausages,
             overworld=False,
             pushtargetlevel=name,
         )

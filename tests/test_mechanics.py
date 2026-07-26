@@ -299,8 +299,14 @@ def test_turn_push_can_roll_the_swept_sausage():
     assert result.state.by_id(50).rot == 1
 
 
-def island_state(barrier_at=(3, 2, 1), facing=Direction.NORTH):
-    """Player on a 3x3 island chunk, optionally with a barrier blocking the fork."""
+#: The cell a player at (2,2,1) facing North sweeps when turning East. A turn
+#: collides against the swept diagonal, not the fork's destination (§12.8), so
+#: fixtures that want to force a collision must block this cell.
+SWEPT_NE = Coord(2, 2, 1) + Direction.NORTHEAST.delta
+
+
+def island_state(barrier_at=SWEPT_NE, facing=Direction.NORTH):
+    """Player on a 3x3 island chunk, optionally with a barrier in the swept cell."""
     island = Entity(pos=Coord(2, 2, 0), type=EntType.ISLAND, id=70, dat="island0")
     player = Entity(pos=Coord(2, 2, 1), type=EntType.PLAYER, id=1, direction=facing)
     ents = [island, player]
@@ -330,7 +336,7 @@ def test_an_unblocked_turn_does_not_pivot():
 
 def test_pivot_is_refused_off_an_island():
     """TryPivotTurn returns false unless Floor(player) is an island."""
-    barrier = Entity(pos=Coord(3, 2, 1), type=EntType.BARRIER, id=60)
+    barrier = Entity(pos=SWEPT_NE, type=EntType.BARRIER, id=60)
     state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
                  extra=(barrier,))
     result = step(state, Direction.EAST)
@@ -344,7 +350,7 @@ def test_turning_with_a_clear_corner_still_works():
 
 def test_collided_turn_off_an_island_is_a_failed_move_not_a_pivot():
     """TryPivotTurn returns false unless the player stands on an island."""
-    barrier = Entity(pos=Coord(3, 2, 1), type=EntType.BARRIER, id=60)
+    barrier = Entity(pos=SWEPT_NE, type=EntType.BARRIER, id=60)
     state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
                  extra=(barrier,))
     result = step(state, Direction.EAST)

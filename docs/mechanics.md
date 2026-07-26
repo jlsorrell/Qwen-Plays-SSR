@@ -1082,6 +1082,38 @@ Both cannot hold. Candidate resolutions, none yet tested:
 Resolution 3 is checkable locally by comparing the rendered island against the
 real level. Resolutions 1 and 2 need a differential observation.
 
+## 12.9 State cache invalidation — a self-inflicted bug worth remembering
+
+`GameState` caches a dynamic-entity list and a static cell index for speed on
+the 17k-entity overworld. `replace()` copies both, which is correct when a
+single entity changes and **silently wrong when entities are added or removed**.
+
+Spawning a level's sausages via `replace()` carried a stale dynamic list, so
+`ent_at` never saw them: the player walked straight through sausages for
+fourteen moves without pushing any. Nothing failed — the simulation simply
+behaved as though the sausages were not there.
+
+All wholesale entity changes now go through `state.with_entities`, which drops
+both caches. Any future code adding or removing entities must use it.
+
+## 12.10 Turn phase two — the current divergence
+
+Replay reaches move 36 and first touches a sausage at move 29. The owner
+observed first contact at **move 22**, at a specific moment: the player at (5,1)
+facing south presses east, and the fork swings onto the sausage at (6,1).
+
+Only the **TurnIn** phase is modelled, whose entering cell is the swept diagonal
+(§12.8). But a turn is two phases (§5.11b), and it is **TurnOut** that carries
+the fork from the diagonal to its final cardinal cell — so the cardinal is an
+entering cell of the second phase, and that is the push the owner saw.
+
+So the cardinal cell does matter, just not during TurnIn. Both of the
+single-cell rules tried earlier were half-right, which is why each fixed some
+cases and broke others.
+
+Next: give `try_turn_player` a second phase that applies force at the cardinal
+cell after the diagonal phase resolves.
+
 ## 13. Open questions
 
 1. ~~What do the four per-face `cookdata` values mean?~~ **Answered in §9.1**:
