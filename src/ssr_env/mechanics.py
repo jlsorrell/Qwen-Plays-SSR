@@ -734,3 +734,62 @@ def check_overworld_entry(
             pushtargetlevel=name,
         )
     return state
+
+
+def level_pose(state: GameState, name: str, meta: dict):
+    """The level's entry pose in world coordinates, or None.
+
+    `GetExitPos` computes the *exit* pose exactly as entry is computed —
+    `playerpositions[name] + island.pos` — so a level is entered and left at the
+    same cell, facing the same way. This is the grain of truth behind the
+    "return to start" folklore: it is the condition for *leaving* a solved
+    level, not for solving it (§11.1).
+    """
+    pose = meta.get("player", {}).get(name)
+    if pose is None:
+        return None
+    island = next(
+        (e for e in state.entities if e.type is EntType.ISLAND and e.dat == name), None
+    )
+    if island is None:
+        return None
+    return island.pos + Coord(*pose["pos"]), Direction(pose["direction"])
+
+
+def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
+    """Leave a solved level when the player returns to its entry pose.
+
+    Mirrors `CheckOnLevelExit`, which fires on
+    `!overworld && Won() && !LevelCompleted(name) && player.Extended()
+     && player.pos == exitPos && player.direction == exitDir`,
+    then calls `SubworldLeave`: despawn the level's sausages, mark it complete,
+    and return to the overworld.
+
+    The island's `cookdata` is deliberately left at 1. It means "this level's
+    sausages have been issued" (§10.5) and nothing observed so far shows it
+    being cleared; leaving it set keeps the level's sausage footprints
+    non-solid, which is what a completed level should look like from outside.
+    """
+    if state.overworld or not state.pushtargetlevel:
+        return state
+    name = state.pushtargetlevel
+    if name in state.completed or not is_solved(state):
+        return state
+    pose = level_pose(state, name, meta)
+    if pose is None:
+        return state
+    exit_pos, exit_dir = pose
+    player = state.player
+    if player.pos != exit_pos or player.direction is not exit_dir:
+        return state
+    if not is_extended(player, state):
+        return state
+
+    remaining = tuple(e for e in state.entities if e.type is not EntType.SAUSAGE)
+    return with_entities(
+        state,
+        remaining,
+        overworld=True,
+        pushtargetlevel="",
+        completed=state.completed | {name},
+    )

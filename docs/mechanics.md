@@ -1169,7 +1169,23 @@ self-consistent.
 == exitDir && exitUp`, calling `SubworldLeave`: despawn the level's sausages,
 `CompleteLevel(name)`, restore `overworld = true`, and `TryRaiseAll`.
 
-`exitPos`/`exitDir` come from `GetExitPos(pushtargetlevel, ...)` during
-`SubworldTransition`, which is not yet transcribed. Without it the player keeps
-walking inside a finished level and eventually falls off the island — the
-move-112 drowning previously mistaken for a mechanics failure.
+### Resolved — IMPLEMENTED
+
+**`GetExitPos` computes the entry pose.** It looks up
+`playerpositions[name] + island.pos` — identical to how entry is detected. A
+level is entered and left at the same cell, facing the same way.
+
+That is the grain of truth behind the "return to start" folklore, correctly
+located: it is the condition for **leaving** a solved level, never for solving
+one (§11.1).
+
+`SubworldLeave` then despawns the level's sausages, marks it complete, and
+restores `overworld = true`. The island's `cookdata` is deliberately left at 1;
+it means "sausages have been issued" (§10.5) and nothing observed shows it being
+cleared, so a completed level keeps its footprints non-solid from outside.
+
+Verified in replay: `all.dem` enters Lachrymose Head at move 15, solves it at
+77, leaves at 83, and enters Southjaunt at 110.
+
+Not modelled: `TryRaiseAll`/`TryLowerAll` (the terrain rising and sinking) and
+`pushestotry`. Neither has yet affected a replay outcome.
