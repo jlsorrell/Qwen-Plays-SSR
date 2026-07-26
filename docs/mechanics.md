@@ -1281,7 +1281,48 @@ That pattern says the player's position has drifted by a small amount relative
 to the recording, so subsequent inputs are being applied from the wrong cell.
 A single wrong move around 400-430 would produce exactly this.
 
-**What would settle it:** an observation of where the character is shortly after
-Comely Hearth is completed — say at move 430 — expressed as a panel on whichever
-island it is standing on. Nothing else distinguishes "drifted by one cell" from
-"drifted by several".
+### Localised — it is the exit, not the level
+
+The owner played Comely Hearth from its entrance. Results:
+
+| | Owner | Simulator |
+|---|---|---|
+| Level solved | key 52 | key 51 |
+| Left the level | (before key 86) | key 70 |
+| At key 86 | inside Happy Pool, panel (1,3) facing east | still outside Comely Hearth |
+
+**The win condition is right.** Solved within one move of the observation, which
+also re-confirms §11.1. What is wrong is *departure*: solved at 51, but the exit
+does not fire until 70, and by then the recording has moved on.
+
+### The likely cause: `exitAttachment` — NOT IMPLEMENTED
+
+`SubworldTransition` ends with:
+
+```
+exitAttachment = null
+entity = EntAt(exitPos + Direction.Down)
+if (entity.type == sausage) exitAttachment = entity
+```
+
+and `Movement.Resolve`, in its Translation branch, carries the exit along:
+
+```
+if (gamestate.exitAttachment == target) {
+    gamestate.exitPos += direction
+    if (torsion != 0) {
+        gamestate.exitUp = !gamestate.exitUp
+        if (gamestate.exitDir.OrthoTo(target.direction))
+            gamestate.exitDir = gamestate.exitDir.Inverse()
+    }
+}
+```
+
+**The exit tile can sit on top of a sausage, and then rides it.** Moving that
+sausage moves the exit; rolling it flips `exitUp` and can invert `exitDir`.
+`CheckOnLevelExit` requires `exitUp`, so a roll can also switch the exit off and
+on.
+
+This simulator treats the exit pose as fixed at the entry pose, which is correct
+only when nothing is underneath it. That is enough to explain leaving a solved
+level late, and it is the next thing to implement.
