@@ -5,8 +5,9 @@ structure, and an entity list carries cook-face state and facing, which a glyph
 grid cannot express. Spec §5.4 requires that a strong human player be able to
 solve a level from this text alone.
 
-North is +y, so rows print in descending y — north at the top, as it appears
-on screen.
+North is **-y** (§2), so rows print in *ascending* y to put north at the top,
+as it appears on screen. Printing descending y — which is the natural reading of
+"north is up" if you forget the sign — silently mirrors the map.
 """
 
 from .state import GameState
@@ -68,7 +69,7 @@ def render(state: GameState, name: str = "") -> str:
 
     width = max(len(str(x)) for x in (min(xs), max(xs)))
     lines.append("     " + " ".join(f"{x:>{width}}" for x in range(min(xs), max(xs) + 1)))
-    for y in range(max(ys), min(ys) - 1, -1):
+    for y in range(min(ys), max(ys) + 1):
         row = [
             top.get((x, y), (0, 0, EMPTY))[2].rjust(width)
             for x in range(min(xs), max(xs) + 1)

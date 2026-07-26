@@ -62,10 +62,15 @@ def test_render_reports_cook_faces():
 
 
 def test_render_prints_north_at_top():
-    """North is +y, so the higher y row must appear above the lower one."""
+    """North is -y, so the *lower* y row must appear above the higher one.
+
+    The fixture puts the bbq at y=0 and the player at y=1, so the bbq — being
+    north — prints first. This assertion previously read the other way, from
+    before the axis was corrected, and the renderer silently mirrored every map.
+    """
     rows = [ln for ln in render(synthetic(), "t").splitlines() if ln.startswith("  ")]
     map_rows = [r for r in rows if "@" in r or "#" in r]
-    assert "@" in map_rows[0] and "#" in map_rows[1]
+    assert "#" in map_rows[0] and "@" in map_rows[1]
 
 
 def test_render_marks_empty_cells():

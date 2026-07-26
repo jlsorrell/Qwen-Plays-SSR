@@ -1,54 +1,54 @@
-# Manual check 006 — The Anchorage
+# Manual check 006 — is there ground here?
 
-Start from **The Anchorage** (`level35`), the sixteenth level my replay reaches.
-A save part-way through is fine.
+## Getting there
 
-Stand on its entrance facing **North** so you drop in.
-The first key below is the first move *after* you are inside.
+Complete world 1 (all sixteen levels). A sausage then appears at the big
+structure — if that is the one with the plaque reading *"There were once great
+people here..."*, that is what my code calls the shrine. Walk to it.
 
-## Keys (113 moves)
+In my replay the character is standing just south-east of that sausage,
+having walked up from the south, and is about to try walking **south** three
+times in a row.
+
+## What my model has
+
+Top-down. `@` is where my character is standing, `S` is the world sausage,
+`#` is ground you can walk on, `.` is water or empty, `?` is **the cell in
+dispute** — my model says water, the recording walks into it.
 
 ```
-  1-10   W W W W D A A A A S
- 11-20   S A W D S W A D D D
- 21-30   D W S S S A A A D D
- 31-40   S W W W D A A A A A
- 41-50   A S S S W A D D D D
- 51-60   D D W S S S D A A A
- 61-70   S A W A A D D D D S
- 71-80   W W W D A A A A A W
- 81-90   A A S S S W D D S A
- 91-100  D S S W A D D D D W
-101-110  S S S A A A A A D D
-111-113  D D W
+##.#############.
+##...###...##.#..
+#############.#..
+#####.#.#######..
+#########........
+########?........
+########@#....###
+#########....####
+######.##....#.##
+...###..##.....##
+...#####S.....###
+...######.#######
+....####..#..####
+..........######.
+......###########
 ```
 
-## The question that matters
+North is **up** in this picture.
 
-**At key 44, does the character step onto a grill tile, or bounce back off it?**
+## The question
 
-My replay bounces it back. That rule came from your description and this is
-the first place it fires in a level where things then go wrong — so it is the
-prime suspect for being over-applied.
+**Standing where `@` is, can you walk south (down in this picture)?**
 
-My replay bounces at keys: [44, 85]
+My model says no — the cell marked `?` is water, and three consecutive
+south presses in the recording all do nothing. If in the real game you *can*
+walk south from there, my overworld is missing ground at that spot.
 
-## Checkpoints
+If it is easier: just describe the shape of the land immediately south of the
+structure. Is it a dead end, or does it continue?
 
-Panels use your numbering: NW corner (1,1), south of it (2,1), east of it (1,2).
+## If the picture does not match at all
 
-| After key | Panel | Facing |
-|---|---|---|
-| 10 | (1,6) | South |
-| 20 | (1,9) | West |
-| 30 | (4,10) | West |
-| 43 | (2,4) | South |
-| 50 | (1,8) | West |
-| 70 | (4,10) | South |
-| 90 | (1,5) | West |
-
-- I solve the level at key **108** and leave at key **113**.
-- This island is 10 x 6 tiles with 3 sausages.
-
-Stop at the first checkpoint that disagrees — that is more useful than
-finishing, and it brackets the fault to a handful of moves.
+That is the more useful answer. It would mean my character is not where I
+think it is by this point, and the shape of the land is the fastest way to
+tell.
