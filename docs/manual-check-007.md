@@ -1,32 +1,48 @@
-# Manual check 007 — the world sausage journey
+# Manual check 007 — the world sausage journey (map corrected)
+
+*The map in the previous version was drawn with a broken renderer that showed
+raised ground as water. This one renders the topmost solid surface in each
+column and has been verified against a structure of known shape.*
 
 ## Starting point
 
-Complete **world 1** — all sixteen levels. A sausage then appears at the large
-structure (the one with the plaque). Do not move it yet.
-
-**Then position yourself: 4 tiles west and 1 tile south of the sausage, facing
-north.** The key sequence begins from there.
+Complete **world 1** — all sixteen levels. A sausage appears at the large
+structure with the plaque. Stand **4 tiles west and 1 tile south of it, facing
+north**, then play the keys below.
 
 ```
-  #########......##
-  ....###.......###
-  ..............###
-  ..#######.....###
-  ..#.#...#########
-  ####.....#.#SS###     <- the sausage, lying east-west
-  ########@########     <- you, facing north
-  .........########
-  #################
+0....000010111..0000000
+00000011000001.....0011
+01..0011000001......011
+01.200101100........000
+10..00100100...........
+.00000000000......0000.
+.......000.......000000
+.................000000
+.....0000000.....000110
+.....0.0...000000000100
+...0000....1010SS000000
+...00000000@00000000000
+............0000000000.
+..000000000000000000000
+......00...00000000.0.0
+......00.00000000000000
+.....00000000000...000.
+......0000000000.000000
+......000...000000...00
+..000.000...00000..0.00
+..000000000000000.0..00
+..000..0000000000...00.
+.....0000000.0000000000
 ```
 
-North is up. `@` is you, `SS` is the two tiles of the sausage, `#` is walkable
-ground and `.` is water or empty.
+- `@` you, `S` the two tiles of the sausage
+- `0` ground level with you, `1` one step higher, `-` one lower, `.` nothing
+- north is up
 
-That position is simply where the recorded playthrough happens to be standing
-when the sausage appears — it walks there while finishing the last level. If
-you arrive facing some other way, turn to face north before starting; a turn
-costs a move and would shift the whole sequence by one.
+The big block of `0`s around and east of the sausage is the plaque structure's
+plaza — it is **flush** with the ground you walk on, not raised. The single `1`
+just west of the sausage is a raised block on that plaza.
 
 ## Keys (102 moves)
 
@@ -44,41 +60,29 @@ costs a move and would shift the whole sequence by one.
  101-102   A W
 ```
 
-`z` is undo. There are a few in this stretch.
+`z` is undo — there are two, at keys 2 and 49.
 
 ## Checkpoints
 
-Positions are given **relative to where the sausage first appeared**, since my
-own coordinates will not mean anything to you. "East" and "north" are as they
-appear on screen.
+Relative to where the sausage first appeared.
 
-| After key | I predict the sausage is |
+| After key | Sausage should be |
 |---|---|
-| 8 | 1 east, level with |
-| 16 | 7 east, level with |
+| 8 | 1 east, level |
+| 16 | 7 east, level |
 | 20 | 7 east, 2 north |
-| 30 | 7 east, 2 north |
-| 45 | 7 east, 2 north |
 | 63 | 7 east, 3 north |
 | 96 | 7 east, 4 north |
+| 102 | **falls in the water** |
 
-| 102 | **falls into the water** |
+## Questions
 
-## The questions
+**1. Which checkpoint first disagrees?** Stop there — the rest is meaningless
+after a divergence, and knowing which one brackets the error to ten or twenty
+moves.
 
-**1. Does the sausage ever fall in the water?** My replay says it does, at
-key 102. If it never does, the divergence is somewhere before that.
+**2. Does the map match now?** If it still looks wrong, that matters more than
+the checkpoints, and I would rather know before you play 102 moves.
 
-**2. Which checkpoint first disagrees?** That is the most useful single fact —
-it brackets the error to a stretch of ten or twenty moves. Stop as soon as one
-is wrong; the rest is meaningless after that.
-
-**3. Roughly, where is the sausage going?** If you can see the intended
-destination — another structure, a gap to bridge, somewhere it slots in —
-that tells me what the journey is *for*, which is worth as much as the
-coordinates.
-
-## If the very first checkpoint is already wrong
-
-Then the error is in the first eight moves after the sausage appears, which
-would be the easiest possible case. Say so and stop.
+**3. Where is the sausage going?** If you can see the destination — another
+structure, a gap it bridges — that tells me what the journey is for.
