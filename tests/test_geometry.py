@@ -40,8 +40,12 @@ def test_ground_is_never_extended():
 
 
 def test_extended_entity_occupies_two_cells():
+    """Stated via the direction's delta so it does not encode an orientation."""
     s = Entity(pos=Coord(2, 2), type=EntType.SAUSAGE, id=1, direction=Direction.NORTH)
-    assert cells_of(s, GameState(entities=(s,))) == (Coord(2, 2), Coord(2, 3, 0))
+    assert cells_of(s, GameState(entities=(s,))) == (
+        Coord(2, 2),
+        Coord(2, 2) + Direction.NORTH.delta,
+    )
 
 
 def test_unextended_entity_occupies_one_cell():

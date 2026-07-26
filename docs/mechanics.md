@@ -994,11 +994,141 @@ to it, decorative, or translating in lockstep with it. Island-vs-island pairs go
 through the `projectioncompatibilities` table — which the extractor currently
 reads past and discards.
 
-To finish this: transcribe `Entity.Occupancy()`, `RoughOccupancyBounds`,
-`CalcBoxNeighbours`, and capture `projectioncompatibilities` in the extractor.
-`Occupancy()` matters most, since a turning entity's footprint covers the swept
-arc rather than just its destination — which is very likely why the real game
-allows a turn my simulator refuses.
+### `Entity.Occupancy()` — TRANSCRIBED
+
+A **rotating extended entity** occupies exactly three cells:
+
+| Cell | `entering` |
+|---|---|
+| `pos` (body) | false |
+| `pos + movement.from` (fork's old cell) | false |
+| `pos + movement.to` | **true** |
+
+**`movement.to` is the swept diagonal**, because `TryTurn` passes
+`RotBetween(old, new)` as `to`. So a turn's only *new* cell is the diagonal —
+the fork's final cardinal destination is never part of a rotation's occupancy.
+
+A **translating** entity occupies, for each cell of its `SourceFootprint()`, that
+cell (`entering: false`) plus the cell one step along `movement.direction`
+(`entering: true`).
+
+Each entry also carries a sub-tick `position` fraction, computed as
+`(den - remaining.num * speed) / den`, and the movement's `speed`.
+
+### Why this is still not implemented
+
+Both single-cell rules are wrong, and tested:
+
+- Colliding on the **cardinal** fork target makes the player pivot away from
+  level entry cells whose neighbouring sausage footprints are solid (§10.5),
+  losing the entry at move 11.
+- Colliding on the **diagonal** fixes move 11 — the turn correctly happens in
+  place — but regresses move 7, which then pivots instead of turning.
+
+So the discriminator is not *which* cell but the `entering` flag and the
+`position` fraction: a cell being entered part-way through a rotation evidently
+does not collide the way a fully-occupied cell does. That is the sub-tick model
+deferred in §1, and it cannot be approximated away here.
+
+### The `Occupancy` struct — CONFIRMED
+
+`BuildOccupancy` is a pooled struct setter with no logic. The semantics live in
+`Occupancy.CompatibleWith`, and it is a **conga-line rule**:
+
+```
+pos != other.pos                  -> compatible (different cells)
+either Static() (speed == 0)      -> COLLIDE
+dir != other.dir                  -> COLLIDE
+entering == other.entering        -> COLLIDE
+otherwise: leaver.TimeTillLeave() <= enterer.TimeTillLeave()
+           TimeTillLeave = (1 - position) / speed
+```
+
+Two entities may share a cell only if one is leaving while the other enters, in
+the same direction, and the leaver is gone before the enterer needs it. This is
+the same idea as the lockstep-translation skip in `Collides()`.
+
+**A stationary entity's occupancy is `speed = 0`, hence `Static()`, hence it
+collides with anything sharing its cell.** So terrain in the swept diagonal does
+genuinely block a turn — the diagonal rule was right, and move 7's pivot may be
+correct behaviour rather than the regression it appeared to be. There is no
+observation for move 7 either way.
+
+`Occupancy()` is a 211-line case analysis, larger than first thought: separate
+branches for island translation, ordinary translation, extended and unextended
+rotation, and several pivot cases under `MType.TurnIn` producing 3 or 4 cells.
+
+### BLOCKING CONTRADICTION — needs an observation, not more reading
+
+The owner observed that after the four `D` presses the player stands on
+`level49`'s entry cell **with the fork pointing east**. A player at (1,-3)
+facing east has its fork at **(2,-3,-1)**. That cell is a `-1` sausage
+footprint, which §10.5 says is solid until the level is entered.
+
+Both cannot hold. Candidate resolutions, none yet tested:
+
+1. **§10.5 is wrong about solidity.** `-1` may mark a sausage footprint without
+   being an obstacle, and the `IslandAt` branch may serve some other purpose.
+   The 440 = 2 x 220 count is solid evidence for *what* `-1` marks, but not for
+   what it *does*.
+2. **The player is not extended there.** `Extended()` for a player is
+   `gamestate.fork == null`; if a separate fork entity exists in the overworld
+   the player is one cell and the contradiction dissolves. But
+   `CheckOverworldGhosts` requires `fork == null` to enter a level, which cuts
+   against this.
+3. **`level49`'s island placement or mask offset is off by one**, putting the
+   footprint one cell from where it belongs.
+
+Resolution 3 is checkable locally by comparing the rendered island against the
+real level. Resolutions 1 and 2 need a differential observation.
+
+## 12.9 State cache invalidation — a self-inflicted bug worth remembering
+
+`GameState` caches a dynamic-entity list and a static cell index for speed on
+the 17k-entity overworld. `replace()` copies both, which is correct when a
+single entity changes and **silently wrong when entities are added or removed**.
+
+Spawning a level's sausages via `replace()` carried a stale dynamic list, so
+`ent_at` never saw them: the player walked straight through sausages for
+fourteen moves without pushing any. Nothing failed — the simulation simply
+behaved as though the sausages were not there.
+
+All wholesale entity changes now go through `state.with_entities`, which drops
+both caches. Any future code adding or removing entities must use it.
+
+## 12.10 Turn phase two — the current divergence
+
+Replay reaches move 36 and first touches a sausage at move 29. The owner
+observed first contact at **move 22**, at a specific moment: the player at (5,1)
+facing south presses east, and the fork swings onto the sausage at (6,1).
+
+Only the **TurnIn** phase is modelled, whose entering cell is the swept diagonal
+(§12.8). But a turn is two phases (§5.11b), and it is **TurnOut** that carries
+the fork from the diagonal to its final cardinal cell — so the cardinal is an
+entering cell of the second phase, and that is the push the owner saw.
+
+So the cardinal cell does matter, just not during TurnIn. Both of the
+single-cell rules tried earlier were half-right, which is why each fixed some
+cases and broke others.
+
+### Resolved — IMPLEMENTED and CONFIRMED
+
+`TurnOut` (`GameState.cs:4600`) pushes whatever occupies the **cardinal** fork
+cell, in direction `ContinueRot(turndir, direction).Inverse()` — target cardinal
+first, current diagonal facing second. Getting that argument order backwards
+silently produces a valid-looking direction, so it must be checked rather than
+assumed (§2.1).
+
+Two traps in implementing it, both of which made the push silently not happen:
+
+1. **Argument order** of `ContinueRot`, as above.
+2. **The player masks the cell.** After the turn the player occupies the
+   cardinal cell itself, so a naive `ent_at` lookup returns the *player* and the
+   entity actually standing there is never seen. The search must look past the
+   turning entity.
+
+Confirmed: first sausage contact now occurs at **move 22**, exactly where the
+owner observed it, and `all.dem` reaches move 112 (was 36).
 
 ## 13. Open questions
 
@@ -1009,3 +1139,37 @@ allows a turn my simulator refuses.
 4. What is `stuckto`? Suspected: sausage skewered on the fork.
 5. Full enumeration of `lostreason` strings.
 6. Does `spectralsausage` follow sausage rules with an exception, or its own set?
+
+## 12.11 Verified against real play — moves 1-77
+
+Four checkpoints confirmed by the owner against the real game, all matching:
+
+| After move | Observed | Simulated |
+|---|---|---|
+| 22 | panel (3,2) facing east | same |
+| 35 | panel (2,1) facing north | same |
+| 50 | panel (3,4) facing west | same |
+| 70 | panel (1,1) facing south | same |
+
+Panels use the owner's numbering: NW corner (1,1), south of it (2,1), east of
+it (1,2).
+
+**Moves 1-77 of `all.dem` are verified**, ending with Lachrymose Head solved at
+move 77 — the owner independently confirms the level completes before move 90.
+This stretch exercises the overworld walk, level entry, sausage spawning, both
+turn phases, pushing, rolling, cooking, gravity and the win condition.
+
+It is the first part of this project that is verified rather than merely
+self-consistent.
+
+## 12.12 Next: leaving a solved level
+
+`all.dem` continues past move 77, so the replay must handle departure.
+`CheckOnLevelExit` fires when `Won() && player.pos == exitPos && player.direction
+== exitDir && exitUp`, calling `SubworldLeave`: despawn the level's sausages,
+`CompleteLevel(name)`, restore `overworld = true`, and `TryRaiseAll`.
+
+`exitPos`/`exitDir` come from `GetExitPos(pushtargetlevel, ...)` during
+`SubworldTransition`, which is not yet transcribed. Without it the player keeps
+walking inside a finished level and eventually falls off the island — the
+move-112 drowning previously mistaken for a mechanics failure.

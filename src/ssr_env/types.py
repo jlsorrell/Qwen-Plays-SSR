@@ -25,8 +25,15 @@ class Coord(NamedTuple):
 class Direction(IntEnum):
     """Eleven members, ordinals as the game defines them.
 
-    Note the convention: North is +y. This is the opposite of screen coordinates
-    and is easy to get backwards.
+    **North is -y.** `Coord.North` in the game's source is `(0, +1)`, but that
+    constant is in a frame where `+y` points screen-*south*: `RoundToCoord` maps
+    Unity to Coord as `y = -z`. The name is as misleading as `LeftOf` (§2.1).
+
+    Confirmed by observation: from the game's starting position the player can
+    walk 8 tiles north and 1 south. Indexing the island masks with North as `+y`
+    produced the exact mirror — 1 north, 8 south. With North as `-y` the recorded
+    opening inputs land on Lachrymose Head's entry cell at exactly the right
+    position and facing.
     """
 
     NORTH = 0
@@ -180,14 +187,14 @@ def _continue_rot(from_dir: "Direction", to_dir: "Direction") -> "Direction":
 
 
 _DELTAS: dict[Direction, Coord] = {
-    Direction.NORTH: Coord(0, 1, 0),
-    Direction.SOUTH: Coord(0, -1, 0),
+    Direction.NORTH: Coord(0, -1, 0),
+    Direction.SOUTH: Coord(0, 1, 0),
     Direction.WEST: Coord(-1, 0, 0),
     Direction.EAST: Coord(1, 0, 0),
-    Direction.NORTHEAST: Coord(1, 1, 0),
-    Direction.SOUTHWEST: Coord(-1, -1, 0),
-    Direction.NORTHWEST: Coord(-1, 1, 0),
-    Direction.SOUTHEAST: Coord(1, -1, 0),
+    Direction.NORTHEAST: Coord(1, -1, 0),
+    Direction.SOUTHWEST: Coord(-1, 1, 0),
+    Direction.NORTHWEST: Coord(-1, -1, 0),
+    Direction.SOUTHEAST: Coord(1, 1, 0),
     Direction.NONE: Coord(0, 0, 0),
     Direction.DOWN: Coord(0, 0, -1),
     Direction.UP: Coord(0, 0, 1),

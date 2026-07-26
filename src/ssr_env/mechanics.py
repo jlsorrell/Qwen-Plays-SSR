@@ -30,7 +30,7 @@ from .level import (
     mask_value_at,
     resolve_island_mask,
 )
-from .state import GameState
+from .state import GameState, with_entities
 from .types import (
     Coord,
     _continue_rot as _continue,
@@ -216,8 +216,47 @@ def try_turn_player(
     # Phase 2 (TurnOut): complete to the target cardinal.
     turned = replace(player, direction=direction)
     candidate = state.replace_entity(turned)
-    if _blocked_for(candidate, turned, turned.pos + direction.delta, masks, level_name):
+    # A rotating extended entity occupies the body, the fork's old cell, and
+    # `pos + movement.to` (§12.8) — and `movement.to` is the swept **diagonal**,
+    # since `TryTurn` passes `RotBetween` as `to`. The fork's final cardinal cell
+    # is never part of a rotation's occupancy, so it must not be tested here.
+    collide_cell = (
+        player.pos + diagonal.delta
+        if diagonal is not None and is_extended(player, state)
+        else turned.pos + direction.delta
+    )
+    if _blocked_for(candidate, turned, collide_cell, masks, level_name):
         return try_pivot_turn(state, direction, masks, level_name)
+
+    # Phase 2 (TurnOut). The fork travels from the diagonal to its final
+    # cardinal cell, so *that* cell is this phase's entering cell — and whatever
+    # occupies it is pushed, in direction `ContinueRot(turndir, diagonal).Inverse()`.
+    # Modelling only phase 1 meant the fork swung onto sausages without moving
+    # them (§12.10).
+    if diagonal is not None and is_extended(player, state):
+        cardinal = player.pos + direction.delta
+        # Look past the player: in `candidate` it has already turned, so it
+        # occupies the cardinal cell itself and would otherwise mask whatever is
+        # actually standing there.
+        occupant = next(
+            (
+                e
+                for e in candidate.entities
+                if e.id != turned.id
+                and is_solid(e, candidate.tileset)
+                and occupies(e, cardinal, candidate, masks, level_name)
+            ),
+            None,
+        )
+        if occupant is not None:
+            # `ContinueRot(turndir, direction)`: target cardinal first,
+            # current (diagonal) facing second. Order matters — see §2.1.
+            push_dir = _continue(direction, diagonal).inverse()
+            if push_dir.is_valid:
+                pushed = try_push(candidate, occupant, push_dir, masks, level_name)
+                if pushed is candidate:
+                    return try_pivot_turn(state, direction, masks, level_name)
+                candidate = pushed
 
     return StepResult(state=candidate)
 
@@ -616,20 +655,31 @@ def all_cooked(state: GameState) -> bool:
 
 
 def is_solved(state: GameState) -> bool:
-    """All sausages cooked on all four faces, and the player back at its start.
+    """Whether every sausage is cooked. Mirrors `GameState.Won`.
 
-    The face criterion is `CheckGameWon`: 0 (raw) or 3 (burnt) fails.
+    Every face of every sausage must be 1 or 2. Face 0 is raw and face 3 is
+    burnt; either loses. At least one sausage must count, none may be below
+    z = -3, and the state must not already be lost.
 
-    The return-to-start half is the game's level-exit test, whose exact form
-    (`CheckOnLevelExit`, `exitPos`/`exitDir`/`exitAttachment`) is only partly
-    transcribed — see docs/mechanics.md §11. Position is required; facing is not,
-    because it is not yet established whether the exit checks direction.
+    **There is no return-to-start requirement here.** That belongs to
+    `CheckOnLevelExit`, which additionally requires the player to stand at the
+    level's exit pose — a separate condition for *leaving* a solved level, not
+    for solving it. §11 previously conflated the two.
+
+    Sausages above z = 8, or whose `dat` begins 'S', are skipped by the game.
     """
-    if state.lost or not all_cooked(state):
-        return False
-    if state.start_pos is None:
-        return False
-    return state.player.pos == state.start_pos
+    found = False
+    for entity in state.entities:
+        if entity.type is not EntType.SAUSAGE:
+            continue
+        if entity.pos.z > 8 or entity.dat.startswith("S"):
+            continue
+        if entity.pos.z < -3:
+            return False
+        found = True
+        if any(face in (0, 3) for face in entity.faces):
+            return False
+    return found and not state.lost
 
 
 def check_overworld_entry(
@@ -677,9 +727,9 @@ def check_overworld_entry(
             )
             for i, s in enumerate(spawns)
         )
-        return replace(
+        return with_entities(
             entered,
-            entities=entered.entities + sausages,
+            entered.entities + sausages,
             overworld=False,
             pushtargetlevel=name,
         )
