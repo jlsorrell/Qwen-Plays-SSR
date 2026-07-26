@@ -1430,3 +1430,43 @@ moving the player would have hit the same trap.
 
 Refusals remain at 35%, so divergence persists later in the run — but sixteen
 levels now complete, and Comely Hearth matches the owner's observation exactly.
+
+## 12.19 Divergence now begins inside The Anchorage, move ~786
+
+Refusal rate per 100 moves:
+
+```
+   0- 799   0-1%     fifteen levels, essentially exact
+ 800- 899    14%     <- begins here
+ 900-1099  24-27%
+1300-1499  41-43%
+```
+
+**Sixteen levels are entered and left cleanly through move 855**: Lachrymose
+Head, Southjaunt, Infant's Break, Little Fire, Bay's Neck, Burning Wharf,
+Eastreach, Comely Hearth, Happy Pool, Maiden's Walk, Fiery Jut, Merchant's
+Elegy, Seafinger, The Clover, Inlet Shore, The Anchorage.
+
+The Anchorage (`level35`, entered 743) takes 112 moves against 30-60 for every
+level before it, and the refusal rate climbs *during* it.
+
+### The first refusal is the newest rule
+
+Move 786 (key 44 of the level) is refused with **`hot grill: bounced back`** —
+§12.18, added in the same session. That deserves suspicion rather than
+confidence: either the recording genuinely presses into a grill there, or the
+rebound is over-firing in a case the owner's description did not cover.
+
+Candidates for an over-fire, none tested:
+
+- `bbqsOn` is `(pushestotry == 0 && !overworld) || returning`. The
+  `pushestotry == 0` term means grills are **off during the sinking animation**,
+  i.e. for a window just after entering a level. This simulator settles that
+  instantly, so grills come on immediately. Move 786 is 44 keys after entry, so
+  this is unlikely to be the explanation here — but it is a real difference.
+- `returning` is not modelled at all.
+- The rebound may not apply when the player is **laden**, or when the grill cell
+  is simultaneously vacated by a sausage in the same move.
+
+**The distinguishing observation** is narrow: playing The Anchorage from its
+entrance, does the character rebound off a grill around key 44, or move onto it?
