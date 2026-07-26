@@ -1729,9 +1729,22 @@ neighbour `(0, -26)` is:
 (2, -26, -2)  VOID
 ```
 
-So `bridge1` has a one-cell notch exactly where the recording pushes the
-sausage. Either the mask is being indexed slightly wrong for this island, or the
-sausage should not be travelling north at that point.
+**The indexing is correct — verified.** `bridge1`'s mask is 15x8x2 at world
+x -4..10, y -26..-19. Its z=-2 layer reads:
+
+```
+y=-26  .####.......##.
+y=-25  ######......##.
+       x=-4          10
+```
+
+So there really is floor at (1,-25) and none at (1,-26). The notch is in the
+game's own data, not in how it is read.
+
+**Therefore the fault is upstream.** The real game would drop a sausage pushed
+into (1,-26) as well, so the sausage should not be at (1,-25) taking a northward
+push at move 957. Something earlier in its ~100-move journey — which starts at
+the shrine at move 855 — puts it one or more cells off.
 
 **This also means manual check 006 asked about the wrong cell.** The disputed
 location is `(1, -26)` on `bridge1`, not `(1, -19)`, and the character stands at
