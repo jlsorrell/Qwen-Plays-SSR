@@ -369,9 +369,12 @@ def grill_identity_at(state: GameState, cell, masks, level_name: str) -> str:
         return str(entity.id)
     if entity.type is EntType.ISLAND and masks:
         mask = resolve_island_mask(level_name, entity.dat, masks)
+        # `is not None`, never truthiness: Direction.NORTH is IntEnum value 0
+        # and therefore falsy, so a truthiness test silently ignores every
+        # north-facing grill.
         if mask is not None and bbq_direction_from_mask(
             mask_value_at(mask, entity.pos, cell)
-        ):
+        ) is not None:
             ox, oy, oz = mask["offset"]
             return (
                 f"{entity.dat}.{cell.x - entity.pos.x - ox}"

@@ -1350,3 +1350,50 @@ Since the level solves at the same moment, the *sausages* are being handled
 correctly; it is the **player's own path** that differs. The distinguishing
 observation would be the player's panel at around key 50 — the manual check
 asked for it at keys 10/30/50 and those were not reported.
+
+## 12.17 `Direction.NORTH` is falsy — a Python trap, not a game rule
+
+`Direction` is an `IntEnum` and `NORTH = 0`, so **any truthiness test on a
+Direction silently treats north as "no direction"**.
+
+This was live in `grill_identity_at`:
+
+```python
+if mask is not None and bbq_direction_from_mask(...):   # north -> falsy
+```
+
+Every north-facing grill was therefore invisible to the re-cook guard, so a
+sausage could cook twice on the same north grill without the guard noticing. It
+also made several diagnostics report "no grills in this level" for a level that
+demonstrably cooks sausages — which cost real time chasing a phantom.
+
+**Always compare Directions with `is None` / `is not None`.** The same applies to
+`EntType.GROUND = 0`.
+
+## 12.18 The grill bounce — REPORTED, NOT YET MODELLABLE
+
+The owner reports, from direct play:
+
+> Stepping on the grill moves the player back to whichever tile they were on
+> before stepping on the grill. So the player cannot stay on a grill tile.
+
+This would explain the Comely Hearth divergence exactly: at key 51 the simulated
+player pushes a sausage off a grill tile and then occupies that tile. If it
+rebounded instead, it would still be on the exit cell at key 52, turn west, and
+leave — which is what the owner observes.
+
+**Implemented as an unconditional rule, it breaks the first eight levels.** The
+player then never reaches Comely Hearth at all: 11 bounces in the first 56 keys
+of that level alone, and no level is entered. So walking across grill tiles is
+clearly permitted somewhere in worlds already verified.
+
+So the rule is real but conditional, and the condition is not yet known.
+Candidates, none tested:
+
+- The grill may only repel while **hot** — `bbqsOn()` exists and `CalcBBQAshSteps`
+  suggests grills have an on/off state.
+- It may apply only to the player's **body**, not to a fork tile passing over.
+- It may be the `Surprise_Chasm` / `NoCanDo` movement family rather than a
+  refusal, i.e. a distinct animation with different resolution.
+
+Reverted for now. The falsy-NORTH fix above is kept, being unambiguously correct.
