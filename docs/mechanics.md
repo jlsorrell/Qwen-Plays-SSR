@@ -1169,7 +1169,351 @@ self-consistent.
 == exitDir && exitUp`, calling `SubworldLeave`: despawn the level's sausages,
 `CompleteLevel(name)`, restore `overworld = true`, and `TryRaiseAll`.
 
-`exitPos`/`exitDir` come from `GetExitPos(pushtargetlevel, ...)` during
-`SubworldTransition`, which is not yet transcribed. Without it the player keeps
-walking inside a finished level and eventually falls off the island — the
-move-112 drowning previously mistaken for a mechanics failure.
+### Resolved — IMPLEMENTED
+
+**`GetExitPos` computes the entry pose.** It looks up
+`playerpositions[name] + island.pos` — identical to how entry is detected. A
+level is entered and left at the same cell, facing the same way.
+
+That is the grain of truth behind the "return to start" folklore, correctly
+located: it is the condition for **leaving** a solved level, never for solving
+one (§11.1).
+
+`SubworldLeave` then despawns the level's sausages, marks it complete, and
+restores `overworld = true`. The island's `cookdata` is deliberately left at 1;
+it means "sausages have been issued" (§10.5) and nothing observed shows it being
+cleared, so a completed level keeps its footprints non-solid from outside.
+
+Verified in replay: `all.dem` enters Lachrymose Head at move 15, solves it at
+77, leaves at 83, and enters Southjaunt at 110.
+
+Not modelled: `TryRaiseAll`/`TryLowerAll` (the terrain rising and sinking) and
+`pushestotry`. Neither has yet affected a replay outcome.
+
+## 12.13 Full-length replay — runs, but does not track
+
+`all.dem` now executes all 16,567 inputs without a hard failure. **This is not
+the acceptance criterion and should not be mistaken for one.** Measured:
+
+| Metric | Value |
+|---|---|
+| Moves accepted | 10,904 / 16,567 (66%) |
+| Moves refused | 5,663 (34%) — 5,286 "no ground", 222 pivot-onto-void, 155 blocked |
+| Levels entered | **1** |
+| Levels completed | **1** (Lachrymose Head) |
+
+The player enters one level, solves it, leaves, and then wanders the overworld
+for the remaining ~16,000 inputs, refusing a third of them. The playthrough is
+not being tracked; the simulation has simply stopped failing loudly.
+
+**A silent divergence is worse than a crash**, because the earlier failures were
+each a precise pointer to a missing mechanic. The refusal rate is the honest
+signal now: on a correct simulator it should be near zero, since a recorded
+human playthrough rarely presses into walls 34% of the time.
+
+Two things follow:
+
+1. **The refusal rate is the metric to drive down**, not the move count reached.
+2. `TryLowerAll`/`TryRaiseAll` are the most likely cause. Entering a level sinks
+   the surrounding terrain and leaving raises it; without that the overworld
+   geometry after the first level is wrong, so the player is walking a landscape
+   that no longer matches what the recording assumed.
+
+## 12.14 Islands sink and rise — IMPLEMENTED
+
+`TryLowerAll` lowers every island except the one being entered; `TryRaiseAll`
+restores them on exit. The `id % 3` branches stagger the sinking into waves for
+the animation; the settled outcome is a uniform displacement, so it is modelled
+as a single move of `ISLAND_SINK_DEPTH` and its inverse.
+
+This was the last major mechanic known to be missing, and it mattered:
+
+| Metric | Before | After |
+|---|---|---|
+| Levels entered | 1 | 9 |
+| Levels completed | 1 | 8 |
+| Refusal rate over the run | 34% | 18% |
+
+### Moves 1-414 track the real playthrough
+
+Refusals per 200 moves: **0% for the first 200, 1% for the next 200**, then
+climbing to 10% by move 400-600 and 20-34% beyond 800.
+
+Eight levels are entered and left cleanly in sequence:
+
+| Move | Level |
+|---|---|
+| 15-83 | Lachrymose Head |
+| 91-125 | Southjaunt |
+| 128-158 | Infant's Break |
+| 169-203 | Little Fire |
+| 213-261 | Bay's Neck |
+| 265-299 | Burning Wharf |
+| 310-336 | Eastreach |
+| 345-414 | Comely Hearth |
+
+**The refusal rate is the diagnostic.** A recorded playthrough should almost
+never press into a wall, so a rising rate localises divergence far better than
+the move number reached. It rises sharply after move 414, and the next level
+entry does not occur until move 1835 — so whatever goes wrong, it goes wrong on
+leaving Comely Hearth or shortly after.
+
+## 12.15 The post-414 divergence — not yet localised
+
+Investigated and *not* resolved. Recording what was ruled out so it is not
+re-investigated.
+
+**Not the refusals inside Comely Hearth.** Moves 406-408 and 412 are refused
+with "no ground", and that is correct: the level's north edge genuinely has void
+at x=0,1. Pressing into a wall repeatedly is normal in a recorded playthrough,
+and the level solves and is left cleanly at move 414.
+
+**Not level entry or exit.** Eight levels are entered and left correctly, and
+the ninth entry is detected when the player eventually reaches it at move 1835.
+
+**The symptom** is that after leaving Comely Hearth the player oscillates in a
+small region — roughly x -1..3 at y -9 — for hundreds of moves. It comes within
+four cells of Happy Pool's entry at (-5,-10) facing south around move 431, then
+turns back east. The refusal rate climbs from 1% to 10% over moves 400-600 and
+to 30% beyond 1000.
+
+That pattern says the player's position has drifted by a small amount relative
+to the recording, so subsequent inputs are being applied from the wrong cell.
+A single wrong move around 400-430 would produce exactly this.
+
+### Localised — it is the exit, not the level
+
+The owner played Comely Hearth from its entrance. Results:
+
+| | Owner | Simulator |
+|---|---|---|
+| Level solved | key 52 | key 51 |
+| Left the level | (before key 86) | key 70 |
+| At key 86 | inside Happy Pool, panel (1,3) facing east | still outside Comely Hearth |
+
+**The win condition is right.** Solved within one move of the observation, which
+also re-confirms §11.1. What is wrong is *departure*: solved at 51, but the exit
+does not fire until 70, and by then the recording has moved on.
+
+### The likely cause: `exitAttachment` — NOT IMPLEMENTED
+
+`SubworldTransition` ends with:
+
+```
+exitAttachment = null
+entity = EntAt(exitPos + Direction.Down)
+if (entity.type == sausage) exitAttachment = entity
+```
+
+and `Movement.Resolve`, in its Translation branch, carries the exit along:
+
+```
+if (gamestate.exitAttachment == target) {
+    gamestate.exitPos += direction
+    if (torsion != 0) {
+        gamestate.exitUp = !gamestate.exitUp
+        if (gamestate.exitDir.OrthoTo(target.direction))
+            gamestate.exitDir = gamestate.exitDir.Inverse()
+    }
+}
+```
+
+**The exit tile can sit on top of a sausage, and then rides it.** Moving that
+sausage moves the exit; rolling it flips `exitUp` and can invert `exitDir`.
+`CheckOnLevelExit` requires `exitUp`, so a roll can also switch the exit off and
+on.
+
+### Implemented — but NOT the cause of the Comely Hearth divergence
+
+`exitAttachment` is now modelled: the exit pose is recorded on entry along with
+whatever sits beneath it, a slide of the carrying sausage carries the exit, and
+a roll flips `exit_up` (switching the exit off until a further roll flips it
+back) and inverts `exit_dir` when the exit faces `OrthoTo` the sausage.
+
+Note `OrthoTo` is `!ParallelTo` **without** `NormalTo`'s `None` guards, so it is
+true when either direction is `None`. Only `OrthoTo` appears in this rule, and
+substituting `NormalTo` would change when the exit flips.
+
+**The hypothesis was wrong for this level.** Comely Hearth's exit has nothing
+beneath it — `exit_attachment` is `None` on entry — so the mechanic never fires
+and cannot explain leaving at key 70 instead of ~52. It is implemented because
+it is a real rule that will matter on some level, not because it fixed this one.
+
+### Still unexplained
+
+Both the owner and the simulator solve Comely Hearth at key 51-52, so cooking,
+pushing and rolling all agree. But by key 51 the simulated player is at panel
+(3,3) and heads west, never returning to the exit at (2,3) facing west until key
+70. The real player reaches Happy Pool by key 86.
+
+Since the level solves at the same moment, the *sausages* are being handled
+correctly; it is the **player's own path** that differs. The distinguishing
+observation would be the player's panel at around key 50 — the manual check
+asked for it at keys 10/30/50 and those were not reported.
+
+## 12.17 `Direction.NORTH` is falsy — a Python trap, not a game rule
+
+`Direction` is an `IntEnum` and `NORTH = 0`, so **any truthiness test on a
+Direction silently treats north as "no direction"**.
+
+This was live in `grill_identity_at`:
+
+```python
+if mask is not None and bbq_direction_from_mask(...):   # north -> falsy
+```
+
+Every north-facing grill was therefore invisible to the re-cook guard, so a
+sausage could cook twice on the same north grill without the guard noticing. It
+also made several diagnostics report "no grills in this level" for a level that
+demonstrably cooks sausages — which cost real time chasing a phantom.
+
+**Always compare Directions with `is None` / `is not None`.** The same applies to
+`EntType.GROUND = 0`.
+
+## 12.18 The grill bounce — REPORTED, NOT YET MODELLABLE
+
+The owner reports, from direct play:
+
+> Stepping on the grill moves the player back to whichever tile they were on
+> before stepping on the grill. So the player cannot stay on a grill tile.
+
+This would explain the Comely Hearth divergence exactly: at key 51 the simulated
+player pushes a sausage off a grill tile and then occupies that tile. If it
+rebounded instead, it would still be on the exit cell at key 52, turn west, and
+leave — which is what the owner observes.
+
+**Implemented as an unconditional rule, it breaks the first eight levels.** The
+player then never reaches Comely Hearth at all: 11 bounces in the first 56 keys
+of that level alone, and no level is entered. So walking across grill tiles is
+clearly permitted somewhere in worlds already verified.
+
+### Resolved — IMPLEMENTED
+
+The owner confirmed both conditions: **grills only repel while hot, and only the
+player's body is affected — the fork passes over freely.**
+
+```
+bbqsOn() = (pushestotry == 0 && !overworld) || returning
+```
+
+The `pushestotry` term counts down the island-sinking animation, which this
+simulator settles instantly (§1), so it reduces to **"inside a level"**. Grills
+on the overworld are cold and can be walked across, which is exactly why the
+unconditional version broke the first eight levels.
+
+`bbqs_on` gates two things, and the second was missing entirely:
+
+1. The rebound: stepping onto a hot grill returns the player to the tile it came
+   from. Only the **body's** destination is tested, never the fork's.
+2. **`DoCook` returns immediately when grills are off**, so cooking happens only
+   inside a level.
+
+### The subtlety that made it fail twice
+
+A rebound sets `moved=False`, and `step` was short-circuiting on that — skipping
+settle-and-cook entirely. So the sausage got pushed onto the grill and never
+cooked.
+
+`moved` means *the player did not relocate*. It does not mean *nothing
+happened*. The early return is now taken only when the state is genuinely
+untouched (`result.state is state`). Any mechanic that moves the world without
+moving the player would have hit the same trap.
+
+### Result
+
+| Metric | Before | After |
+|---|---|---|
+| Levels completed | 8 | **16** |
+| Comely Hearth solved | key 70 | **key 51** (owner: 52) |
+| Comely Hearth left | key 70 | **key 52** (owner: 52) |
+| `all.dem` | stopped at 1922 | runs all 16,567 |
+
+Refusals remain at 35%, so divergence persists later in the run — but sixteen
+levels now complete, and Comely Hearth matches the owner's observation exactly.
+
+## 12.19 Divergence now begins inside The Anchorage, move ~786
+
+Refusal rate per 100 moves:
+
+```
+   0- 799   0-1%     fifteen levels, essentially exact
+ 800- 899    14%     <- begins here
+ 900-1099  24-27%
+1300-1499  41-43%
+```
+
+**Sixteen levels are entered and left cleanly through move 855**: Lachrymose
+Head, Southjaunt, Infant's Break, Little Fire, Bay's Neck, Burning Wharf,
+Eastreach, Comely Hearth, Happy Pool, Maiden's Walk, Fiery Jut, Merchant's
+Elegy, Seafinger, The Clover, Inlet Shore, The Anchorage.
+
+The Anchorage (`level35`, entered 743) takes 112 moves against 30-60 for every
+level before it, and the refusal rate climbs *during* it.
+
+### The first refusal is the newest rule
+
+Move 786 (key 44 of the level) is refused with **`hot grill: bounced back`** —
+§12.18, added in the same session. That deserves suspicion rather than
+confidence: either the recording genuinely presses into a grill there, or the
+rebound is over-firing in a case the owner's description did not cover.
+
+Candidates for an over-fire, none tested:
+
+- `bbqsOn` is `(pushestotry == 0 && !overworld) || returning`. The
+  `pushestotry == 0` term means grills are **off during the sinking animation**,
+  i.e. for a window just after entering a level. This simulator settles that
+  instantly, so grills come on immediately. Move 786 is 44 keys after entry, so
+  this is unlikely to be the explanation here — but it is a real difference.
+- `returning` is not modelled at all.
+- The rebound may not apply when the player is **laden**, or when the grill cell
+  is simultaneously vacated by a sausage in the same move.
+
+### Key 44 is correct — the rebound is not at fault
+
+The owner played The Anchorage from its entrance and confirmed checkpoints at
+keys 10, 20, 30 and 43, then described key 44 exactly:
+
+> the character steps on the grill before being bounced off. The sausage
+> occupying the grill tile is therefore also moved south when the player steps
+> on, but the player is then bounced back off it.
+
+This simulator already does that — the push is applied before the rebound is
+evaluated, so at key 44 sausage 206 moves (4,4) -> (5,4) and cooks
+(0,0,1,1) -> (1,0,1,1) while the player stays at (2,4).
+
+So §12.18's rebound is **not** over-firing, and the suspicion recorded above is
+discharged.
+
+### The Anchorage is correct end to end
+
+Checkpoints at keys 10, 20, 30, 43, 50, 70 and 90 all confirmed, and the owner
+reports the level completing and returning to the main island at key 113 —
+matching this simulator, which solves at 108 and leaves at 113.
+
+**So "divergence begins at move 786" was wrong.** The 14% refusal rate measured
+inside The Anchorage was legitimate: a recorded playthrough does press into
+walls and hot grills, especially in a level twice the size of any before it.
+
+## 12.20 The levels are right; the overworld is not
+
+Splitting the refusal rate by context settles where the remaining fault lies:
+
+| Moves | Inside a level | On the overworld |
+|---|---|---|
+| 800-899 | **2%** | 29% |
+| 900-1599 | — | 24-43% |
+
+**Sixteen levels are reproduced correctly**, verified against the owner at
+eleven checkpoints across Lachrymose Head, Comely Hearth and The Anchorage. The
+in-level refusal rate of 2% is consistent with a human recording.
+
+**After leaving The Anchorage at move 855, no further level is ever entered.**
+The remaining ~15,700 inputs are spent on the overworld with a quarter to a
+half of them refused. Whatever is wrong is in overworld traversal, not in any
+level mechanic.
+
+This is a much better place to be than it sounds: the mechanics needed for
+Phase 1's oracle — movement, pushing, rolling, cooking, gravity, win detection —
+are all exercised inside levels and all correct. Overworld navigation matters
+only for replaying `all.dem` as one continuous session, which was always a
+validation instrument rather than the deliverable.

@@ -178,7 +178,15 @@ def try_pivot_turn(
     )
 
     player = state.player
-    pivoted = replace(player, pos=player.pos + pushdir.delta, direction=target_facing)
+    landing = player.pos + pushdir.delta
+    # A pivot displaces the player, so it is subject to the same rule as walking:
+    # you cannot end up over void. Without this the player pivots off the island
+    # and drowns, which is not something the real game permits.
+    if not solid_ent_at(state, landing + Direction.DOWN.delta, masks, level_name):
+        return StepResult(
+            state=state, moved=False, reason=f"no ground to pivot onto at {tuple(landing)}"
+        )
+    pivoted = replace(player, pos=landing, direction=target_facing)
     return StepResult(state=state.replace_entity(pivoted))
 
 
@@ -346,6 +354,23 @@ _MAX_SETTLE_STEPS = 64
 _MAX_PUSH_DEPTH = 8
 
 
+def bbqs_on(state: GameState) -> bool:
+    """Whether grills are hot. Mirrors `GameState.bbqsOn`.
+
+    `(pushestotry == 0 && !overworld) || returning`. The `pushestotry` term
+    counts down the island-sinking animation, which this simulator settles
+    instantly (§1), so it reduces to "inside a level".
+
+    Two things depend on it, and both were missing:
+
+    - `DoCook` returns immediately when grills are off, so **cooking only
+      happens inside a level**.
+    - Hot grills repel the player (§12.18); cold ones can be stood on, which is
+      why walking over grills in the overworld is fine.
+    """
+    return not state.overworld
+
+
 def grill_identity_at(state: GameState, cell, masks, level_name: str) -> str:
     """Stable identifier for the grill at a cell, or "" if none.
 
@@ -361,9 +386,12 @@ def grill_identity_at(state: GameState, cell, masks, level_name: str) -> str:
         return str(entity.id)
     if entity.type is EntType.ISLAND and masks:
         mask = resolve_island_mask(level_name, entity.dat, masks)
+        # `is not None`, never truthiness: Direction.NORTH is IntEnum value 0
+        # and therefore falsy, so a truthiness test silently ignores every
+        # north-facing grill.
         if mask is not None and bbq_direction_from_mask(
             mask_value_at(mask, entity.pos, cell)
-        ):
+        ) is not None:
             ox, oy, oz = mask["offset"]
             return (
                 f"{entity.dat}.{cell.x - entity.pos.x - ox}"
@@ -533,9 +561,22 @@ def try_push(
             state = state.replace_entity(
                 replace(fork, direction=fork.direction.inverse())
             )
+    # If this sausage carries the exit, the exit travels with it. A roll (torsion
+    # non-zero) additionally flips `exit_up`, and inverts `exit_dir` when the
+    # exit faces orthogonally to the sausage. Mirrors `Movement.Resolve`'s
+    # Translation branch. See §12.16.
+    after = state.replace_entity(moved)
+    if state.exit_attachment == entity.id and state.exit_pos is not None:
+        updated = {"exit_pos": state.exit_pos + direction.delta}
+        if rolls:
+            updated["exit_up"] = not state.exit_up
+            if state.exit_dir is not None and state.exit_dir.ortho_to(entity.direction):
+                updated["exit_dir"] = state.exit_dir.inverse()
+        after = replace(after, **updated)
+
     # A pushed entity left unsupported simply falls; `settle` handles it and
     # marks a drowned sausage lost.
-    return settle(state.replace_entity(moved), masks, level_name)
+    return settle(after, masks, level_name)
 
 
 def try_move_player(
@@ -565,6 +606,32 @@ def try_move_player(
                     state=state, moved=False, reason=f"blocked at {tuple(cell)}"
                 )
             player = state.player
+
+    # You cannot walk off the island. The move is refused outright rather than
+    # permitted and then resolved by gravity.
+    #
+    # Confirmed by observation: standing on Southjaunt's westmost panel and
+    # pressing west does nothing in the real game. An earlier version allowed it
+    # because the player is extended and its fork still rested on the island, so
+    # `under()` reported support — but the test is on the **body's** destination,
+    # not on the pair.
+    if not solid_ent_at(state, destination + Direction.DOWN.delta, masks, level_name):
+        return StepResult(
+            state=state, moved=False, reason=f"no ground at {tuple(destination)}"
+        )
+
+    # A **hot** grill repels: stepping onto one bounces the player back to the
+    # tile it came from, though anything it pushed on the way still moved.
+    # Cold grills — those in the overworld — can be walked on freely, which is
+    # why this must be gated on `bbqs_on` rather than applied everywhere.
+    if bbqs_on(state) and grill_direction_at(
+        state, destination + Direction.DOWN.delta, masks, level_name
+    ) is not None:
+        # The player rebounds, but anything it pushed on the way still moved,
+        # so this must not short-circuit settling and cooking (see `step`).
+        return StepResult(
+            state=state, moved=False, reason="hot grill: bounced back"
+        )
 
     return StepResult(state=state.replace_entity(replace(player, pos=destination)))
 
@@ -615,7 +682,12 @@ def step(
     if not result.moved:
         if history is not None:
             history.pop()
-        return result
+        # `moved` says the *player* did not relocate — it does not mean nothing
+        # happened. A hot-grill rebound still pushes whatever was in the way,
+        # and those pushes must settle and cook. Skip the work only when the
+        # state is genuinely untouched.
+        if result.state is state:
+            return result
 
     # Settle and cook once, against the state as it was on entry. Doing this
     # inside the handlers would compare against a state whose pushes had already
@@ -682,6 +754,43 @@ def is_solved(state: GameState) -> bool:
     return found and not state.lost
 
 
+#: How far the surrounding islands sink when a level is entered.
+#:
+#: The game pushes each non-target island down one cell per tick while
+#: `pushestotry` counts from 20, staggered by `id % 3` so they sink in waves.
+#: The staggering is animation; the settled outcome is a uniform drop, so this
+#: models it as a single displacement. `TryRaiseAll` restores them on exit,
+#: raising until `pos.z >= 0` or `Bottom() >= -2` — a symmetric restore, which
+#: is what pairing entry and exit gives us here.
+ISLAND_SINK_DEPTH = 20
+
+
+def sink_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+    """Lower every island except `target`. Mirrors `TryLowerAll`."""
+    return with_entities(
+        state,
+        tuple(
+            replace(e, pos=e.pos + Coord(0, 0, -depth))
+            if e.type is EntType.ISLAND and e.dat != target
+            else e
+            for e in state.entities
+        ),
+    )
+
+
+def raise_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+    """Restore every island except `target`. Mirrors `TryRaiseAll`."""
+    return with_entities(
+        state,
+        tuple(
+            replace(e, pos=e.pos + Coord(0, 0, depth))
+            if e.type is EntType.ISLAND and e.dat != target
+            else e
+            for e in state.entities
+        ),
+    )
+
+
 def check_overworld_entry(
     state: GameState, meta: dict, masks=None
 ) -> GameState:
@@ -727,10 +836,96 @@ def check_overworld_entry(
             )
             for i, s in enumerate(spawns)
         )
-        return with_entities(
+        entered = with_entities(
             entered,
             entered.entities + sausages,
             overworld=False,
             pushtargetlevel=name,
         )
+        # `SubworldTransition` records the exit pose, and notes whether it rests
+        # on a sausage — if so the exit rides that sausage (§12.16).
+        below = ent_at(entered, start + Direction.DOWN.delta, masks, level_name="")
+        entered = replace(
+            entered,
+            exit_pos=start,
+            exit_dir=Direction(pose["direction"]),
+            exit_up=True,
+            exit_attachment=below.id
+            if below is not None and below.type is EntType.SAUSAGE
+            else None,
+        )
+        # `TryLowerAll`: every other island sinks, so only this level is
+        # reachable while you are inside it.
+        return sink_other_islands(entered, name)
     return state
+
+
+def level_pose(state: GameState, name: str, meta: dict):
+    """The level's entry pose in world coordinates, or None.
+
+    `GetExitPos` computes the *exit* pose exactly as entry is computed —
+    `playerpositions[name] + island.pos` — so a level is entered and left at the
+    same cell, facing the same way. This is the grain of truth behind the
+    "return to start" folklore: it is the condition for *leaving* a solved
+    level, not for solving it (§11.1).
+    """
+    pose = meta.get("player", {}).get(name)
+    if pose is None:
+        return None
+    island = next(
+        (e for e in state.entities if e.type is EntType.ISLAND and e.dat == name), None
+    )
+    if island is None:
+        return None
+    return island.pos + Coord(*pose["pos"]), Direction(pose["direction"])
+
+
+def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
+    """Leave a solved level when the player returns to its entry pose.
+
+    Mirrors `CheckOnLevelExit`, which fires on
+    `!overworld && Won() && !LevelCompleted(name) && player.Extended()
+     && player.pos == exitPos && player.direction == exitDir`,
+    then calls `SubworldLeave`: despawn the level's sausages, mark it complete,
+    and return to the overworld.
+
+    The island's `cookdata` is deliberately left at 1. It means "this level's
+    sausages have been issued" (§10.5) and nothing observed so far shows it
+    being cleared; leaving it set keeps the level's sausage footprints
+    non-solid, which is what a completed level should look like from outside.
+    """
+    if state.overworld or not state.pushtargetlevel:
+        return state
+    name = state.pushtargetlevel
+    if name in state.completed or not is_solved(state):
+        return state
+    exit_pos, exit_dir = state.exit_pos, state.exit_dir
+    if exit_pos is None or exit_dir is None:
+        pose = level_pose(state, name, meta)
+        if pose is None:
+            return state
+        exit_pos, exit_dir = pose
+    # `CheckOnLevelExit` requires `exitUp`; a roll of the carrying sausage can
+    # switch the exit off, and a second roll switches it back on.
+    if not state.exit_up:
+        return state
+    player = state.player
+    if player.pos != exit_pos or player.direction is not exit_dir:
+        return state
+    if not is_extended(player, state):
+        return state
+
+    remaining = tuple(e for e in state.entities if e.type is not EntType.SAUSAGE)
+    left = with_entities(
+        state,
+        remaining,
+        overworld=True,
+        pushtargetlevel="",
+        completed=state.completed | {name},
+        exit_pos=None,
+        exit_dir=None,
+        exit_up=True,
+        exit_attachment=None,
+    )
+    # `SubworldLeave` calls `TryRaiseAll`: the surrounding islands come back up.
+    return raise_other_islands(left, name)
