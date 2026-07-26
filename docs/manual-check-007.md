@@ -59,16 +59,22 @@ west and 1 tile south of it, facing north**, then play the keys below.
 
 ## Checkpoints
 
-Relative to where the sausage first appeared.
+**What the numbers mean.** The sausage covers two tiles. These track its
+**western tile**, and everything is measured from **where that tile first
+appeared** — not from you, and not from the structure.
 
-| After key | Sausage should be |
-|---|---|
-| 8 | 1 east, level |
-| 16 | 7 east, level |
-| 20 | 7 east, 2 north |
-| 63 | 7 east, 3 north |
-| 96 | 7 east, 4 north |
-| 102 | **falls in the water** |
+So "1 tile east" means the sausage has been pushed one tile east of where it
+materialised. If it has been rolled onto its other axis the western tile is
+still the reference; the facing column says which way it is lying.
+
+| After key | The sausage's western tile is | Lying |
+|---|---|---|
+| 8 | 1 tile east, same row | east-west |
+| 16 | 7 tiles east, same row | east-west |
+| 20 | 7 tiles east, 2 tiles north | east-west |
+| 63 | 7 tiles east, 3 tiles north | east-west |
+| 96 | 7 tiles east, 4 tiles north | east-west |
+| 102 | **falls in the water** | |
 
 ## Questions
 
