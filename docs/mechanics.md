@@ -1692,34 +1692,49 @@ The narrow question: after completing world 1, standing near the temple2j1
 shrine, **is there ground south of the shrine sausage that this model shows as
 water?**
 
-## 12.25 The world sausage spawns in the wrong place
+## 12.25 The world sausage spawn is CORRECT — earlier claim retracted
 
-The owner reports the rendered overworld around the character "looks nothing
-like" the real game. Investigating that produced a concrete fault.
+An earlier version of this section claimed `issue_world_sausages` placed the
+sausage about seven cells from where it belonged. **That was wrong.** Checked
+directly: immediately after move 855 the sausage sits at `(-6, -21, -1)`,
+exactly `offsets['temple2j1'] + spawn_offset`. The spawn is right.
 
-`temple2j1` is a clean **7x7 platform** at world x -9..-3, y -22..-16, with one
-sausage spawn at island offset (15, 2, -1) — world **(-6, -21, -1)**.
+The (1, -23) position that prompted the claim was measured at move 900, by which
+point the player had **pushed** the sausage there. Comparing a spawn position
+against a state 45 moves later was the error.
 
-| | |
+### What actually happens
+
+The world sausage is pushed on a long journey, and this model tracks it for
+about a hundred moves:
+
+| Move | Sausage |
 |---|---|
-| Expected spawn | `(-6, -21, -1)` |
-| Actually spawned | `(1, -23, -1)` |
-| Player's closest approach to the expected spawn | **0 cells, at move 864** |
+| 855 | spawns at (-6, -21) |
+| 863-871 | pushed east along y=-21 to (1, -21) |
+| 873-918 | pushed north to (1, -24) |
+| 951 | (1, -25) |
+| **957** | **(1, -26) — falls, `SausageLost`** |
 
-The player walks *exactly onto* the expected spawn nine moves after leaving The
-Anchorage. That is strong evidence the expected position is right and
-`issue_world_sausages` is placing the sausage about seven cells away — so the
-recording pushes a sausage that, in this model, is not there.
+### The real question
 
-It also explains the unrecognisable map: the character at (1,-20) is nowhere
-near the shrine platform (x -9..-3), so the region rendered for manual check 006
-was not the shrine at all.
+The sausage falls at `(1, -26, -1)` because this model has no floor beneath it.
+That cell lies inside the footprint of the island named **`bridge1`**
+(x -4..10, y -26..-19), but its mask value there is not solid — while its
+neighbour `(0, -26)` is:
 
-**Next:** find why `island.pos + spawn` disagrees. Candidates: the island entity
-consulted is not the one `offsets` describes; `raise_other_islands` is applied
-before the spawn and perturbs the reference; or shrine spawn offsets are
-expressed in a different frame from level spawn offsets.
+```
+(0, -26, -2)  bridge1, mask value 1  (solid)
+(1, -26, -2)  VOID
+(2, -26, -2)  VOID
+```
 
-Note the renderer bug found alongside this (§ rendering): maps were printed
+So `bridge1` has a one-cell notch exactly where the recording pushes the
+sausage. Either the mask is being indexed slightly wrong for this island, or the
+sausage should not be travelling north at that point.
+
+**This also means manual check 006 asked about the wrong cell.** The disputed
+location is `(1, -26)` on `bridge1`, not `(1, -19)`, and the character stands at
+`(1, -25)` when it happens.
 north-south mirrored, so any earlier eyeballing of overworld geometry in this
 document should be re-checked.
