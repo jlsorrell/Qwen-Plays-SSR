@@ -3,6 +3,22 @@
 Start a **fresh save** and play these from the very first move of the game.
 Keys are `W`/`A`/`S`/`D` = North/West/South/East, matching the game's bindings.
 
+## Where this is
+
+Not a single level — the overworld is one connected space, so these inputs walk
+you out of the landing area and into the first sausages you meet.
+
+| What | Level | In-game name |
+|---|---|---|
+| Where you start | `start` | **landing** |
+| Sausage 4521 (the one I predict burns) and 4539 | `level56` | **Southjaunt** |
+| Sausages 4505 and 4514 | `level49` | **Infant's Break** |
+| Sausage 4474 | `level47` | **Lachrymose Head** |
+
+**The sausage that burns at move 33 is Southjaunt's.** If the names on screen
+don't match this ordering, that alone is a useful finding — it would mean the
+overworld layout is assembled wrongly.
+
 ## The keys, in order
 
 ```
@@ -58,7 +74,7 @@ actually matter.
 
 ## The three questions
 
-**1. Does a sausage burn on move 33?**  This is the one that matters most.
+**1. Does a Southjaunt sausage burn on move 33?**  The one that matters most.
 My simulator says the sausage you cook early slides north along a grill at
 move 33 and burns a face it already cooked. If nothing burns in the real
 game, my divergence is somewhere in moves 1-32.
