@@ -16,10 +16,16 @@ from ssr_env.types import (
 )
 
 
-def test_north_is_positive_y():
-    """The game's Coord.North is (0, 1): y increases northward, not southward."""
-    assert Direction.NORTH.delta == Coord(0, 1, 0)
-    assert Direction.SOUTH.delta == Coord(0, -1, 0)
+def test_north_is_negative_y():
+    """North is -y.
+
+    `Coord.North` in the game's source reads (0, +1), but that frame has +y
+    pointing screen-south (`RoundToCoord` maps Unity to Coord with y = -z).
+    Confirmed by observation: from the start the player walks 8 tiles north and
+    1 south; indexing masks with North as +y gave the exact mirror.
+    """
+    assert Direction.NORTH.delta == Coord(0, -1, 0)
+    assert Direction.SOUTH.delta == Coord(0, 1, 0)
 
 
 def test_east_west_deltas():

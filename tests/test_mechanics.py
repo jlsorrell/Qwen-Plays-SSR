@@ -30,13 +30,13 @@ def flat(width=6, height=6, z=0, player_at=(2, 2), facing=Direction.NORTH, extra
 def test_walking_forward_moves_one_cell_north():
     state = flat()
     result = step(state, Direction.NORTH)
-    assert result.state.player.pos == Coord(2, 3, 1)
+    assert result.state.player.pos == Coord(2, 2, 1) + Direction.NORTH.delta
 
 
 def test_walking_backward_moves_opposite_to_facing():
     state = flat()
     result = step(state, Direction.SOUTH)
-    assert result.state.player.pos == Coord(2, 1, 1)
+    assert result.state.player.pos == Coord(2, 2, 1) + Direction.SOUTH.delta
 
 
 def test_walking_does_not_change_facing():
@@ -66,11 +66,12 @@ def test_fork_sits_one_cell_ahead_of_the_player():
 def test_walking_into_a_sausage_pushes_it():
     """Player faces North with its fork at (2,3); walking North rolls the
     East-West sausage at (2,4) northward."""
-    s = Entity(pos=Coord(2, 4, 1), type=EntType.SAUSAGE, id=50,
-               direction=Direction.EAST)
-    state = flat(width=8, height=8, extra=(s,))
+    start = Coord(2, 5, 1)
+    spos = shifted(start, Direction.NORTH, Direction.NORTH)
+    s = Entity(pos=spos, type=EntType.SAUSAGE, id=50, direction=Direction.EAST)
+    state = flat(width=8, height=8, player_at=(start.x, start.y), extra=(s,))
     result = step(state, Direction.NORTH)
-    assert result.state.by_id(50).pos == Coord(2, 5, 1)
+    assert result.state.by_id(50).pos == shifted(spos, Direction.NORTH)
     assert result.state.by_id(50).rot == 1
 
 
@@ -134,6 +135,18 @@ def sausage(x, y, z=1, ident=50, facing=Direction.EAST):
     return Entity(pos=Coord(x, y, z), type=EntType.SAUSAGE, id=ident, direction=facing)
 
 
+def shifted(base: Coord, *dirs: Direction) -> Coord:
+    """`base` stepped once per direction.
+
+    Fixtures place entities relative to the player this way rather than at
+    absolute coordinates. A hardcoded neighbour bakes in an orientation, and
+    that is exactly how the north/south inversion stayed hidden for so long.
+    """
+    for d in dirs:
+        base = base + d.delta
+    return base
+
+
 def test_sausage_slides_when_pushed_along_its_axis():
     """Player faces East, sausage lies East-West ahead of it: a parallel push."""
     state = flat(player_at=(1, 2), facing=Direction.EAST,
@@ -153,11 +166,14 @@ def test_sliding_preserves_cook_faces():
 
 def test_perpendicular_push_rolls_the_sausage():
     """A roll translates the sausage and toggles rot; cookdata is untouched."""
-    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
-                 extra=(sausage(2, 3, facing=Direction.EAST),))
+    start = Coord(3, 5, 1)
+    spos = shifted(start, Direction.NORTH, Direction.NORTH)
+    state = flat(width=8, height=8, player_at=(start.x, start.y), facing=Direction.NORTH,
+                 extra=(Entity(pos=spos, type=EntType.SAUSAGE, id=50,
+                               direction=Direction.EAST),))
     before = state.by_id(50)
     after = step(state, Direction.NORTH).state.by_id(50)
-    assert after.pos == Coord(2, 4, 1)
+    assert after.pos == shifted(spos, Direction.NORTH)
     assert after.rot == 1 - before.rot
     assert after.cookdata == before.cookdata
 
@@ -226,7 +242,7 @@ def test_border_of_a_one_cell_entity_is_the_next_cell():
 
     p = Entity(pos=Coord(0, 0, 0), type=EntType.BARRIER, id=9)
     st = GameState(entities=(p,))
-    assert border_cells(p, st, Direction.NORTH) == (Coord(0, 1, 0),)
+    assert border_cells(p, st, Direction.NORTH) == (shifted(Coord(0, 0, 0), Direction.NORTH),)
 
 
 def test_border_perpendicular_covers_both_cells():
@@ -234,7 +250,10 @@ def test_border_perpendicular_covers_both_cells():
 
     s = sausage(0, 0, z=0, facing=Direction.EAST)
     st = GameState(entities=(s,))
-    assert border_cells(s, st, Direction.NORTH) == (Coord(0, 1, 0), Coord(1, 1, 0))
+    assert border_cells(s, st, Direction.NORTH) == (
+        shifted(Coord(0, 0, 0), Direction.NORTH),
+        shifted(Coord(1, 0, 0), Direction.NORTH),
+    )
 
 
 def test_border_along_axis_is_the_far_end():
@@ -258,19 +277,25 @@ def test_turning_pushes_a_sausage_out_of_the_swept_corner():
     Player at (2,2) facing North turning East sweeps (3,3). A sausage lying
     East-West there takes a push East, which is parallel to its axis: a slide.
     """
-    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
-                 extra=(sausage(3, 3, facing=Direction.EAST),))
+    start = Coord(3, 3, 1)
+    spos = shifted(start, Direction.NORTHEAST)
+    state = flat(width=8, height=8, player_at=(start.x, start.y), facing=Direction.NORTH,
+                 extra=(Entity(pos=spos, type=EntType.SAUSAGE, id=50,
+                               direction=Direction.EAST),))
     result = step(state, Direction.EAST)
     assert result.state.player.direction is Direction.EAST
-    assert result.state.by_id(50).pos == Coord(4, 3, 1)
+    assert result.state.by_id(50).pos == shifted(spos, Direction.EAST)
 
 
 def test_turn_push_can_roll_the_swept_sausage():
     """A swept sausage lying across the push direction rolls."""
-    state = flat(width=8, height=8, player_at=(2, 2), facing=Direction.NORTH,
-                 extra=(sausage(3, 3, facing=Direction.NORTH),))
+    start = Coord(3, 3, 1)
+    spos = shifted(start, Direction.NORTHEAST)
+    state = flat(width=8, height=8, player_at=(start.x, start.y), facing=Direction.NORTH,
+                 extra=(Entity(pos=spos, type=EntType.SAUSAGE, id=50,
+                               direction=Direction.NORTH),))
     result = step(state, Direction.EAST)
-    assert result.state.by_id(50).pos == Coord(4, 3, 1)
+    assert result.state.by_id(50).pos == shifted(spos, Direction.EAST)
     assert result.state.by_id(50).rot == 1
 
 
@@ -342,7 +367,8 @@ def test_pushing_static_terrain_is_a_blocked_move_not_a_raise():
 
 def test_walking_off_an_edge_drowns_the_player():
     """Falling below z=-2 is fatal; the threshold matches GameState.Lost()."""
-    state = flat(player_at=(0, 0), facing=Direction.SOUTH)
+    edge = 5 if Direction.SOUTH.delta.y > 0 else 0
+    state = flat(player_at=(0, edge), facing=Direction.SOUTH)
     result = step(state, Direction.SOUTH)
     assert result.lost and result.state.lost_reason == "Drowned"
 
@@ -350,7 +376,7 @@ def test_walking_off_an_edge_drowns_the_player():
 def test_a_supported_move_does_not_fall():
     result = step(flat(), Direction.NORTH)
     assert not result.lost
-    assert result.state.player.pos == Coord(2, 3, 1)
+    assert result.state.player.pos == Coord(2, 2, 1) + Direction.NORTH.delta
 
 
 def test_settle_drops_an_unsupported_entity_onto_the_ground():
@@ -423,18 +449,24 @@ def grill(x, y, z=0, ident=80, facing=Direction.EAST):
 
 def test_rolling_onto_a_grill_cooks_a_face():
     """Perpendicular grill cooks to 1; rot 0 cooks face 0 of the second half."""
-    s = sausage(2, 3, ident=50, facing=Direction.EAST)
-    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
-                 extra=(s, grill(2, 4, facing=Direction.NORTH)))
+    start = Coord(3, 5, 1)
+    spos = shifted(start, Direction.NORTH, Direction.NORTH)
+    gpos = shifted(spos, Direction.NORTH)
+    s = Entity(pos=spos, type=EntType.SAUSAGE, id=50, direction=Direction.EAST)
+    state = flat(width=8, height=8, player_at=(start.x, start.y), facing=Direction.NORTH,
+                 extra=(s, grill(gpos.x, gpos.y, facing=Direction.NORTH)))
     after = step(state, Direction.NORTH).state.by_id(50)
     assert after.faces != (0, 0, 0, 0)
     assert 1 in after.faces
 
 
 def test_a_parallel_grill_cooks_to_two():
-    s = sausage(2, 3, ident=50, facing=Direction.EAST)
-    state = flat(width=8, height=8, player_at=(2, 1), facing=Direction.NORTH,
-                 extra=(s, grill(2, 4, facing=Direction.EAST)))
+    start = Coord(3, 5, 1)
+    spos = shifted(start, Direction.NORTH, Direction.NORTH)
+    gpos = shifted(spos, Direction.NORTH)
+    s = Entity(pos=spos, type=EntType.SAUSAGE, id=50, direction=Direction.EAST)
+    state = flat(width=8, height=8, player_at=(start.x, start.y), facing=Direction.NORTH,
+                 extra=(s, grill(gpos.x, gpos.y, facing=Direction.EAST)))
     after = step(state, Direction.NORTH).state.by_id(50)
     assert 2 in after.faces
 

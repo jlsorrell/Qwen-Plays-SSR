@@ -129,10 +129,14 @@ def test_delta_and_inverse_are_consistent():
 
 
 def test_diagonal_deltas_are_the_sum_of_their_cardinals():
-    assert Direction.NORTHEAST.delta == Coord(1, 1, 0)
-    assert Direction.SOUTHWEST.delta == Coord(-1, -1, 0)
-    assert Direction.NORTHWEST.delta == Coord(-1, 1, 0)
-    assert Direction.SOUTHEAST.delta == Coord(1, -1, 0)
+    """Stated as sums so the assertion survives a change of orientation."""
+    for diag, a, b in (
+        (Direction.NORTHEAST, Direction.NORTH, Direction.EAST),
+        (Direction.SOUTHWEST, Direction.SOUTH, Direction.WEST),
+        (Direction.NORTHWEST, Direction.NORTH, Direction.WEST),
+        (Direction.SOUTHEAST, Direction.SOUTH, Direction.EAST),
+    ):
+        assert diag.delta == a.delta + b.delta
 
 
 def test_vertical_is_exactly_up_and_down():
