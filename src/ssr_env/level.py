@@ -265,65 +265,49 @@ def load_overworld_meta(levels_dir: Path = LEVELS_DIR) -> dict:
 
 
 def load_overworld(levels_dir: Path = LEVELS_DIR) -> GameState:
-    """The whole game as one composite state.
+    """The overworld, built the way `MetaGameState.RegenIslands` builds it.
 
-    SSR's overworld is not a separate scene — every level's island chunk is
-    placed at its offset in a single connected space, which is why the `.dem`
-    corpus is one continuous playthrough rather than 120 independent solutions.
+    The overworld is **not** a merge of every level's contents. `RegenIslands`
+    discards and rebuilds it as exactly one `EntType.ISLAND` entity per level,
+    positioned at that level's entry in `offsets`, with `dat` set to the level
+    name. All walkable terrain comes from the island masks, keyed by that name.
 
-    Entity ids are renumbered across the merge; the player start pose comes from
-    the level named `start`, per `MetaGameState.LoadBinary`'s final lines.
+    Two consequences, both confirmed against the real game
+    (docs/differential-test-001-results.md):
+
+    - **No sausages in the overworld.** They are issued on entering a level
+      (`IssueWorldSausages`) and despawned on leaving.
+    - Island entities sit at `offsets[name]` **directly**. An earlier version
+      placed each level's own island entity at its level-local position *plus*
+      the offset, double-shifting the terrain and leaving holes in the surface.
+
+    The player comes from the level named `start`, offset into overworld space.
     """
     meta = load_overworld_meta(levels_dir)
     offsets = meta.get("offsets", {})
-    merged: list[Entity] = []
-    for name in sorted(offsets):
-        path = Path(levels_dir) / f"{name}.json"
-        if not path.is_file():
-            continue
-        shift = Coord(*offsets[name])
-        masks = load_island_masks(levels_dir)
-        for entity in load_level(path).entities:
-            moved = replace(entity, pos=entity.pos + shift)
-            if entity.type is EntType.ISLAND:
-                # Qualify dat to a global mask key: overworld islands come from
-                # many levels, so a level-relative dat cannot resolve here.
-                qualified = island_mask_key(name, entity.dat)
-                moved = replace(
-                    moved, dat=qualified if qualified in masks else name
-                )
-            merged.append(moved)
+    masks = load_island_masks(levels_dir)
 
-    # Every level file carries its own player spawn marker. The composite world
-    # has exactly one player, taken from the level named `start` — per the final
-    # lines of `MetaGameState.LoadBinary`, which set
-    # `startpos = islands["start"].player.pos + offsets["start"]`.
-    start_shift = Coord(*offsets["start"]) if "start" in offsets else Coord(0, 0, 0)
-    start_players = [
-        replace(e, pos=e.pos + start_shift)
-        for e in load_level(Path(levels_dir) / "start.json").entities
-        if e.type is EntType.PLAYER
-    ] if (Path(levels_dir) / "start.json").is_file() else []
+    entities: list[Entity] = [
+        Entity(
+            pos=Coord(*offsets[name]),
+            type=EntType.ISLAND,
+            id=i,
+            direction=Direction.NONE,
+            dat=name,
+        )
+        for i, name in enumerate(sorted(offsets))
+        if name in masks
+    ]
 
-    merged = [e for e in merged if e.type is not EntType.PLAYER]
-    merged.extend(start_players[:1])
+    start_path = Path(levels_dir) / "start.json"
+    if start_path.is_file() and "start" in offsets:
+        shift = Coord(*offsets["start"])
+        for e in load_level(start_path).entities:
+            if e.type is EntType.PLAYER:
+                entities.append(replace(e, id=len(entities), pos=e.pos + shift))
+                break
 
-    renumbered = tuple(replace(e, id=i) for i, e in enumerate(merged))
-    state = GameState(entities=renumbered, tileset=0)
-
-    # No sausages in the overworld.
-    #
-    # Confirmed against the real game (docs/differential-test-001-results.md):
-    # the opening 15 moves touch no sausage at all, and first contact is at move
-    # 22 — after entering a level. Sausages are *issued* on level entry
-    # (`IssueWorldSausages`, `SpawnSubworldSausages`) and despawned on leaving
-    # (`DespawnSubworldSausages`). Merging all 220 into the overworld put them
-    # underfoot during the overworld walk and desynchronised everything.
-    state = GameState(
-        entities=tuple(e for e in state.entities if e.type is not EntType.SAUSAGE),
-        tileset=0,
-    )
-
+    state = GameState(entities=tuple(entities), tileset=0)
     players = state.of_type(EntType.PLAYER)
     if players:
         state = replace(
