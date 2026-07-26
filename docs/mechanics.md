@@ -953,6 +953,53 @@ genuine obstacles. A replay blocked by one is behaving correctly, not buggy.
 Source: `Entity.cs IslandAt`, `GameState.cs:492 SubworldTransition`,
 `GameState.cs:650 IssueWorldSausages`.
 
+## 12.7 Level entry — IMPLEMENTED
+
+`CheckOverworldGhosts` is what triggers `SubworldTransition`. For each level it
+compares the player's pose against that level's recorded start pose, offset by
+its island entity:
+
+```
+player.pos == playerpositions[name].pos + island.pos
+&& player.direction == playerpositions[name].direction
+&& fork == null && !LevelCompleted(name)
+    -> SubworldTransition(name)
+```
+
+**Both position and facing must match.** Standing on the cell is not enough,
+which is exactly what the owner observed: the player steps onto the entry cell
+with the fork east, nothing happens, and the next press turns them to the
+correct heading and drops them in.
+
+`SubworldTransition` then sets the island's `cookdata` to 1 (§10.5, which stops
+its sausage footprints being solid), spawns that level's sausages from the
+recorded spawn table, and calls `TryLowerAll` — the terrain sinking that reads
+on screen as dropping into the level. `SubworldLeave` is the mirror image:
+despawn, `CompleteLevel`, `TryRaiseAll`.
+
+Implemented in `mechanics.check_overworld_entry`, using the `player` and
+`sausages` tables now captured by the extractor. 86 levels have entry poses.
+
+## 12.8 `Collides()` is the remaining blocker — NOT TRANSCRIBED
+
+Replay currently stops **one cell short** of `level49`'s entry at (1,-3,-1). The
+player is pushed off it by a spurious pivot at move 11: turning east, the fork's
+destination is a `-1` sausage footprint, which §10.5 confirms is genuinely
+solid, so my collision stand-in refuses the turn and pivots instead.
+
+**The stand-in is the problem.** `Entity.Collides()` is not a single-cell
+solidity test. It walks neighbouring entities within a `RoughOccupancyBounds`
+box and tests real overlap via `Occupancy()`, skipping entities that are stuck
+to it, decorative, or translating in lockstep with it. Island-vs-island pairs go
+through the `projectioncompatibilities` table — which the extractor currently
+reads past and discards.
+
+To finish this: transcribe `Entity.Occupancy()`, `RoughOccupancyBounds`,
+`CalcBoxNeighbours`, and capture `projectioncompatibilities` in the extractor.
+`Occupancy()` matters most, since a turning entity's footprint covers the swept
+arc rather than just its destination — which is very likely why the real game
+allows a turn my simulator refuses.
+
 ## 13. Open questions
 
 1. ~~What do the four per-face `cookdata` values mean?~~ **Answered in §9.1**:

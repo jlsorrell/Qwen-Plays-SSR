@@ -30,6 +30,12 @@ class GameState:
     #: it must travel with the state rather than being recomputed.
     start_pos: Coord | None = None
     start_direction: Direction | None = None
+    #: False once inside a level. Mirrors `GameState.overworld`.
+    overworld: bool = True
+    #: Name of the level currently entered. Mirrors `pushtargetlevel`.
+    pushtargetlevel: str = ""
+    #: Levels already completed; they no longer trigger entry.
+    completed: frozenset = frozenset()
     #: Lazily built cell -> static entity index, mirroring the game's
     #: `BuildStaticCaches`/`StaticEntAt`. Excluded from equality and the state
     #: key; it is a cache, not state. Needed because the composite overworld has
