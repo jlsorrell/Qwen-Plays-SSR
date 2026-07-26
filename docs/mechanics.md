@@ -1468,5 +1468,19 @@ Candidates for an over-fire, none tested:
 - The rebound may not apply when the player is **laden**, or when the grill cell
   is simultaneously vacated by a sausage in the same move.
 
-**The distinguishing observation** is narrow: playing The Anchorage from its
-entrance, does the character rebound off a grill around key 44, or move onto it?
+### Key 44 is correct — the rebound is not at fault
+
+The owner played The Anchorage from its entrance and confirmed checkpoints at
+keys 10, 20, 30 and 43, then described key 44 exactly:
+
+> the character steps on the grill before being bounced off. The sausage
+> occupying the grill tile is therefore also moved south when the player steps
+> on, but the player is then bounced back off it.
+
+This simulator already does that — the push is applied before the rebound is
+evaluated, so at key 44 sausage 206 moves (4,4) -> (5,4) and cooks
+(0,0,1,1) -> (1,0,1,1) while the player stays at (2,4).
+
+So §12.18's rebound is **not** over-firing, and the suspicion recorded above is
+discharged. The divergence in The Anchorage lies somewhere after key 44;
+remaining checkpoints are keys 50, 70 and 90.
