@@ -1218,3 +1218,42 @@ Two things follow:
    the surrounding terrain and leaving raises it; without that the overworld
    geometry after the first level is wrong, so the player is walking a landscape
    that no longer matches what the recording assumed.
+
+## 12.14 Islands sink and rise — IMPLEMENTED
+
+`TryLowerAll` lowers every island except the one being entered; `TryRaiseAll`
+restores them on exit. The `id % 3` branches stagger the sinking into waves for
+the animation; the settled outcome is a uniform displacement, so it is modelled
+as a single move of `ISLAND_SINK_DEPTH` and its inverse.
+
+This was the last major mechanic known to be missing, and it mattered:
+
+| Metric | Before | After |
+|---|---|---|
+| Levels entered | 1 | 9 |
+| Levels completed | 1 | 8 |
+| Refusal rate over the run | 34% | 18% |
+
+### Moves 1-414 track the real playthrough
+
+Refusals per 200 moves: **0% for the first 200, 1% for the next 200**, then
+climbing to 10% by move 400-600 and 20-34% beyond 800.
+
+Eight levels are entered and left cleanly in sequence:
+
+| Move | Level |
+|---|---|
+| 15-83 | Lachrymose Head |
+| 91-125 | Southjaunt |
+| 128-158 | Infant's Break |
+| 169-203 | Little Fire |
+| 213-261 | Bay's Neck |
+| 265-299 | Burning Wharf |
+| 310-336 | Eastreach |
+| 345-414 | Comely Hearth |
+
+**The refusal rate is the diagnostic.** A recorded playthrough should almost
+never press into a wall, so a rising rate localises divergence far better than
+the move number reached. It rises sharply after move 414, and the next level
+entry does not occur until move 1835 — so whatever goes wrong, it goes wrong on
+leaving Comely Hearth or shortly after.
