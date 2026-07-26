@@ -206,8 +206,11 @@ def try_turn_player(
         if blocker is not None and is_solid(blocker, state.tileset):
             state = try_push(state, blocker, direction, masks, level_name)
             player = state.player
-        if _blocked_for(state, player, swept, masks, level_name):
-            return try_pivot_turn(state, direction, masks, level_name)
+        # No collision test here. `TryTurn` applies force through the swept
+        # cell and then checks `Collides()` on the *rotated entity* — i.e. the
+        # fork's destination. Refusing the turn because the diagonal is occupied
+        # made every turn beside overworld rock pivot instead, walking the
+        # player backwards.
 
     # Phase 2 (TurnOut): complete to the target cardinal.
     turned = replace(player, direction=direction)
