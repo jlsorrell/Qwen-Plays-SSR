@@ -1030,9 +1030,57 @@ So the discriminator is not *which* cell but the `entering` flag and the
 does not collide the way a fully-occupied cell does. That is the sub-tick model
 deferred in §1, and it cannot be approximated away here.
 
-Remaining: `BuildOccupancy`, the `Occupancy` struct's semantics (what `entering`
-and `position` do in `Collides`), `RoughOccupancyBounds`, `CalcBoxNeighbours`,
-and `projectioncompatibilities` in the extractor for island-vs-island pairs.
+### The `Occupancy` struct — CONFIRMED
+
+`BuildOccupancy` is a pooled struct setter with no logic. The semantics live in
+`Occupancy.CompatibleWith`, and it is a **conga-line rule**:
+
+```
+pos != other.pos                  -> compatible (different cells)
+either Static() (speed == 0)      -> COLLIDE
+dir != other.dir                  -> COLLIDE
+entering == other.entering        -> COLLIDE
+otherwise: leaver.TimeTillLeave() <= enterer.TimeTillLeave()
+           TimeTillLeave = (1 - position) / speed
+```
+
+Two entities may share a cell only if one is leaving while the other enters, in
+the same direction, and the leaver is gone before the enterer needs it. This is
+the same idea as the lockstep-translation skip in `Collides()`.
+
+**A stationary entity's occupancy is `speed = 0`, hence `Static()`, hence it
+collides with anything sharing its cell.** So terrain in the swept diagonal does
+genuinely block a turn — the diagonal rule was right, and move 7's pivot may be
+correct behaviour rather than the regression it appeared to be. There is no
+observation for move 7 either way.
+
+`Occupancy()` is a 211-line case analysis, larger than first thought: separate
+branches for island translation, ordinary translation, extended and unextended
+rotation, and several pivot cases under `MType.TurnIn` producing 3 or 4 cells.
+
+### BLOCKING CONTRADICTION — needs an observation, not more reading
+
+The owner observed that after the four `D` presses the player stands on
+`level49`'s entry cell **with the fork pointing east**. A player at (1,-3)
+facing east has its fork at **(2,-3,-1)**. That cell is a `-1` sausage
+footprint, which §10.5 says is solid until the level is entered.
+
+Both cannot hold. Candidate resolutions, none yet tested:
+
+1. **§10.5 is wrong about solidity.** `-1` may mark a sausage footprint without
+   being an obstacle, and the `IslandAt` branch may serve some other purpose.
+   The 440 = 2 x 220 count is solid evidence for *what* `-1` marks, but not for
+   what it *does*.
+2. **The player is not extended there.** `Extended()` for a player is
+   `gamestate.fork == null`; if a separate fork entity exists in the overworld
+   the player is one cell and the contradiction dissolves. But
+   `CheckOverworldGhosts` requires `fork == null` to enter a level, which cuts
+   against this.
+3. **`level49`'s island placement or mask offset is off by one**, putting the
+   footprint one cell from where it belongs.
+
+Resolution 3 is checkable locally by comparing the rendered island against the
+real level. Resolutions 1 and 2 need a differential observation.
 
 ## 13. Open questions
 
