@@ -1598,3 +1598,42 @@ player repeatedly trying to walk where this model has void. Since the levels
 themselves are right, the most likely remaining cause is overworld terrain that
 differs from the game once levels start completing, e.g. geometry that changes
 on completion and that `RegenIslands` alone does not capture.
+
+## 12.23 World sausages — completing a temple changes the overworld
+
+`CompleteLevel` only appends to a list. The world change is `IssueWorldSausages`:
+
+```
+for each shrine in templedat:
+    if not already issued and every level in templedat[shrine] is complete:
+        spawn sausagepositions[shrine] at the shrine island
+        shrine island cookdata = 1
+```
+
+A shrine is any key of `templedat` (30 of them; all have an island and a spawn
+entry). `ShouldIssueSausage` requires the shrine to be un-issued and **every**
+level the temple lists to be completed.
+
+Two effects, both now implemented:
+
+1. **Sausages appear on the overworld** at the shrine. These are the same
+   sausages `load_overworld` discards at load — they start unsupported precisely
+   because they are not yet in play.
+2. **The shrine island's `cookdata` becomes 1**, which is not cosmetic: `IslandAt`
+   treats mask value `-1` as solid only while `cookdata` is 0, so the shrine's
+   sausage-footprint placeholders stop blocking once issued (§10.5).
+
+`temple2j1` lists 16 levels, and replay issues it at **move 855** — the exact
+move the sixteenth level completes, and the exact move at which tracking was
+previously lost.
+
+### Result: a loud failure instead of silent drift
+
+Replay now fails at **move 957** with `SausageLost` — the newly issued world
+sausage pushed into water. Previously it wandered to move 16,567 without ever
+touching it.
+
+That is progress of the useful kind: a concrete event at a known move beats a
+drifting refusal rate. Overworld refusals in the 800-899 window remain ~28%, so
+this is not the whole story, but the player is now interacting with the world
+sausage at all.

@@ -705,6 +705,59 @@ def step(
     )
 
 
+def issue_world_sausages(state: GameState, meta: dict, masks=None) -> GameState:
+    """Spawn a shrine's sausages once every level in its temple is complete.
+
+    Mirrors `IssueWorldSausages`. A shrine is any key of `templedat`, and
+    `ShouldIssueSausage` requires that it has not already been issued and that
+    every level the temple lists is completed. The sausages appear **on the
+    overworld** at `sausagepositions[shrine]`, offset by the shrine's island, and
+    the island's `cookdata` is set to 1.
+
+    This is the only thing that changes the overworld as levels are completed —
+    `CompleteLevel` itself just appends to a list. Missing it means the player
+    walks up to a shrine expecting a sausage that never appeared.
+
+    These are also the sausages `load_overworld` discards at load: they start
+    unsupported because they are not yet in play.
+    """
+    temples = meta.get("temples", {})
+    spawns = meta.get("sausages", {})
+    islands = {e.dat: e for e in state.entities if e.type is EntType.ISLAND}
+    issued = set(state.issued_shrines)
+    new: list[Entity] = []
+    next_id = max((e.id for e in state.entities), default=0) + 1
+
+    for shrine, levels in temples.items():
+        if shrine in issued or shrine not in islands:
+            continue
+        if not levels or any(lv not in state.completed for lv in levels):
+            continue
+        island = islands[shrine]
+        for spec in spawns.get(shrine, []):
+            new.append(
+                Entity(
+                    pos=island.pos + Coord(*spec["pos"]),
+                    type=EntType.SAUSAGE,
+                    id=next_id + len(new),
+                    direction=Direction(spec["direction"]),
+                    dat="M; ; ",
+                )
+            )
+        issued.add(shrine)
+        # `entity.cookdata = 1` on the shrine island. On an island this flags
+        # "sausages issued" (§10.5), and it changes terrain: `IslandAt` treats
+        # mask value -1 as solid only while cookdata is 0, so the shrine's
+        # sausage-footprint placeholders stop blocking once issued.
+        state = state.replace_entity(replace(island, cookdata=1))
+
+    if not new:
+        return state
+    updated = with_entities(state, state.entities + tuple(new))
+    updated = replace(updated, issued_shrines=frozenset(issued))
+    return updated
+
+
 def _apply_transitions(state: GameState, meta: dict | None, masks) -> GameState:
     """Level entry and exit, applied inside `step`.
 
@@ -717,7 +770,8 @@ def _apply_transitions(state: GameState, meta: dict | None, masks) -> GameState:
     """
     if meta is None:
         return state
-    return check_level_exit(check_overworld_entry(state, meta, masks), meta, masks)
+    state = check_level_exit(check_overworld_entry(state, meta, masks), meta, masks)
+    return issue_world_sausages(state, meta, masks) if state.overworld else state
 
 
 def _laden(state: GameState) -> bool:
