@@ -1637,3 +1637,39 @@ That is progress of the useful kind: a concrete event at a known move beats a
 drifting refusal rate. Overworld refusals in the 800-899 window remain ~28%, so
 this is not the whole story, but the player is now interacting with the world
 sausage at all.
+
+## 12.24 Move 957 — downstream of drift that starts around 943
+
+The shrine sausage spawns at (1,-24) and the player reaches it at move 951,
+pushing it to (1,-25). At **957** the player backs north into it again, pushing
+it to (1,-26), which this model has as water: `SausageLost`.
+
+**The failure is not the interesting part.** Refusals appear earlier:
+
+| Move | Input | Refused with |
+|---|---|---|
+| 943, 944, 945 | S | `no ground at (1,-19)` |
+| 953 | D | `no ground at (2,-24)` |
+| 955, 956 | A | `no ground to pivot onto` |
+
+Three consecutive refused southward presses at 943-945 say the player should be
+able to walk south from (1,-20) and this model has void there. So the position
+by 951 is already wrong, and the sausage is being pushed from the wrong cell.
+
+### Suspicion: the shrine `cookdata` change may cut terrain
+
+§12.23 sets the shrine island's `cookdata` to 1 on issuing, which by §10.5 stops
+its mask value `-1` cells being solid. That is what the game does — but it is
+also newly introduced, and replay regressed from reaching move 16,567 (drifting)
+to failing at 957 immediately after adding it.
+
+Both readings are consistent with the evidence:
+
+- The change is correct and merely converted a silent drift into an early loud
+  failure, which is what §12.23 claims.
+- The change removes terrain the player still needs, and the `-1` cells around a
+  shrine are not all sausage footprints.
+
+Distinguishing them needs either a count of how many `-1` cells the shrine island
+has against its one spawn point, or an observation of the overworld around the
+temple2j1 shrine after world 1 is complete.
