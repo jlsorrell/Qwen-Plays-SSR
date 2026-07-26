@@ -61,7 +61,7 @@ def main() -> None:
     state = load_overworld()
     history, mapping = [], {}
     for i, action in enumerate(inputs):
-        result = step(state, action, masks=masks)
+        result = step(state, action, history, masks)
         if result.lost:
             print(f"replay lost at move {i + 1}: {result.reason}")
             break
