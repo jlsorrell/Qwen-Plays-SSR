@@ -642,6 +642,7 @@ def step(
     history: list[GameState] | None = None,
     masks=None,
     level_name: str = "",
+    meta: dict | None = None,
 ) -> StepResult:
     """Apply one input and settle.
 
@@ -659,6 +660,8 @@ def step(
             raise ValueError("undo requested but history is None (undo withheld)")
         if not history:
             return StepResult(state=state, moved=False, reason="nothing to undo")
+        # The restored state already carries whatever transitions were applied
+        # when it was recorded, so it must not be run through them again.
         return StepResult(state=history.pop())
 
     if not isinstance(action, Direction):
@@ -693,12 +696,28 @@ def step(
     # inside the handlers would compare against a state whose pushes had already
     # been applied, so nothing would look moved.
     settled = _settle_and_cook(state, result.state, masks, level_name)
+    settled = _apply_transitions(settled, meta, masks)
     return replace(
         result,
         state=settled,
         lost=settled.lost,
         reason=settled.lost_reason or result.reason,
     )
+
+
+def _apply_transitions(state: GameState, meta: dict | None, masks) -> GameState:
+    """Level entry and exit, applied inside `step`.
+
+    These **must** happen here rather than in the caller. `history` is recorded
+    inside `step`, so transitions applied afterwards are invisible to it — undo
+    would then rewind to a state that never entered or left a level.
+
+    Every one of the 103 undos in `all.dem` falls after move 855, which is
+    exactly where replay stopped tracking while transitions lived in the caller.
+    """
+    if meta is None:
+        return state
+    return check_level_exit(check_overworld_entry(state, meta, masks), meta, masks)
 
 
 def _laden(state: GameState) -> bool:

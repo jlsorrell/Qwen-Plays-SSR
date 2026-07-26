@@ -1564,3 +1564,37 @@ acceptance gate.
 Note 13 of the 120 segments do not match `all.dem` byte-for-byte, beginning at
 `3-4`, so the world-order assumption breaks somewhere in world 3. Worth
 resolving before trusting derived pairings beyond world 1.
+
+## 12.22 Transitions belong inside `step` — correct, but not the fix
+
+`history` is recorded inside `step`, so level entry and exit applied by the
+*caller* were invisible to it: undo would rewind to a state that never entered
+or left a level. `step` now takes `meta` and applies transitions itself, so the
+recorded sequence is the sequence that actually happened.
+
+This looked like the answer because **all 103 undos in `all.dem` fall after move
+855, and none before** — precisely the boundary where replay stops tracking.
+
+**It made no measurable difference.** Overworld refusals after move 855 remain
+26-38%, and still no level is entered. Two further causes ruled out while
+investigating:
+
+- **Island heights are correct.** After 1,000 moves, 0 of 205 islands sit at a
+  height other than their original, so sinking and raising balance exactly.
+- **Undo itself is not obviously misbehaving** — the fix is kept because the
+  previous arrangement was genuinely wrong, not because it changed the outcome.
+
+So the overworld fault is still unlocated. What is now known:
+
+| Ruled out | Evidence |
+|---|---|
+| Level mechanics | 2% in-level refusals; 16 levels verified |
+| Island sink/raise | 0/205 islands displaced after 1,000 moves |
+| History/undo consistency | fixed; no change to the refusal rate |
+| Grill rebound over-firing | owner confirmed key 44 of The Anchorage |
+
+The remaining symptom is 5,700 "no ground" refusals on the overworld — the
+player repeatedly trying to walk where this model has void. Since the levels
+themselves are right, the most likely remaining cause is overworld terrain that
+differs from the game once levels start completing, e.g. geometry that changes
+on completion and that `RegenIslands` alone does not capture.
