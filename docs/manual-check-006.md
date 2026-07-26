@@ -1,54 +1,56 @@
-# Manual check 006 — is there ground here?
+# Manual check 006 — is there ground south of the shrine sausage?
+
+*(An earlier version of this map was printed upside-down — north is `-y` and I
+was printing rows the wrong way. This one is correct.)*
 
 ## Getting there
 
-Complete world 1 (all sixteen levels). A sausage then appears at the big
-structure — if that is the one with the plaque reading *"There were once great
-people here..."*, that is what my code calls the shrine. Walk to it.
-
-In my replay the character is standing just south-east of that sausage,
-having walked up from the south, and is about to try walking **south** three
-times in a row.
+Complete world 1 — all sixteen levels. A sausage then appears at a large
+structure. If that is the one with the plaque reading *"There were once great
+people here, but now there is something even greater"*, that is what the code
+calls a shrine and what I mean below.
 
 ## What my model has
 
-Top-down. `@` is where my character is standing, `S` is the world sausage,
-`#` is ground you can walk on, `.` is water or empty, `?` is **the cell in
-dispute** — my model says water, the recording walks into it.
-
 ```
-##.#############.
-##...###...##.#..
-#############.#..
-#####.#.#######..
-#########........
-########?........
-########@#....###
-#########....####
-######.##....#.##
-...###..##.....##
-...#####S.....###
-...######.#######
-....####..#..####
-..........######.
 ......###########
+..........######.
+....####..#..####
+...######.#######
+...#####S.....###
+...###..##.....##
+######.##....#.##
+#########....####
+########@#....###
+########?........
+#########........
+#####.#.#######..
+#############.#..
+##...###...##.#..
+##.#############.
 ```
 
-North is **up** in this picture.
+**North is up. South is down.**
+
+- `@` where my character stands
+- `S` the world sausage that appeared after world 1
+- `#` ground you can stand on, `.` water or empty
+- `?` **the cell in dispute** — one step SOUTH of `@`
 
 ## The question
 
-**Standing where `@` is, can you walk south (down in this picture)?**
+**Standing where `@` is, can you walk one step south (down)?**
 
-My model says no — the cell marked `?` is water, and three consecutive
-south presses in the recording all do nothing. If in the real game you *can*
-walk south from there, my overworld is missing ground at that spot.
+My model says no: `?` is water. The recording presses south three times in a
+row there, which only makes sense if it is walkable. If you can walk south,
+my overworld is missing ground at that spot.
 
-If it is easier: just describe the shape of the land immediately south of the
-structure. Is it a dead end, or does it continue?
+## Easier alternative
 
-## If the picture does not match at all
+If lining up with `@` is fiddly, this is just as useful: **stand at the world
+sausage and describe the land to its south** — dead end, narrow path,
+open area? Any mismatch with the picture tells me what I need.
 
-That is the more useful answer. It would mean my character is not where I
-think it is by this point, and the shape of the land is the fastest way to
-tell.
+And if the picture looks nothing like what you see, say so — that would mean
+my character is not where I think it is, which is more important than the
+ground question.
