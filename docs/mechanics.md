@@ -1751,3 +1751,41 @@ location is `(1, -26)` on `bridge1`, not `(1, -19)`, and the character stands at
 `(1, -25)` when it happens.
 north-south mirrored, so any earlier eyeballing of overworld geometry in this
 document should be re-checked.
+
+
+## 12.26 The world sausage is one tile too far south — CONFIRMED
+
+The owner described the terrain west of the world sausage tile by tile. Scoring
+that against two candidate rows:
+
+```
+owner described   W1..W10 = ?  L  ?  L  W  W  W  L  W  L
+my sausage row              L  W  L  W  W  W  W  W  L  L    4/8
+one row north               L  L  L  L  W  W  W  L  W  L    8/8
+```
+
+The row **one north** of where this model puts the sausage matches the real game
+exactly. The sausage is off by one cell in y — spawned at `(-6, -21, -1)` when it
+should be at `(-6, -22, -1)`.
+
+That single-cell error is enough to explain the whole post-855 divergence: every
+subsequent push starts from the wrong tile, and 100 moves later the sausage is
+shoved into the notch at (1, -26) instead of past it.
+
+**Level sausages are unaffected.** `check_overworld_entry` uses the same
+`sausagepositions` table and the same `island.pos + offset` formula, and all
+sixteen levels verify. So the fault is specific to the shrine path in
+`issue_world_sausages`, not to the table or the formula in general.
+
+Candidates:
+
+- The shrine island entity consulted at issue time is not at the position
+  `offsets` describes — `issue_world_sausages` runs inside `_apply_transitions`,
+  after `raise_other_islands`, so it reads a state mid-restore.
+- Shrine spawn offsets may be relative to the mask origin rather than the island
+  entity, which would differ by the mask offset.
+- The `y` component may need the same sign care as everything else in this
+  codebase (§2).
+
+The third is cheap to test and the first is cheap to rule out by comparing the
+island position at issue time against `offsets`.
