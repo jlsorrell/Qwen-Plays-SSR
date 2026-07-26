@@ -566,6 +566,19 @@ def try_move_player(
                 )
             player = state.player
 
+    # You cannot walk off the island. The move is refused outright rather than
+    # permitted and then resolved by gravity.
+    #
+    # Confirmed by observation: standing on Southjaunt's westmost panel and
+    # pressing west does nothing in the real game. An earlier version allowed it
+    # because the player is extended and its fork still rested on the island, so
+    # `under()` reported support — but the test is on the **body's** destination,
+    # not on the pair.
+    if not solid_ent_at(state, destination + Direction.DOWN.delta, masks, level_name):
+        return StepResult(
+            state=state, moved=False, reason=f"no ground at {tuple(destination)}"
+        )
+
     return StepResult(state=state.replace_entity(replace(player, pos=destination)))
 
 

@@ -371,12 +371,32 @@ def test_pushing_static_terrain_is_a_blocked_move_not_a_raise():
     assert not result.moved
 
 
-def test_walking_off_an_edge_drowns_the_player():
-    """Falling below z=-2 is fatal; the threshold matches GameState.Lost()."""
+def test_walking_off_an_edge_is_refused_not_fatal():
+    """You cannot walk off the island — the move is refused.
+
+    Confirmed against the real game: standing on the westmost panel of a level
+    and pressing west does nothing. This suite previously asserted the player
+    drowned instead, which let the replay wander off islands.
+    """
     edge = 5 if Direction.SOUTH.delta.y > 0 else 0
     state = flat(player_at=(0, edge), facing=Direction.SOUTH)
     result = step(state, Direction.SOUTH)
-    assert result.lost and result.state.lost_reason == "Drowned"
+    assert not result.lost
+    assert not result.moved
+    assert result.state.player.pos == state.player.pos
+
+
+def test_an_extended_player_cannot_walk_out_on_its_fork():
+    """Support at the fork does not license walking the body into void.
+
+    The check is on the body's destination. The player is extended, so `under()`
+    reports support whenever either cell rests on ground — which previously let
+    the body step off an edge while the fork still held it up.
+    """
+    edge = 5 if Direction.SOUTH.delta.y > 0 else 0
+    state = flat(player_at=(0, edge), facing=Direction.NORTH)
+    result = step(state, Direction.SOUTH)
+    assert not result.moved and not result.lost
 
 
 def test_a_supported_move_does_not_fall():
