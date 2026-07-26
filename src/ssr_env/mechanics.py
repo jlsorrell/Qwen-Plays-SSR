@@ -354,6 +354,23 @@ _MAX_SETTLE_STEPS = 64
 _MAX_PUSH_DEPTH = 8
 
 
+def bbqs_on(state: GameState) -> bool:
+    """Whether grills are hot. Mirrors `GameState.bbqsOn`.
+
+    `(pushestotry == 0 && !overworld) || returning`. The `pushestotry` term
+    counts down the island-sinking animation, which this simulator settles
+    instantly (§1), so it reduces to "inside a level".
+
+    Two things depend on it, and both were missing:
+
+    - `DoCook` returns immediately when grills are off, so **cooking only
+      happens inside a level**.
+    - Hot grills repel the player (§12.18); cold ones can be stood on, which is
+      why walking over grills in the overworld is fine.
+    """
+    return not state.overworld
+
+
 def grill_identity_at(state: GameState, cell, masks, level_name: str) -> str:
     """Stable identifier for the grill at a cell, or "" if none.
 
@@ -603,6 +620,19 @@ def try_move_player(
             state=state, moved=False, reason=f"no ground at {tuple(destination)}"
         )
 
+    # A **hot** grill repels: stepping onto one bounces the player back to the
+    # tile it came from, though anything it pushed on the way still moved.
+    # Cold grills — those in the overworld — can be walked on freely, which is
+    # why this must be gated on `bbqs_on` rather than applied everywhere.
+    if bbqs_on(state) and grill_direction_at(
+        state, destination + Direction.DOWN.delta, masks, level_name
+    ) is not None:
+        # The player rebounds, but anything it pushed on the way still moved,
+        # so this must not short-circuit settling and cooking (see `step`).
+        return StepResult(
+            state=state, moved=False, reason="hot grill: bounced back"
+        )
+
     return StepResult(state=state.replace_entity(replace(player, pos=destination)))
 
 
@@ -652,7 +682,12 @@ def step(
     if not result.moved:
         if history is not None:
             history.pop()
-        return result
+        # `moved` says the *player* did not relocate — it does not mean nothing
+        # happened. A hot-grill rebound still pushes whatever was in the way,
+        # and those pushes must settle and cook. Skip the work only when the
+        # state is genuinely untouched.
+        if result.state is state:
+            return result
 
     # Settle and cook once, against the state as it was on entry. Doing this
     # inside the handlers would compare against a state whose pushes had already

@@ -1387,13 +1387,46 @@ player then never reaches Comely Hearth at all: 11 bounces in the first 56 keys
 of that level alone, and no level is entered. So walking across grill tiles is
 clearly permitted somewhere in worlds already verified.
 
-So the rule is real but conditional, and the condition is not yet known.
-Candidates, none tested:
+### Resolved — IMPLEMENTED
 
-- The grill may only repel while **hot** — `bbqsOn()` exists and `CalcBBQAshSteps`
-  suggests grills have an on/off state.
-- It may apply only to the player's **body**, not to a fork tile passing over.
-- It may be the `Surprise_Chasm` / `NoCanDo` movement family rather than a
-  refusal, i.e. a distinct animation with different resolution.
+The owner confirmed both conditions: **grills only repel while hot, and only the
+player's body is affected — the fork passes over freely.**
 
-Reverted for now. The falsy-NORTH fix above is kept, being unambiguously correct.
+```
+bbqsOn() = (pushestotry == 0 && !overworld) || returning
+```
+
+The `pushestotry` term counts down the island-sinking animation, which this
+simulator settles instantly (§1), so it reduces to **"inside a level"**. Grills
+on the overworld are cold and can be walked across, which is exactly why the
+unconditional version broke the first eight levels.
+
+`bbqs_on` gates two things, and the second was missing entirely:
+
+1. The rebound: stepping onto a hot grill returns the player to the tile it came
+   from. Only the **body's** destination is tested, never the fork's.
+2. **`DoCook` returns immediately when grills are off**, so cooking happens only
+   inside a level.
+
+### The subtlety that made it fail twice
+
+A rebound sets `moved=False`, and `step` was short-circuiting on that — skipping
+settle-and-cook entirely. So the sausage got pushed onto the grill and never
+cooked.
+
+`moved` means *the player did not relocate*. It does not mean *nothing
+happened*. The early return is now taken only when the state is genuinely
+untouched (`result.state is state`). Any mechanic that moves the world without
+moving the player would have hit the same trap.
+
+### Result
+
+| Metric | Before | After |
+|---|---|---|
+| Levels completed | 8 | **16** |
+| Comely Hearth solved | key 70 | **key 51** (owner: 52) |
+| Comely Hearth left | key 70 | **key 52** (owner: 52) |
+| `all.dem` | stopped at 1922 | runs all 16,567 |
+
+Refusals remain at 35%, so divergence persists later in the run — but sixteen
+levels now complete, and Comely Hearth matches the owner's observation exactly.
