@@ -1801,3 +1801,48 @@ confirmed correct, the error lies somewhere in the journey.
 All three retractions trace to measuring the wrong thing. **Fix the map renderer
 before requesting another observation** — a wrong map is what produced the last
 one.
+
+
+## 12.27 Post-855 divergence bracketed to the first seven moves
+
+The owner played the world-sausage sequence from its start. **Checkpoint 1
+(key 8) fails**, with a precise reason:
+
+> The first W key results in no rotation, because the fork gets caught on the
+> plaque, which is the raised tile two tiles west of the sausage.
+
+The plaque is at world `(-8, -21, -1)` — `temple2j1` mask value **10**, a
+pedestal (§10.3).
+
+### The pedestal mechanic is already correct
+
+For a fork to catch on it, the player must be at `(-7, -20)` facing west when
+key 8 is pressed: turning north then sweeps the diagonal `(-8, -21)`, which is
+the plaque, and the turn is refused.
+
+This simulator already refuses that turn — `(-8, -21, -1)` reads solid, and the
+swept-diagonal collision test (§12.8) would fire. **No new mechanic is needed.**
+
+### The fault is the player's position
+
+At key 8 this model has the player at `(-6, -20)`, one tile too far east, so it
+sweeps `(-7, -21)` instead — which is clear, so the turn succeeds and the world
+sausage is pushed a move early.
+
+The player starts at `(-10, -20)`. Keys 1-7 are `A z A D D D D`:
+
+| Key | Input | This model |
+|---|---|---|
+| 1 | A | turn west |
+| 2 | z | undo, back to facing north |
+| 3 | A | turn west |
+| 4-7 | D D D D | four moves east, to (-6, -20) |
+
+For the player to end at `(-7, -20)` only **three** of those eastward moves may
+land — or one of keys 1-3 must consume a move this model spends differently.
+The undo at key 2 is the obvious suspect, being the first undo in the entire
+playthrough (§12.22: all 103 undos fall after move 855).
+
+**This is a seven-move bracket on a divergence that was previously 15,000 moves
+wide.** Everything after it — the sausage's whole journey, the fall at (1,-26),
+the 26-38% overworld refusal rate — is downstream of these seven inputs.
