@@ -5,7 +5,28 @@
 Complete **world 1** — all sixteen levels. A sausage then appears at the large
 structure (the one with the plaque). Do not move it yet.
 
-The key sequence below begins from the moment that sausage appears.
+**Then position yourself: 4 tiles west and 1 tile south of the sausage, facing
+north.** The key sequence begins from there.
+
+```
+  #########......##
+  ....###.......###
+  ..............###
+  ..#######.....###
+  ..#.#...#########
+  ####.....#.#SS###     <- the sausage, lying east-west
+  ########@########     <- you, facing north
+  .........########
+  #################
+```
+
+North is up. `@` is you, `SS` is the two tiles of the sausage, `#` is walkable
+ground and `.` is water or empty.
+
+That position is simply where the recorded playthrough happens to be standing
+when the sausage appears — it walks there while finishing the last level. If
+you arrive facing some other way, turn to face north before starting; a turn
+costs a move and would shift the whole sequence by one.
 
 ## Keys (102 moves)
 
