@@ -295,3 +295,27 @@ def test_surface_map_marks_override_terrain():
     state = GameState(entities=(g,), tileset=0)
     out = surface_map(state, {}, Coord(0, 0, 1), radius=1, marks={(0, 0): "@"})
     assert "@" in out
+
+
+def test_surface_map_ignores_the_player_and_sausages():
+    """Only terrain is surface.
+
+    The player occupies two cells, so its fork was drawn as a raised tile one
+    step above the ground beside it — spotted by the owner as a phantom step
+    four tiles west of the world sausage.
+    """
+    from ssr_env.render import surface_map
+
+    ground = [
+        Entity(pos=Coord(x, 0, 0), type=EntType.GROUND, id=10 + x, tileset=1)
+        for x in range(3)
+    ]
+    # Player standing at x=0 with its fork over x=1, both at z=1.
+    player = Entity(pos=Coord(0, 0, 1), type=EntType.PLAYER, id=1, direction=Direction.EAST)
+    sausage = Entity(pos=Coord(2, 0, 1), type=EntType.SAUSAGE, id=2, direction=Direction.EAST)
+    state = GameState(entities=(*ground, player, sausage), tileset=0)
+
+    out = surface_map(state, {}, Coord(0, 0, 1), radius=2).splitlines()
+    row = out[2]  # y=0, columns x=-2..2
+    assert row[3] == "0", "the fork must not read as raised terrain"
+    assert row[4] == "0", "a sausage must not read as raised terrain"

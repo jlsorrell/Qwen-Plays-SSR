@@ -126,8 +126,24 @@ def surface_map(
 
     `marks` maps (x, y) to a single character drawn instead of the height, for
     the player, sausages and any cell under discussion.
+
+    **Only terrain counts as surface.** Dynamic entities are skipped: the player
+    occupies two cells, so its fork was being drawn as a raised tile one step
+    above the ground beside it — which the owner spotted as a phantom step four
+    tiles west of the world sausage.
     """
-    from .geometry import solid_ent_at
+    from .geometry import is_solid, occupies
+    from .types import DYNAMIC_TYPES
+
+    def terrain_at(cell) -> bool:
+        for entity in state.entities:
+            if entity.type in DYNAMIC_TYPES and entity.type is not EntType.ISLAND:
+                continue
+            if occupies(entity, cell, state, masks, "") and is_solid(
+                entity, state.tileset
+            ):
+                return True
+        return False
 
     marks = marks or {}
     lo, hi = z_range
@@ -141,7 +157,7 @@ def surface_map(
                 continue
             top = None
             for z in range(centre.z + hi, centre.z + lo - 1, -1):
-                if solid_ent_at(state, Coord(x, y, z), masks, ""):
+                if terrain_at(Coord(x, y, z)):
                     top = z
                     break
             if top is None:

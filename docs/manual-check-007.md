@@ -1,14 +1,13 @@
-# Manual check 007 — the world sausage journey (map corrected)
+# Manual check 007 — the world sausage journey
 
-*The map in the previous version was drawn with a broken renderer that showed
-raised ground as water. This one renders the topmost solid surface in each
-column and has been verified against a structure of known shape.*
+*Map corrected twice: it now renders the topmost solid **terrain** per column.
+Earlier versions drew raised ground as water, and then drew the player's own
+fork as a raised tile.*
 
 ## Starting point
 
-Complete **world 1** — all sixteen levels. A sausage appears at the large
-structure with the plaque. Stand **4 tiles west and 1 tile south of it, facing
-north**, then play the keys below.
+Complete **world 1**. A sausage appears at the plaque structure. Stand **4 tiles
+west and 1 tile south of it, facing north**, then play the keys below.
 
 ```
 0....000010111..0000000
@@ -21,7 +20,7 @@ north**, then play the keys below.
 .................000000
 .....0000000.....000110
 .....0.0...000000000100
-...0000....1010SS000000
+...0000....0010SS000000
 ...00000000@00000000000
 ............0000000000.
 ..000000000000000000000
@@ -36,13 +35,9 @@ north**, then play the keys below.
 .....0000000.0000000000
 ```
 
-- `@` you, `S` the two tiles of the sausage
-- `0` ground level with you, `1` one step higher, `-` one lower, `.` nothing
-- north is up
-
-The big block of `0`s around and east of the sausage is the plaque structure's
-plaza — it is **flush** with the ground you walk on, not raised. The single `1`
-just west of the sausage is a raised block on that plaza.
+- `@` you, `S` the sausage's two tiles
+- `0` ground level with you, `1` one step up, `-` one down, `.` nothing
+- north is up. The `1` two tiles west of the sausage is the plaque pedestal.
 
 ## Keys (102 moves)
 
@@ -60,7 +55,7 @@ just west of the sausage is a raised block on that plaza.
  101-102   A W
 ```
 
-`z` is undo — there are two, at keys 2 and 49.
+`z` is undo — two of them, at keys 2 and 49.
 
 ## Checkpoints
 
@@ -77,12 +72,7 @@ Relative to where the sausage first appeared.
 
 ## Questions
 
-**1. Which checkpoint first disagrees?** Stop there — the rest is meaningless
-after a divergence, and knowing which one brackets the error to ten or twenty
-moves.
+**1. Which checkpoint first disagrees?** Stop there.
 
-**2. Does the map match now?** If it still looks wrong, that matters more than
-the checkpoints, and I would rather know before you play 102 moves.
-
-**3. Where is the sausage going?** If you can see the destination — another
-structure, a gap it bridges — that tells me what the journey is for.
+**2. Where is the sausage going?** The destination tells me what the journey
+is for, which is worth as much as the coordinates.
