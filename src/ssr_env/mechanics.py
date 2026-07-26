@@ -703,6 +703,43 @@ def is_solved(state: GameState) -> bool:
     return found and not state.lost
 
 
+#: How far the surrounding islands sink when a level is entered.
+#:
+#: The game pushes each non-target island down one cell per tick while
+#: `pushestotry` counts from 20, staggered by `id % 3` so they sink in waves.
+#: The staggering is animation; the settled outcome is a uniform drop, so this
+#: models it as a single displacement. `TryRaiseAll` restores them on exit,
+#: raising until `pos.z >= 0` or `Bottom() >= -2` — a symmetric restore, which
+#: is what pairing entry and exit gives us here.
+ISLAND_SINK_DEPTH = 20
+
+
+def sink_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+    """Lower every island except `target`. Mirrors `TryLowerAll`."""
+    return with_entities(
+        state,
+        tuple(
+            replace(e, pos=e.pos + Coord(0, 0, -depth))
+            if e.type is EntType.ISLAND and e.dat != target
+            else e
+            for e in state.entities
+        ),
+    )
+
+
+def raise_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+    """Restore every island except `target`. Mirrors `TryRaiseAll`."""
+    return with_entities(
+        state,
+        tuple(
+            replace(e, pos=e.pos + Coord(0, 0, depth))
+            if e.type is EntType.ISLAND and e.dat != target
+            else e
+            for e in state.entities
+        ),
+    )
+
+
 def check_overworld_entry(
     state: GameState, meta: dict, masks=None
 ) -> GameState:
@@ -748,12 +785,15 @@ def check_overworld_entry(
             )
             for i, s in enumerate(spawns)
         )
-        return with_entities(
+        entered = with_entities(
             entered,
             entered.entities + sausages,
             overworld=False,
             pushtargetlevel=name,
         )
+        # `SubworldTransition` calls `TryLowerAll`: every other island sinks, so
+        # only this level is reachable while you are inside it.
+        return sink_other_islands(entered, name)
     return state
 
 
@@ -807,10 +847,12 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
         return state
 
     remaining = tuple(e for e in state.entities if e.type is not EntType.SAUSAGE)
-    return with_entities(
+    left = with_entities(
         state,
         remaining,
         overworld=True,
         pushtargetlevel="",
         completed=state.completed | {name},
     )
+    # `SubworldLeave` calls `TryRaiseAll`: the surrounding islands come back up.
+    return raise_other_islands(left, name)
