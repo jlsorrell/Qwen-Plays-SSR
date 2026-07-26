@@ -1517,3 +1517,50 @@ Phase 1's oracle — movement, pushing, rolling, cooking, gravity, win detection
 are all exercised inside levels and all correct. Overworld navigation matters
 only for replaying `all.dem` as one continuous session, which was always a
 validation instrument rather than the deliverable.
+
+
+## 12.21 The `.dem`-to-level mapping is derivable, not searchable
+
+`all.dem` is the **concatenation of the 120 level files in world order** — their
+lengths sum to exactly 16,567, and the segment boundaries coincide with level
+entries in replay:
+
+```
+1-0  moves   1..15   -> enters Lachrymose Head at 15
+1-1  moves  16..91   -> enters Southjaunt at 91
+1-2  moves  92..128  -> enters Infant's Break at 128
+```
+
+So segment `N` is the stretch that **solves** one level, and `1-0` is the
+opening walk. The mapping falls out of one replay pass rather than the 120-way
+brute-force search in `replay.find_matching_level`.
+
+`tools/derive_mapping.py` recovers it. Sixteen pairings are established so far:
+
+| `.dem` | Level | Name |
+|---|---|---|
+| 1-1 | level47 | Lachrymose Head |
+| 1-2 | level56 | Southjaunt |
+| 1-3 | level49 | Infant's Break |
+| 1-4 | level23 | Little Fire |
+| 1-5 | generated1 | Bay's Neck |
+| 1-6 | level28 | Burning Wharf |
+| 1-7 | level26 | Eastreach |
+| 1-8 | level16 | Comely Hearth |
+| 1-9 | level11 | Happy Pool |
+| 1-10 | level24 | Maiden's Walk |
+| 1-11 | level46 | Fiery Jut |
+| 1-12 | level27 | Merchant's Elegy |
+| 1-13 | level4 | Seafinger |
+| 1-14 | level9b8 | The Clover |
+| 1-15 | level41 | Inlet Shore |
+| 1-16 | level35 | The Anchorage |
+
+**This reprioritises the overworld.** Coverage is bounded by how far the replay
+tracks, so the remaining ~104 pairings are blocked on overworld traversal
+(§12.20) — which is therefore not a side quest but the path to the Phase 0
+acceptance gate.
+
+Note 13 of the 120 segments do not match `all.dem` byte-for-byte, beginning at
+`3-4`, so the world-order assumption breaks somewhere in world 3. Worth
+resolving before trusting derived pairings beyond world 1.
