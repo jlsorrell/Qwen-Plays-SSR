@@ -1257,3 +1257,31 @@ never press into a wall, so a rising rate localises divergence far better than
 the move number reached. It rises sharply after move 414, and the next level
 entry does not occur until move 1835 — so whatever goes wrong, it goes wrong on
 leaving Comely Hearth or shortly after.
+
+## 12.15 The post-414 divergence — not yet localised
+
+Investigated and *not* resolved. Recording what was ruled out so it is not
+re-investigated.
+
+**Not the refusals inside Comely Hearth.** Moves 406-408 and 412 are refused
+with "no ground", and that is correct: the level's north edge genuinely has void
+at x=0,1. Pressing into a wall repeatedly is normal in a recorded playthrough,
+and the level solves and is left cleanly at move 414.
+
+**Not level entry or exit.** Eight levels are entered and left correctly, and
+the ninth entry is detected when the player eventually reaches it at move 1835.
+
+**The symptom** is that after leaving Comely Hearth the player oscillates in a
+small region — roughly x -1..3 at y -9 — for hundreds of moves. It comes within
+four cells of Happy Pool's entry at (-5,-10) facing south around move 431, then
+turns back east. The refusal rate climbs from 1% to 10% over moves 400-600 and
+to 30% beyond 1000.
+
+That pattern says the player's position has drifted by a small amount relative
+to the recording, so subsequent inputs are being applied from the wrong cell.
+A single wrong move around 400-430 would produce exactly this.
+
+**What would settle it:** an observation of where the character is shortly after
+Comely Hearth is completed — say at move 430 — expressed as a panel on whichever
+island it is standing on. Nothing else distinguishes "drifted by one cell" from
+"drifted by several".
