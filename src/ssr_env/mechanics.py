@@ -680,3 +680,57 @@ def is_solved(state: GameState) -> bool:
         if any(face in (0, 3) for face in entity.faces):
             return False
     return found and not state.lost
+
+
+def check_overworld_entry(
+    state: GameState, meta: dict, masks=None
+) -> GameState:
+    """Enter a level when standing on its start cell facing its start direction.
+
+    Mirrors `GameState.CheckOverworldGhosts`, which is what actually triggers
+    `SubworldTransition`: for each level, compare the player's position against
+    that level's recorded start pose offset by its island entity, and require the
+    facing to match too. Walking onto the cell is not enough — you enter only
+    once you turn to the right heading, which is why the observed playthrough
+    steps on with the fork east and drops in on the next press.
+
+    On entry: the island's `cookdata` flips to 1 (see §10.5, which stops its
+    sausage footprints being solid) and that level's sausages are spawned from
+    the recorded spawn table.
+
+    Source: `GameState.cs:458 CheckOverworldGhosts`, `GameState.cs:492
+    SubworldTransition`, `GameState.cs SpawnSubworldSausages`.
+    """
+    if not state.overworld:
+        return state
+    player = state.player
+    islands = {e.dat: e for e in state.entities if e.type is EntType.ISLAND}
+
+    for name, pose in meta.get("player", {}).items():
+        island = islands.get(name)
+        if island is None or name in state.completed:
+            continue
+        start = island.pos + Coord(*pose["pos"])
+        if player.pos != start or player.direction is not Direction(pose["direction"]):
+            continue
+
+        entered = state.replace_entity(replace(island, cookdata=1))
+        spawns = meta.get("sausages", {}).get(name, [])
+        next_id = max((e.id for e in entered.entities), default=0) + 1
+        sausages = tuple(
+            Entity(
+                pos=island.pos + Coord(*s["pos"]),
+                type=EntType.SAUSAGE,
+                id=next_id + i,
+                direction=Direction(s["direction"]),
+                dat="M; ; ",
+            )
+            for i, s in enumerate(spawns)
+        )
+        return with_entities(
+            entered,
+            entered.entities + sausages,
+            overworld=False,
+            pushtargetlevel=name,
+        )
+    return state
