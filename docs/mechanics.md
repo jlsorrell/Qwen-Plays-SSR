@@ -1139,3 +1139,37 @@ owner observed it, and `all.dem` reaches move 112 (was 36).
 4. What is `stuckto`? Suspected: sausage skewered on the fork.
 5. Full enumeration of `lostreason` strings.
 6. Does `spectralsausage` follow sausage rules with an exception, or its own set?
+
+## 12.11 Verified against real play — moves 1-77
+
+Four checkpoints confirmed by the owner against the real game, all matching:
+
+| After move | Observed | Simulated |
+|---|---|---|
+| 22 | panel (3,2) facing east | same |
+| 35 | panel (2,1) facing north | same |
+| 50 | panel (3,4) facing west | same |
+| 70 | panel (1,1) facing south | same |
+
+Panels use the owner's numbering: NW corner (1,1), south of it (2,1), east of
+it (1,2).
+
+**Moves 1-77 of `all.dem` are verified**, ending with Lachrymose Head solved at
+move 77 — the owner independently confirms the level completes before move 90.
+This stretch exercises the overworld walk, level entry, sausage spawning, both
+turn phases, pushing, rolling, cooking, gravity and the win condition.
+
+It is the first part of this project that is verified rather than merely
+self-consistent.
+
+## 12.12 Next: leaving a solved level
+
+`all.dem` continues past move 77, so the replay must handle departure.
+`CheckOnLevelExit` fires when `Won() && player.pos == exitPos && player.direction
+== exitDir && exitUp`, calling `SubworldLeave`: despawn the level's sausages,
+`CompleteLevel(name)`, restore `overworld = true`, and `TryRaiseAll`.
+
+`exitPos`/`exitDir` come from `GetExitPos(pushtargetlevel, ...)` during
+`SubworldTransition`, which is not yet transcribed. Without it the player keeps
+walking inside a finished level and eventually falls off the island — the
+move-112 drowning previously mistaken for a mechanics failure.
