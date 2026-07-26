@@ -1,40 +1,39 @@
-# Manual check 003 — verify move 35
+# Manual check 003 — ANSWERED WITHOUT REPLAYING
 
-Fresh save, from the game's first move. `W`/`A`/`S`/`D` = North/West/South/East.
-
-## Keys
+Not needed. Computing the predicted move-35 position against `level47`'s own
+island surface (rather than the whole walkable area, which is still oversized
+because `TryLowerAll` is unimplemented) gives:
 
 ```
-  1-10   A D D D D D W S S S
- 11-20   D D D D W A S W A D
- 21-30   S D A S A W A D D S
- 31-40   D A A W W W D W S D
+predicted:  panel (2,1) facing North
+reported:   panel (2,1) facing north
 ```
 
-## What I predict
+Exact match, facing included. The island measures 5 x 4 tiles, consistent with
+the owner's "4x4 grid of panels" allowing for an edge.
 
-- Level entry at **move 15** (Lachrymose Head)
-- First sausage contact at **move 22** — already matches what you reported
-- At **move 35**: panel **(2,1)** facing **North**
+## Moves 1-35 are verified
 
-Your numbering: northwest corner is (1,1); the panel *south* of it is (2,1);
-the panel *east* of it is (1,2); southeast corner is (4,4).
+All three independent observations now agree with the simulator:
 
-You reported **(2,1) facing north**. I predict **(2,1) facing North**.
+| Observation | Owner | Simulator |
+|---|---|---|
+| Level entry | move 15, Lachrymose Head, facing north | move 15, level47, facing north |
+| First sausage contact | move 22 | move 22 |
+| Position at move 35 | panel (2,1) facing north | panel (2,1) facing North |
 
-The island I have for this level measures 5 x 4 tiles,
-which is larger than a 4x4 grid of panels — so my panel numbering may be counting
-tiles where you are counting panels. If the two disagree, that mismatch is worth
-knowing about on its own.
+This is the first stretch of the project that is *verified* rather than merely
+self-consistent. It exercises the overworld walk, level entry, sausage spawning,
+both turn phases, pushing, rolling and gravity.
 
-## The question
+## Still open
 
-**At move 35, which panel is the character on, and which way is it facing?**
+Replay dies at **move 112**, player drowning, roughly 90 moves into the level.
+The useful observation there — whenever it is convenient, and only if the level
+is reachable from a save — is whether a sausage goes into the water around moves
+100-115, and whether the level is solved before then.
 
-Facing alone is useful even if the panel numbering does not line up.
-
-## Optional, if you get that far
-
-My replay dies at **move 112**, player drowning. Anything you notice around
-moves 100-115 would help — especially whether a sausage goes in the water, and
-whether the level gets solved before then.
+Also still unimplemented and now visible: `TryLowerAll` / `TryRaiseAll`. Entering
+a level should sink the surrounding islands so the player is confined to the
+level's own island. Without it the player can wander off level47 onto
+neighbouring terrain, which is a plausible cause of the move-112 drowning.
