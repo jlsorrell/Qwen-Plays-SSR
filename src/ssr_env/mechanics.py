@@ -178,7 +178,15 @@ def try_pivot_turn(
     )
 
     player = state.player
-    pivoted = replace(player, pos=player.pos + pushdir.delta, direction=target_facing)
+    landing = player.pos + pushdir.delta
+    # A pivot displaces the player, so it is subject to the same rule as walking:
+    # you cannot end up over void. Without this the player pivots off the island
+    # and drowns, which is not something the real game permits.
+    if not solid_ent_at(state, landing + Direction.DOWN.delta, masks, level_name):
+        return StepResult(
+            state=state, moved=False, reason=f"no ground to pivot onto at {tuple(landing)}"
+        )
+    pivoted = replace(player, pos=landing, direction=target_facing)
     return StepResult(state=state.replace_entity(pivoted))
 
 
