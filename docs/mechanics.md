@@ -994,11 +994,45 @@ to it, decorative, or translating in lockstep with it. Island-vs-island pairs go
 through the `projectioncompatibilities` table — which the extractor currently
 reads past and discards.
 
-To finish this: transcribe `Entity.Occupancy()`, `RoughOccupancyBounds`,
-`CalcBoxNeighbours`, and capture `projectioncompatibilities` in the extractor.
-`Occupancy()` matters most, since a turning entity's footprint covers the swept
-arc rather than just its destination — which is very likely why the real game
-allows a turn my simulator refuses.
+### `Entity.Occupancy()` — TRANSCRIBED
+
+A **rotating extended entity** occupies exactly three cells:
+
+| Cell | `entering` |
+|---|---|
+| `pos` (body) | false |
+| `pos + movement.from` (fork's old cell) | false |
+| `pos + movement.to` | **true** |
+
+**`movement.to` is the swept diagonal**, because `TryTurn` passes
+`RotBetween(old, new)` as `to`. So a turn's only *new* cell is the diagonal —
+the fork's final cardinal destination is never part of a rotation's occupancy.
+
+A **translating** entity occupies, for each cell of its `SourceFootprint()`, that
+cell (`entering: false`) plus the cell one step along `movement.direction`
+(`entering: true`).
+
+Each entry also carries a sub-tick `position` fraction, computed as
+`(den - remaining.num * speed) / den`, and the movement's `speed`.
+
+### Why this is still not implemented
+
+Both single-cell rules are wrong, and tested:
+
+- Colliding on the **cardinal** fork target makes the player pivot away from
+  level entry cells whose neighbouring sausage footprints are solid (§10.5),
+  losing the entry at move 11.
+- Colliding on the **diagonal** fixes move 11 — the turn correctly happens in
+  place — but regresses move 7, which then pivots instead of turning.
+
+So the discriminator is not *which* cell but the `entering` flag and the
+`position` fraction: a cell being entered part-way through a rotation evidently
+does not collide the way a fully-occupied cell does. That is the sub-tick model
+deferred in §1, and it cannot be approximated away here.
+
+Remaining: `BuildOccupancy`, the `Occupancy` struct's semantics (what `entering`
+and `position` do in `Collides`), `RoughOccupancyBounds`, `CalcBoxNeighbours`,
+and `projectioncompatibilities` in the extractor for island-vs-island pairs.
 
 ## 13. Open questions
 
