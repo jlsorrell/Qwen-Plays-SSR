@@ -1323,6 +1323,30 @@ sausage moves the exit; rolling it flips `exitUp` and can invert `exitDir`.
 `CheckOnLevelExit` requires `exitUp`, so a roll can also switch the exit off and
 on.
 
-This simulator treats the exit pose as fixed at the entry pose, which is correct
-only when nothing is underneath it. That is enough to explain leaving a solved
-level late, and it is the next thing to implement.
+### Implemented — but NOT the cause of the Comely Hearth divergence
+
+`exitAttachment` is now modelled: the exit pose is recorded on entry along with
+whatever sits beneath it, a slide of the carrying sausage carries the exit, and
+a roll flips `exit_up` (switching the exit off until a further roll flips it
+back) and inverts `exit_dir` when the exit faces `OrthoTo` the sausage.
+
+Note `OrthoTo` is `!ParallelTo` **without** `NormalTo`'s `None` guards, so it is
+true when either direction is `None`. Only `OrthoTo` appears in this rule, and
+substituting `NormalTo` would change when the exit flips.
+
+**The hypothesis was wrong for this level.** Comely Hearth's exit has nothing
+beneath it — `exit_attachment` is `None` on entry — so the mechanic never fires
+and cannot explain leaving at key 70 instead of ~52. It is implemented because
+it is a real rule that will matter on some level, not because it fixed this one.
+
+### Still unexplained
+
+Both the owner and the simulator solve Comely Hearth at key 51-52, so cooking,
+pushing and rolling all agree. But by key 51 the simulated player is at panel
+(3,3) and heads west, never returning to the exit at (2,3) facing west until key
+70. The real player reaches Happy Pool by key 86.
+
+Since the level solves at the same moment, the *sausages* are being handled
+correctly; it is the **player's own path** that differs. The distinguishing
+observation would be the player's panel at around key 50 — the manual check
+asked for it at keys 10/30/50 and those were not reported.

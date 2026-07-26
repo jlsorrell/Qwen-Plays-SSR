@@ -36,6 +36,14 @@ class GameState:
     pushtargetlevel: str = ""
     #: Levels already completed; they no longer trigger entry.
     completed: frozenset = frozenset()
+    #: Where the player must stand, and face, to leave a solved level. Normally
+    #: the entry pose — but it rides a sausage if one sits beneath it (§12.16).
+    exit_pos: Coord | None = None
+    exit_dir: Direction | None = None
+    #: `CheckOnLevelExit` requires this. A roll of the carrying sausage flips it.
+    exit_up: bool = True
+    #: Entity id of the sausage the exit rests on, or None.
+    exit_attachment: int | None = None
     #: Lazily built cell -> static entity index, mirroring the game's
     #: `BuildStaticCaches`/`StaticEntAt`. Excluded from equality and the state
     #: key; it is a cache, not state. Needed because the composite overworld has

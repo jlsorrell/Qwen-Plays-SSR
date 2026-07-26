@@ -88,6 +88,16 @@ class Direction(IntEnum):
             return False
         return self is other or self.inverse() is other
 
+    def ortho_to(self, other: "Direction") -> bool:
+        """Mirrors `DirectionUtil.OrthoTo`: simply `!ParallelTo`.
+
+        Deliberately *not* `normal_to`. `NormalTo` additionally requires neither
+        direction to be `None`; `OrthoTo` has no such guard, so it returns true
+        when either is `None`. Only `OrthoTo` is used by the exit-attachment
+        rule (§12.16), where that difference decides whether the exit flips.
+        """
+        return not self.parallel_to(other)
+
     def normal_to(self, other: "Direction") -> bool:
         """Mirrors `NormalTo`: not parallel, and neither is None."""
         return (

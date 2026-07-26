@@ -109,3 +109,68 @@ def test_the_full_cycle_is_idempotent_once_complete():
 def test_exit_is_a_no_op_in_the_overworld():
     st = world()
     assert check_level_exit(st, META) is st
+
+
+def entered_with_exit_on_sausage():
+    """A level whose exit cell sits directly on top of a sausage."""
+    island = Entity(pos=ISLAND_POS, type=EntType.ISLAND, id=1, dat="lvl")
+    player = Entity(pos=ENTRY, type=EntType.PLAYER, id=2, direction=FACING)
+    carrier = Entity(
+        pos=ENTRY + Direction.DOWN.delta,
+        type=EntType.SAUSAGE,
+        id=3,
+        direction=Direction.EAST,
+    )
+    meta = {
+        "player": {"lvl": {"pos": LOCAL, "direction": int(FACING)}},
+        "sausages": {"lvl": []},
+    }
+    return check_overworld_entry(
+        GameState(entities=(island, player, carrier)), meta
+    ), meta
+
+
+def test_exit_attaches_to_a_sausage_beneath_it():
+    state, _ = entered_with_exit_on_sausage()
+    assert state.exit_attachment == 3
+    assert state.exit_pos == ENTRY
+    assert state.exit_up
+
+
+def test_exit_does_not_attach_when_nothing_is_beneath():
+    entered = check_overworld_entry(world(), META)
+    assert entered.exit_attachment is None
+
+
+def test_sliding_the_carrier_moves_the_exit():
+    """A slide carries the exit without flipping it."""
+    from ssr_env.mechanics import try_push
+
+    state, _ = entered_with_exit_on_sausage()
+    after = try_push(state, state.by_id(3), Direction.EAST)
+    assert after.exit_pos == ENTRY + Direction.EAST.delta
+    assert after.exit_up
+    assert after.exit_dir is FACING
+
+
+def test_rolling_the_carrier_flips_the_exit():
+    """A roll flips exit_up, which switches the exit off until it flips back."""
+    from ssr_env.mechanics import try_push
+
+    state, _ = entered_with_exit_on_sausage()
+    rolled = try_push(state, state.by_id(3), Direction.NORTH)
+    assert rolled.exit_pos == ENTRY + Direction.NORTH.delta
+    assert not rolled.exit_up
+
+
+def test_an_exit_that_is_flipped_off_cannot_be_used():
+    """CheckOnLevelExit requires exitUp."""
+    state, meta = entered_with_exit_on_sausage()
+    flipped = replace(state, exit_up=False)
+    assert not check_level_exit(flipped, meta).overworld
+
+
+def test_the_exit_pose_defaults_to_the_entry_pose():
+    entered = check_overworld_entry(world(), META)
+    assert entered.exit_pos == ENTRY
+    assert entered.exit_dir is FACING

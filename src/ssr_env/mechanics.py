@@ -541,9 +541,22 @@ def try_push(
             state = state.replace_entity(
                 replace(fork, direction=fork.direction.inverse())
             )
+    # If this sausage carries the exit, the exit travels with it. A roll (torsion
+    # non-zero) additionally flips `exit_up`, and inverts `exit_dir` when the
+    # exit faces orthogonally to the sausage. Mirrors `Movement.Resolve`'s
+    # Translation branch. See §12.16.
+    after = state.replace_entity(moved)
+    if state.exit_attachment == entity.id and state.exit_pos is not None:
+        updated = {"exit_pos": state.exit_pos + direction.delta}
+        if rolls:
+            updated["exit_up"] = not state.exit_up
+            if state.exit_dir is not None and state.exit_dir.ortho_to(entity.direction):
+                updated["exit_dir"] = state.exit_dir.inverse()
+        after = replace(after, **updated)
+
     # A pushed entity left unsupported simply falls; `settle` handles it and
     # marks a drowned sausage lost.
-    return settle(state.replace_entity(moved), masks, level_name)
+    return settle(after, masks, level_name)
 
 
 def try_move_player(
@@ -791,8 +804,20 @@ def check_overworld_entry(
             overworld=False,
             pushtargetlevel=name,
         )
-        # `SubworldTransition` calls `TryLowerAll`: every other island sinks, so
-        # only this level is reachable while you are inside it.
+        # `SubworldTransition` records the exit pose, and notes whether it rests
+        # on a sausage — if so the exit rides that sausage (§12.16).
+        below = ent_at(entered, start + Direction.DOWN.delta, masks, level_name="")
+        entered = replace(
+            entered,
+            exit_pos=start,
+            exit_dir=Direction(pose["direction"]),
+            exit_up=True,
+            exit_attachment=below.id
+            if below is not None and below.type is EntType.SAUSAGE
+            else None,
+        )
+        # `TryLowerAll`: every other island sinks, so only this level is
+        # reachable while you are inside it.
         return sink_other_islands(entered, name)
     return state
 
@@ -836,10 +861,16 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
     name = state.pushtargetlevel
     if name in state.completed or not is_solved(state):
         return state
-    pose = level_pose(state, name, meta)
-    if pose is None:
+    exit_pos, exit_dir = state.exit_pos, state.exit_dir
+    if exit_pos is None or exit_dir is None:
+        pose = level_pose(state, name, meta)
+        if pose is None:
+            return state
+        exit_pos, exit_dir = pose
+    # `CheckOnLevelExit` requires `exitUp`; a roll of the carrying sausage can
+    # switch the exit off, and a second roll switches it back on.
+    if not state.exit_up:
         return state
-    exit_pos, exit_dir = pose
     player = state.player
     if player.pos != exit_pos or player.direction is not exit_dir:
         return state
@@ -853,6 +884,10 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
         overworld=True,
         pushtargetlevel="",
         completed=state.completed | {name},
+        exit_pos=None,
+        exit_dir=None,
+        exit_up=True,
+        exit_attachment=None,
     )
     # `SubworldLeave` calls `TryRaiseAll`: the surrounding islands come back up.
     return raise_other_islands(left, name)
