@@ -1482,5 +1482,38 @@ evaluated, so at key 44 sausage 206 moves (4,4) -> (5,4) and cooks
 (0,0,1,1) -> (1,0,1,1) while the player stays at (2,4).
 
 So §12.18's rebound is **not** over-firing, and the suspicion recorded above is
-discharged. The divergence in The Anchorage lies somewhere after key 44;
-remaining checkpoints are keys 50, 70 and 90.
+discharged.
+
+### The Anchorage is correct end to end
+
+Checkpoints at keys 10, 20, 30, 43, 50, 70 and 90 all confirmed, and the owner
+reports the level completing and returning to the main island at key 113 —
+matching this simulator, which solves at 108 and leaves at 113.
+
+**So "divergence begins at move 786" was wrong.** The 14% refusal rate measured
+inside The Anchorage was legitimate: a recorded playthrough does press into
+walls and hot grills, especially in a level twice the size of any before it.
+
+## 12.20 The levels are right; the overworld is not
+
+Splitting the refusal rate by context settles where the remaining fault lies:
+
+| Moves | Inside a level | On the overworld |
+|---|---|---|
+| 800-899 | **2%** | 29% |
+| 900-1599 | — | 24-43% |
+
+**Sixteen levels are reproduced correctly**, verified against the owner at
+eleven checkpoints across Lachrymose Head, Comely Hearth and The Anchorage. The
+in-level refusal rate of 2% is consistent with a human recording.
+
+**After leaving The Anchorage at move 855, no further level is ever entered.**
+The remaining ~15,700 inputs are spent on the overworld with a quarter to a
+half of them refused. Whatever is wrong is in overworld traversal, not in any
+level mechanic.
+
+This is a much better place to be than it sounds: the mechanics needed for
+Phase 1's oracle — movement, pushing, rolling, cooking, gravity, win detection —
+are all exercised inside levels and all correct. Overworld navigation matters
+only for replaying `all.dem` as one continuous session, which was always a
+validation instrument rather than the deliverable.
