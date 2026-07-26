@@ -865,6 +865,10 @@ detail — the replay suite is the exit gate for the whole phase.
 
 ## 12.6 Overworld replay — the new acceptance path
 
+**PARTLY WRONG — see `docs/differential-test-001-results.md`.** One coordinate
+space, but not one play space: sausages are issued on level entry and levels are
+subworlds you drop into. The geometry below is right; the state model is not.
+
 **The overworld is not a separate scene.** Every level's island chunk sits at
 its offset in one connected space; `merged_binary`'s `offsets` table is that
 layout. `level.load_overworld` builds it: 17,154 entities spanning x -107..172,
