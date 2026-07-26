@@ -311,21 +311,18 @@ def load_overworld(levels_dir: Path = LEVELS_DIR) -> GameState:
     renumbered = tuple(replace(e, id=i) for i, e in enumerate(merged))
     state = GameState(entities=renumbered, tileset=0)
 
-    # Four of the 220 sausages start with no support anywhere beneath them.
-    # These are presumed to be world sausages that `IssueWorldSausages` spawns
-    # on reaching a shrine rather than pieces already in play — the game does not
-    # apply gravity on load, so it never drops them. Keeping them would make the
-    # very first settle declare the world lost. Dropping them is an assumption;
-    # if replay later diverges near a shrine, revisit it.
-    from .geometry import under
-
-    masks_all = load_island_masks(levels_dir)
-    grounded = tuple(
-        e
-        for e in state.entities
-        if e.type is not EntType.SAUSAGE or under(e, state, masks_all, "")
+    # No sausages in the overworld.
+    #
+    # Confirmed against the real game (docs/differential-test-001-results.md):
+    # the opening 15 moves touch no sausage at all, and first contact is at move
+    # 22 — after entering a level. Sausages are *issued* on level entry
+    # (`IssueWorldSausages`, `SpawnSubworldSausages`) and despawned on leaving
+    # (`DespawnSubworldSausages`). Merging all 220 into the overworld put them
+    # underfoot during the overworld walk and desynchronised everything.
+    state = GameState(
+        entities=tuple(e for e in state.entities if e.type is not EntType.SAUSAGE),
+        tileset=0,
     )
-    state = GameState(entities=grounded, tileset=0)
 
     players = state.of_type(EntType.PLAYER)
     if players:

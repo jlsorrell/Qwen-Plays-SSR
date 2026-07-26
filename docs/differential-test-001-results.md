@@ -58,3 +58,39 @@ are removed from the overworld, before touching the turn rules.
 2. Model the subworld transition, so "drop into the level" is a state change.
 3. Re-run and compare against these observations: no sausage contact before
    move 22, level entry at move 15, player at panel (2,1) facing north at 35.
+
+
+## Follow-up: fix 1 applied
+
+Sausages removed from the overworld. This **eliminated the false pushes** — the
+opening walk no longer touches anything, matching the observation.
+
+It also confirmed the moves 11-14 diagnosis: with no sausage in the way, the
+turn at move 10 now succeeds and the player walks east, exactly as observed.
+That was a symptom, not an independent turn bug, and no turn rule needed changing.
+
+**New blocker: the overworld surface has gaps.** Replay now drowns at move 12,
+walking east from (2,-4,-1) into void — ground the real game clearly has, since
+the observation has the player continuing east along the bottom panel to the
+first level's entrance.
+
+Diagnosis so far:
+
+- The walkable surface is a **mix of sources at different z**. `level49`
+  ("Infant's Break", offset [1,-4,0]) contributes its island mask at z=-4 and
+  z=-3, well below the player's floor at z=-2. The floor there comes instead
+  from that level's 11 `GROUND` entities, which stop at x=2.
+- So `load_overworld` is assembling real geometry but an **incomplete surface**.
+
+Candidates, untested:
+
+1. Terrain is post-processed on load. `MetaGameState.NormalizeState` and
+   `RegenIslands` run after `LoadBinary`, and the assembly has `IslandMeshGen`,
+   `BlockSculpt` and `Bipartite` classes. Some of the walkable surface may be
+   *generated* rather than stored.
+2. A level whose ground should cover that span is missing from the merge, or is
+   placed at the wrong offset.
+3. The overworld's own `gamestate` string — which extracts as empty — may not be
+   empty in the way assumed, and may carry connecting terrain.
+
+Candidate 1 is the most likely and the cheapest to check: read `RegenIslands`.
