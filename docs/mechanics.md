@@ -1189,3 +1189,32 @@ Verified in replay: `all.dem` enters Lachrymose Head at move 15, solves it at
 
 Not modelled: `TryRaiseAll`/`TryLowerAll` (the terrain rising and sinking) and
 `pushestotry`. Neither has yet affected a replay outcome.
+
+## 12.13 Full-length replay — runs, but does not track
+
+`all.dem` now executes all 16,567 inputs without a hard failure. **This is not
+the acceptance criterion and should not be mistaken for one.** Measured:
+
+| Metric | Value |
+|---|---|
+| Moves accepted | 10,904 / 16,567 (66%) |
+| Moves refused | 5,663 (34%) — 5,286 "no ground", 222 pivot-onto-void, 155 blocked |
+| Levels entered | **1** |
+| Levels completed | **1** (Lachrymose Head) |
+
+The player enters one level, solves it, leaves, and then wanders the overworld
+for the remaining ~16,000 inputs, refusing a third of them. The playthrough is
+not being tracked; the simulation has simply stopped failing loudly.
+
+**A silent divergence is worse than a crash**, because the earlier failures were
+each a precise pointer to a missing mechanic. The refusal rate is the honest
+signal now: on a correct simulator it should be near zero, since a recorded
+human playthrough rarely presses into walls 34% of the time.
+
+Two things follow:
+
+1. **The refusal rate is the metric to drive down**, not the move count reached.
+2. `TryLowerAll`/`TryRaiseAll` are the most likely cause. Entering a level sinks
+   the surrounding terrain and leaving raises it; without that the overworld
+   geometry after the first level is wrong, so the player is walking a landscape
+   that no longer matches what the recording assumed.
