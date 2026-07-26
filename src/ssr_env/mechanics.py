@@ -655,71 +655,28 @@ def all_cooked(state: GameState) -> bool:
 
 
 def is_solved(state: GameState) -> bool:
-    """All sausages cooked on all four faces, and the player back at its start.
+    """Whether every sausage is cooked. Mirrors `GameState.Won`.
 
-    The face criterion is `CheckGameWon`: 0 (raw) or 3 (burnt) fails.
+    Every face of every sausage must be 1 or 2. Face 0 is raw and face 3 is
+    burnt; either loses. At least one sausage must count, none may be below
+    z = -3, and the state must not already be lost.
 
-    The return-to-start half is the game's level-exit test, whose exact form
-    (`CheckOnLevelExit`, `exitPos`/`exitDir`/`exitAttachment`) is only partly
-    transcribed — see docs/mechanics.md §11. Position is required; facing is not,
-    because it is not yet established whether the exit checks direction.
+    **There is no return-to-start requirement here.** That belongs to
+    `CheckOnLevelExit`, which additionally requires the player to stand at the
+    level's exit pose — a separate condition for *leaving* a solved level, not
+    for solving it. §11 previously conflated the two.
+
+    Sausages above z = 8, or whose `dat` begins 'S', are skipped by the game.
     """
-    if state.lost or not all_cooked(state):
-        return False
-    if state.start_pos is None:
-        return False
-    return state.player.pos == state.start_pos
-
-
-def check_overworld_entry(
-    state: GameState, meta: dict, masks=None
-) -> GameState:
-    """Enter a level when standing on its start cell facing its start direction.
-
-    Mirrors `GameState.CheckOverworldGhosts`, which is what actually triggers
-    `SubworldTransition`: for each level, compare the player's position against
-    that level's recorded start pose offset by its island entity, and require the
-    facing to match too. Walking onto the cell is not enough — you enter only
-    once you turn to the right heading, which is why the observed playthrough
-    steps on with the fork east and drops in on the next press.
-
-    On entry: the island's `cookdata` flips to 1 (see §10.5, which stops its
-    sausage footprints being solid) and that level's sausages are spawned from
-    the recorded spawn table.
-
-    Source: `GameState.cs:458 CheckOverworldGhosts`, `GameState.cs:492
-    SubworldTransition`, `GameState.cs SpawnSubworldSausages`.
-    """
-    if not state.overworld:
-        return state
-    player = state.player
-    islands = {e.dat: e for e in state.entities if e.type is EntType.ISLAND}
-
-    for name, pose in meta.get("player", {}).items():
-        island = islands.get(name)
-        if island is None or name in state.completed:
+    found = False
+    for entity in state.entities:
+        if entity.type is not EntType.SAUSAGE:
             continue
-        start = island.pos + Coord(*pose["pos"])
-        if player.pos != start or player.direction is not Direction(pose["direction"]):
+        if entity.pos.z > 8 or entity.dat.startswith("S"):
             continue
-
-        entered = state.replace_entity(replace(island, cookdata=1))
-        spawns = meta.get("sausages", {}).get(name, [])
-        next_id = max((e.id for e in entered.entities), default=0) + 1
-        sausages = tuple(
-            Entity(
-                pos=island.pos + Coord(*s["pos"]),
-                type=EntType.SAUSAGE,
-                id=next_id + i,
-                direction=Direction(s["direction"]),
-                dat="M; ; ",
-            )
-            for i, s in enumerate(spawns)
-        )
-        return with_entities(
-            entered,
-            entered.entities + sausages,
-            overworld=False,
-            pushtargetlevel=name,
-        )
-    return state
+        if entity.pos.z < -3:
+            return False
+        found = True
+        if any(face in (0, 3) for face in entity.faces):
+            return False
+    return found and not state.lost

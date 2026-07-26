@@ -533,15 +533,43 @@ def test_a_burnt_face_is_not_cooked():
     assert not all_cooked(flat(width=8, height=8, extra=(s,)))
 
 
-def test_solved_requires_returning_to_the_start_position():
+def test_winning_does_not_require_returning_to_the_start():
+    """`Won()` checks cooking alone.
+
+    Returning to the start pose is widely described as part of the win
+    condition, and this suite previously asserted it. It is not: that belongs
+    to `CheckOnLevelExit`, the condition for *leaving* a solved level.
+    """
     from ssr_env.mechanics import is_solved
 
     s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata((1, 2, 1, 2)))
     state = flat(width=8, height=8, extra=(s,))
-    state = replace(state, start_pos=state.player.pos)
-    assert is_solved(state)
-    away = replace(state, start_pos=Coord(7, 7, 1))
-    assert not is_solved(away)
+    assert is_solved(replace(state, start_pos=state.player.pos))
+    assert is_solved(replace(state, start_pos=Coord(7, 7, 1)))
+
+
+def test_a_raw_or_burnt_face_prevents_the_win():
+    from ssr_env.mechanics import is_solved
+
+    base = flat(width=8, height=8)
+    for faces, why in (((1, 2, 0, 2), "raw"), ((1, 2, 3, 2), "burnt")):
+        s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata(faces))
+        assert not is_solved(flat(width=8, height=8, extra=(s,))), why
+
+
+def test_both_cooked_face_values_count_as_done():
+    """0 raw, 1 and 2 cooked, 3 burnt — real play produces all-1s and all-2s."""
+    from ssr_env.mechanics import is_solved
+
+    for faces in ((1, 1, 1, 1), (2, 2, 2, 2), (1, 2, 2, 1)):
+        s = replace(sausage(4, 4, ident=50), cookdata=pack_cookdata(faces))
+        assert is_solved(flat(width=8, height=8, extra=(s,)))
+
+
+def test_a_level_with_no_sausages_is_not_solved():
+    from ssr_env.mechanics import is_solved
+
+    assert not is_solved(flat(width=8, height=8))
 
 
 def test_a_lost_state_is_never_solved():
