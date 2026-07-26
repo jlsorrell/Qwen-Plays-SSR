@@ -1753,39 +1753,43 @@ north-south mirrored, so any earlier eyeballing of overworld geometry in this
 document should be re-checked.
 
 
-## 12.26 The world sausage is one tile too far south — CONFIRMED
+## 12.26 RETRACTED — the world sausage spawn is correct
 
-The owner described the terrain west of the world sausage tile by tile. Scoring
-that against two candidate rows:
+An earlier version of this section concluded, from an owner tile-count, that the
+world sausage spawned one cell too far south. **That was wrong, and no offset
+should be applied.**
 
-```
-owner described   W1..W10 = ?  L  ?  L  W  W  W  L  W  L
-my sausage row              L  W  L  W  W  W  W  W  L  L    4/8
-one row north               L  L  L  L  W  W  W  L  W  L    8/8
-```
+The game's own mask settles it. `temple2j1`'s two `-1` cells — the sausage
+footprint — are at `(-6, -21, -1)` and `(-5, -21, -1)`, and
+`offsets['temple2j1'] + spawn_offset` is `(-6, -21, -1)`, which with the sausage
+facing east fills exactly those two cells. Two independent sources in the game
+data agree, so the spawn is right.
 
-The row **one north** of where this model puts the sausage matches the real game
-exactly. The sausage is off by one cell in y — spawned at `(-6, -21, -1)` when it
-should be at `(-6, -22, -1)`.
+### The fault was in the diagnostic map, not the simulator
 
-That single-cell error is enough to explain the whole post-855 divergence: every
-subsequent push starts from the wrong tile, and 100 moves later the sausage is
-shoved into the notch at (1, -26) instead of past it.
+Maps rendered for manual checks tested a cell with `solid at z-1 AND clear at z`
+— correct for flat ground and **wrong for anything raised**. The shrine is a
+platform whose top surface is at z = -1, so every cell of it failed the "clear
+above" half and was drawn as water. That is what the owner was looking at, and
+it is why a neighbouring row scored 8/8: the comparison was between two wrong
+renderings.
 
-**Level sausages are unaffected.** `check_overworld_entry` uses the same
-`sausagepositions` table and the same `island.pos + offset` formula, and all
-sixteen levels verify. So the fault is specific to the shrine path in
-`issue_world_sausages`, not to the table or the formula in general.
+**Any future manual-check map must render the topmost solid surface per column,
+as `render.py` does, rather than testing one hard-coded height.**
 
-Candidates:
+### Where this leaves the post-855 divergence
 
-- The shrine island entity consulted at issue time is not at the position
-  `offsets` describes — `issue_world_sausages` runs inside `_apply_transitions`,
-  after `raise_other_islands`, so it reads a state mid-restore.
-- Shrine spawn offsets may be relative to the mask origin rather than the island
-  entity, which would differ by the mask offset.
-- The `y` component may need the same sign care as everything else in this
-  codebase (§2).
+Unresolved, with three retracted hypotheses behind it:
 
-The third is cheap to test and the first is cheap to rule out by comparing the
-island position at issue time against `offsets`.
+1. ~~Overworld traversal broken by undo~~ — a real inconsistency was fixed, but
+   the outcome did not change.
+2. ~~The world sausage spawns in the wrong place~~ — measured 45 moves too late.
+3. ~~The sausage is one cell too far south~~ — the diagnostic map was wrong.
+
+What still holds: the sausage is pushed on a ~100-move journey and ends in water
+at (1, -26), and `bridge1` genuinely has no floor there. With the spawn now
+confirmed correct, the error lies somewhere in the journey.
+
+All three retractions trace to measuring the wrong thing. **Fix the map renderer
+before requesting another observation** — a wrong map is what produced the last
+one.
