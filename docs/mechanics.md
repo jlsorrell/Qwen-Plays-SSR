@@ -1691,3 +1691,35 @@ productive ones came from the owner describing the screen.
 The narrow question: after completing world 1, standing near the temple2j1
 shrine, **is there ground south of the shrine sausage that this model shows as
 water?**
+
+## 12.25 The world sausage spawns in the wrong place
+
+The owner reports the rendered overworld around the character "looks nothing
+like" the real game. Investigating that produced a concrete fault.
+
+`temple2j1` is a clean **7x7 platform** at world x -9..-3, y -22..-16, with one
+sausage spawn at island offset (15, 2, -1) — world **(-6, -21, -1)**.
+
+| | |
+|---|---|
+| Expected spawn | `(-6, -21, -1)` |
+| Actually spawned | `(1, -23, -1)` |
+| Player's closest approach to the expected spawn | **0 cells, at move 864** |
+
+The player walks *exactly onto* the expected spawn nine moves after leaving The
+Anchorage. That is strong evidence the expected position is right and
+`issue_world_sausages` is placing the sausage about seven cells away — so the
+recording pushes a sausage that, in this model, is not there.
+
+It also explains the unrecognisable map: the character at (1,-20) is nowhere
+near the shrine platform (x -9..-3), so the region rendered for manual check 006
+was not the shrine at all.
+
+**Next:** find why `island.pos + spawn` disagrees. Candidates: the island entity
+consulted is not the one `offsets` describes; `raise_other_islands` is applied
+before the spawn and perturbs the reference; or shrine spawn offsets are
+expressed in a different frame from level spawn offsets.
+
+Note the renderer bug found alongside this (§ rendering): maps were printed
+north-south mirrored, so any earlier eyeballing of overworld geometry in this
+document should be re-checked.
