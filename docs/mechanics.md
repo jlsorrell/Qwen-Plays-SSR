@@ -1670,6 +1670,24 @@ Both readings are consistent with the evidence:
 - The change removes terrain the player still needs, and the `-1` cells around a
   shrine are not all sausage footprints.
 
-Distinguishing them needs either a count of how many `-1` cells the shrine island
-has against its one spawn point, or an observation of the overworld around the
-temple2j1 shrine after world 1 is complete.
+**Resolved by counting.** `temple2j1`'s mask holds exactly **two** `-1` cells
+against **one** sausage spawn — and a sausage occupies two cells. So the `-1`
+cells at a shrine are precisely that sausage's footprint, and setting
+`cookdata = 1` frees exactly the cells the sausage then fills. No terrain is
+lost, and §12.23's change is correct.
+
+The regression from "reaches 16,567" to "fails at 957" is therefore the intended
+effect: the world sausage now exists, so the player interacts with it, so a
+genuine failure surfaces instead of an aimless wander.
+
+### What remains
+
+Drift beginning around **move 943**, on the overworld, after world 1 is
+complete. Three consecutive southward presses are refused where the recording
+expects passage. Every earlier divergence of this shape has turned out to be one
+missing rule, and the ones found by reading alone were the minority — the
+productive ones came from the owner describing the screen.
+
+The narrow question: after completing world 1, standing near the temple2j1
+shrine, **is there ground south of the shrine sausage that this model shows as
+water?**
