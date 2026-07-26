@@ -40,3 +40,41 @@ movement is inverted somewhere between input and displacement. `Coord.North` is
 `(0, +1)` and `.dem` `North` maps to `w`, both verified — so if there is a sign
 error it is in how facing combines with forward/backward movement, not in the
 primitives.
+
+
+## Follow-up: the displacement is a constant, not drift
+
+Hand-simulating the 15 inputs with pure SSR semantics (perpendicular = turn in
+place, parallel = move one cell) on unobstructed ground:
+
+```
+lands at (4, -4, -1) facing NORTH
+level47 entry is (4,  2, -1) facing NORTH
+```
+
+**x matches exactly. Facing matches exactly. y is off by exactly 6.**
+
+So the movement rules and the input semantics are right, and the path shape is
+right. Something in the y-frame is displaced by a constant. Since the sequence
+reaches the correct x from the recorded start x, the start x is right too — it
+is specifically the start y, or the y-frame of the entry table, that is wrong.
+
+The start pose comes from a different code path than every other level: `start`
+has no `playerpositions` entry, so it is read from the level file and offset by
+`offsets["start"]`, per `MetaGameState.LoadBinary`'s closing lines. Every other
+level's pose is cross-checked between two sources and they agree. The start pose
+has no such cross-check — which makes it the prime suspect.
+
+Working hypothesis: the true start is `(-4, 5, -1)`, six north of what is
+computed. That value is not derived from anything, it is what the arithmetic
+requires, so it must be verified rather than adopted.
+
+## What would settle it, requiring no progress in the game
+
+The landing area is the first thing in the game, so this needs no unlocking:
+
+**From where the character first appears, how many tiles can you walk north
+before running out of ground, and how many south?** Rough is fine.
+
+That pins the y-frame directly against my map of the same area, and it does not
+depend on any of the mechanics still in doubt.
