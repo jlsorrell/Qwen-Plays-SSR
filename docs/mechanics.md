@@ -1111,8 +1111,24 @@ So the cardinal cell does matter, just not during TurnIn. Both of the
 single-cell rules tried earlier were half-right, which is why each fixed some
 cases and broke others.
 
-Next: give `try_turn_player` a second phase that applies force at the cardinal
-cell after the diagonal phase resolves.
+### Resolved — IMPLEMENTED and CONFIRMED
+
+`TurnOut` (`GameState.cs:4600`) pushes whatever occupies the **cardinal** fork
+cell, in direction `ContinueRot(turndir, direction).Inverse()` — target cardinal
+first, current diagonal facing second. Getting that argument order backwards
+silently produces a valid-looking direction, so it must be checked rather than
+assumed (§2.1).
+
+Two traps in implementing it, both of which made the push silently not happen:
+
+1. **Argument order** of `ContinueRot`, as above.
+2. **The player masks the cell.** After the turn the player occupies the
+   cardinal cell itself, so a naive `ent_at` lookup returns the *player* and the
+   entity actually standing there is never seen. The search must look past the
+   turning entity.
+
+Confirmed: first sausage contact now occurs at **move 22**, exactly where the
+owner observed it, and `all.dem` reaches move 112 (was 36).
 
 ## 13. Open questions
 

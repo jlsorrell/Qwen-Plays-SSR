@@ -228,6 +228,36 @@ def try_turn_player(
     if _blocked_for(candidate, turned, collide_cell, masks, level_name):
         return try_pivot_turn(state, direction, masks, level_name)
 
+    # Phase 2 (TurnOut). The fork travels from the diagonal to its final
+    # cardinal cell, so *that* cell is this phase's entering cell — and whatever
+    # occupies it is pushed, in direction `ContinueRot(turndir, diagonal).Inverse()`.
+    # Modelling only phase 1 meant the fork swung onto sausages without moving
+    # them (§12.10).
+    if diagonal is not None and is_extended(player, state):
+        cardinal = player.pos + direction.delta
+        # Look past the player: in `candidate` it has already turned, so it
+        # occupies the cardinal cell itself and would otherwise mask whatever is
+        # actually standing there.
+        occupant = next(
+            (
+                e
+                for e in candidate.entities
+                if e.id != turned.id
+                and is_solid(e, candidate.tileset)
+                and occupies(e, cardinal, candidate, masks, level_name)
+            ),
+            None,
+        )
+        if occupant is not None:
+            # `ContinueRot(turndir, direction)`: target cardinal first,
+            # current (diagonal) facing second. Order matters — see §2.1.
+            push_dir = _continue(direction, diagonal).inverse()
+            if push_dir.is_valid:
+                pushed = try_push(candidate, occupant, push_dir, masks, level_name)
+                if pushed is candidate:
+                    return try_pivot_turn(state, direction, masks, level_name)
+                candidate = pushed
+
     return StepResult(state=candidate)
 
 
