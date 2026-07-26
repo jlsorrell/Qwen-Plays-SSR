@@ -1774,8 +1774,16 @@ above" half and was drawn as water. That is what the owner was looking at, and
 it is why a neighbouring row scored 8/8: the comparison was between two wrong
 renderings.
 
-**Any future manual-check map must render the topmost solid surface per column,
-as `render.py` does, rather than testing one hard-coded height.**
+**Fixed:** `render.surface_map` renders the topmost solid surface in each
+column, annotated by height relative to the viewer — `0` level, `1`..`9` higher,
+`-`/`=` lower, `.` nothing. All future manual-check maps must use it.
+
+Verified against a known structure: the `temple2j1` platform is 7x7 of mask
+value 17, and `surface_map` draws all 49 cells as solid, with the raised block
+at x=-8 reading `1` and the sausage footprint at x=-6,-5 — matching the mask
+exactly. Note the platform's surface is **flush** with the surrounding ground,
+not raised; an initial expectation that it would read one step up was wrong and
+briefly looked like a renderer fault.
 
 ### Where this leaves the post-855 divergence
 

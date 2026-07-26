@@ -259,3 +259,39 @@ def test_merged_entity_ids_are_unique():
 
     ents = load_full_level("islandshape21e").entities
     assert len({e.id for e in ents}) == len(ents)
+
+
+def test_surface_map_shows_a_flush_platform_as_solid():
+    """A raised structure must not render as water.
+
+    The maps used for manual checks previously tested each cell as "solid at
+    z-1 and clear at z". That is right for flat ground and wrong for anything
+    raised: a platform whose surface sits at the sampled height fails the
+    "clear above" half and is drawn as sea. `surface_map` searches each column
+    for its topmost solid cell instead.
+    """
+    from ssr_env.render import surface_map
+
+    # A 3x3 plinth at z=0 with a block on top of its middle, and the viewer
+    # standing at z=1 on the plinth.
+    ents = [
+        Entity(pos=Coord(x, y, 0), type=EntType.GROUND, id=10 + 3 * y + x, tileset=1)
+        for x in range(3)
+        for y in range(3)
+    ]
+    ents.append(Entity(pos=Coord(1, 1, 1), type=EntType.GROUND, id=30, tileset=1))
+    state = GameState(entities=tuple(ents), tileset=0)
+
+    out = surface_map(state, {}, Coord(0, 0, 1), radius=2).splitlines()
+    # Row for y=0 is the third line (rows run y=-2..2); columns run x=-2..2.
+    assert out[2][2] == "0", "plinth surface should read level, not water"
+    assert out[3][3] == "1", "the block on top should read one step higher"
+
+
+def test_surface_map_marks_override_terrain():
+    from ssr_env.render import surface_map
+
+    g = Entity(pos=Coord(0, 0, 0), type=EntType.GROUND, id=1, tileset=1)
+    state = GameState(entities=(g,), tileset=0)
+    out = surface_map(state, {}, Coord(0, 0, 1), radius=1, marks={(0, 0): "@"})
+    assert "@" in out

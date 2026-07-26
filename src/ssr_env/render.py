@@ -11,7 +11,7 @@ as it appears on screen. Printing descending y — which is the natural reading 
 """
 
 from .state import GameState
-from .types import EntType
+from .types import Coord, EntType
 
 GLYPHS: dict[EntType, str] = {
     EntType.GROUND: ".",
@@ -97,4 +97,57 @@ def render(state: GameState, name: str = "") -> str:
 
     if state.lost:
         lines += ["", f"LOST: {state.lost_reason}"]
+    return "\n".join(lines)
+
+
+def surface_map(
+    state: GameState,
+    masks,
+    centre,
+    radius: int = 8,
+    z_range: tuple[int, int] = (-4, 4),
+    marks: dict | None = None,
+) -> str:
+    """Top-down map showing the **topmost solid surface** in each column.
+
+    Written because the ad-hoc maps used for manual checks tested each cell as
+    "solid at z-1 and clear at z". That is right for flat ground and wrong for
+    anything raised: a platform whose top surface sits at the sampled height
+    fails the "clear above" half and is drawn as water. The shrine platform
+    rendered that way, and the owner was asked to compare against a map that
+    showed a solid plaza as sea (§12.26).
+
+    Each column is searched from the top of `z_range` down for the first solid
+    cell, and its height is drawn relative to `centre.z`:
+
+    - `0` level with the centre, `1`..`9` that many steps higher
+    - `-` one step lower, `=` two or more lower
+    - `.` nothing solid anywhere in range
+
+    `marks` maps (x, y) to a single character drawn instead of the height, for
+    the player, sausages and any cell under discussion.
+    """
+    from .geometry import solid_ent_at
+
+    marks = marks or {}
+    lo, hi = z_range
+    lines = []
+    # North is -y (§2), so ascending y prints north-first.
+    for y in range(centre.y - radius, centre.y + radius + 1):
+        row = []
+        for x in range(centre.x - radius, centre.x + radius + 1):
+            if (x, y) in marks:
+                row.append(marks[(x, y)])
+                continue
+            top = None
+            for z in range(centre.z + hi, centre.z + lo - 1, -1):
+                if solid_ent_at(state, Coord(x, y, z), masks, ""):
+                    top = z
+                    break
+            if top is None:
+                row.append(".")
+            else:
+                d = top - (centre.z - 1)
+                row.append("0" if d == 0 else ("-" if d == -1 else ("=" if d < -1 else str(min(d, 9)))))
+        lines.append("".join(row))
     return "\n".join(lines)
