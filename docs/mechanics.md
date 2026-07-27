@@ -1881,3 +1881,41 @@ equally well.
 **The distinguishing observation is narrow:** on completing The Anchorage and
 returning to the overworld, is the character standing *on* the level entrance,
 or one tile away from it?
+
+
+## 12.29 Exit position confirmed; the fault is one key of timing
+
+The owner confirms: **completing a level returns you to the same tile you
+entered on.** This model already does that, so §12.28's first candidate is
+eliminated.
+
+Separately worth recording: **quitting a level with ESC puts you on a tile
+*adjacent* to the entrance**, not on it. That is a distinct path this simulator
+does not model at all, and it would be easy to conflate with the completion
+case later.
+
+### What is established
+
+- Exit leaves the player on the entrance tile — correct.
+- Undo restores exactly the prior state (§12.28) — correct.
+- After key **6** this model already has the player at `(-7,-20)`, which is
+  precisely where it must be for key 8's turn to catch the plaque.
+- Key **7** (the fourth `D`) moves it off that tile to `(-6,-20)`.
+
+So the model is not misplaced in space — it is **one key ahead in time**. Either
+key 7 should not move the player, or one of keys 1-3 should consume a move this
+model spends without one.
+
+### Why key 7 is not obviously blocked
+
+```
+(-6,-20,-1)  VOID, clear air          <- the body's destination
+(-6,-20,-2)  temple2j1, mask 17       <- solid ground beneath it
+(-6,-21,-1)  the world sausage        <- one row north, not in the path
+```
+
+Nothing in the geometry refuses that step, so if the real game refuses it the
+reason is a rule this simulator lacks, not a terrain difference.
+
+**The narrow question:** playing the sequence `A z A D D D D`, does the fourth
+`D` move the character, or does nothing happen?
