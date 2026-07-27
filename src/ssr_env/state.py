@@ -36,6 +36,8 @@ class GameState:
     pushtargetlevel: str = ""
     #: Levels already completed; they no longer trigger entry.
     completed: frozenset = frozenset()
+    #: Shrines whose world sausages have been issued (§12.23).
+    issued_shrines: frozenset = frozenset()
     #: Where the player must stand, and face, to leave a solved level. Normally
     #: the entry pose — but it rides a sausage if one sits beneath it (§12.16).
     exit_pos: Coord | None = None

@@ -1517,3 +1517,590 @@ Phase 1's oracle — movement, pushing, rolling, cooking, gravity, win detection
 are all exercised inside levels and all correct. Overworld navigation matters
 only for replaying `all.dem` as one continuous session, which was always a
 validation instrument rather than the deliverable.
+
+
+## 12.21 The `.dem`-to-level mapping is derivable, not searchable
+
+`all.dem` is the **concatenation of the 120 level files in world order** — their
+lengths sum to exactly 16,567, and the segment boundaries coincide with level
+entries in replay:
+
+```
+1-0  moves   1..15   -> enters Lachrymose Head at 15
+1-1  moves  16..91   -> enters Southjaunt at 91
+1-2  moves  92..128  -> enters Infant's Break at 128
+```
+
+So segment `N` is the stretch that **solves** one level, and `1-0` is the
+opening walk. The mapping falls out of one replay pass rather than the 120-way
+brute-force search in `replay.find_matching_level`.
+
+`tools/derive_mapping.py` recovers it. Sixteen pairings are established so far:
+
+| `.dem` | Level | Name |
+|---|---|---|
+| 1-1 | level47 | Lachrymose Head |
+| 1-2 | level56 | Southjaunt |
+| 1-3 | level49 | Infant's Break |
+| 1-4 | level23 | Little Fire |
+| 1-5 | generated1 | Bay's Neck |
+| 1-6 | level28 | Burning Wharf |
+| 1-7 | level26 | Eastreach |
+| 1-8 | level16 | Comely Hearth |
+| 1-9 | level11 | Happy Pool |
+| 1-10 | level24 | Maiden's Walk |
+| 1-11 | level46 | Fiery Jut |
+| 1-12 | level27 | Merchant's Elegy |
+| 1-13 | level4 | Seafinger |
+| 1-14 | level9b8 | The Clover |
+| 1-15 | level41 | Inlet Shore |
+| 1-16 | level35 | The Anchorage |
+
+**This reprioritises the overworld.** Coverage is bounded by how far the replay
+tracks, so the remaining ~104 pairings are blocked on overworld traversal
+(§12.20) — which is therefore not a side quest but the path to the Phase 0
+acceptance gate.
+
+Note 13 of the 120 segments do not match `all.dem` byte-for-byte, beginning at
+`3-4`, so the world-order assumption breaks somewhere in world 3. Worth
+resolving before trusting derived pairings beyond world 1.
+
+## 12.22 Transitions belong inside `step` — correct, but not the fix
+
+`history` is recorded inside `step`, so level entry and exit applied by the
+*caller* were invisible to it: undo would rewind to a state that never entered
+or left a level. `step` now takes `meta` and applies transitions itself, so the
+recorded sequence is the sequence that actually happened.
+
+This looked like the answer because **all 103 undos in `all.dem` fall after move
+855, and none before** — precisely the boundary where replay stops tracking.
+
+**It made no measurable difference.** Overworld refusals after move 855 remain
+26-38%, and still no level is entered. Two further causes ruled out while
+investigating:
+
+- **Island heights are correct.** After 1,000 moves, 0 of 205 islands sit at a
+  height other than their original, so sinking and raising balance exactly.
+- **Undo itself is not obviously misbehaving** — the fix is kept because the
+  previous arrangement was genuinely wrong, not because it changed the outcome.
+
+So the overworld fault is still unlocated. What is now known:
+
+| Ruled out | Evidence |
+|---|---|
+| Level mechanics | 2% in-level refusals; 16 levels verified |
+| Island sink/raise | 0/205 islands displaced after 1,000 moves |
+| History/undo consistency | fixed; no change to the refusal rate |
+| Grill rebound over-firing | owner confirmed key 44 of The Anchorage |
+
+The remaining symptom is 5,700 "no ground" refusals on the overworld — the
+player repeatedly trying to walk where this model has void. Since the levels
+themselves are right, the most likely remaining cause is overworld terrain that
+differs from the game once levels start completing, e.g. geometry that changes
+on completion and that `RegenIslands` alone does not capture.
+
+## 12.23 World sausages — completing a temple changes the overworld
+
+`CompleteLevel` only appends to a list. The world change is `IssueWorldSausages`:
+
+```
+for each shrine in templedat:
+    if not already issued and every level in templedat[shrine] is complete:
+        spawn sausagepositions[shrine] at the shrine island
+        shrine island cookdata = 1
+```
+
+A shrine is any key of `templedat` (30 of them; all have an island and a spawn
+entry). `ShouldIssueSausage` requires the shrine to be un-issued and **every**
+level the temple lists to be completed.
+
+Two effects, both now implemented:
+
+1. **Sausages appear on the overworld** at the shrine. These are the same
+   sausages `load_overworld` discards at load — they start unsupported precisely
+   because they are not yet in play.
+2. **The shrine island's `cookdata` becomes 1**, which is not cosmetic: `IslandAt`
+   treats mask value `-1` as solid only while `cookdata` is 0, so the shrine's
+   sausage-footprint placeholders stop blocking once issued (§10.5).
+
+`temple2j1` lists 16 levels, and replay issues it at **move 855** — the exact
+move the sixteenth level completes, and the exact move at which tracking was
+previously lost.
+
+### Result: a loud failure instead of silent drift
+
+Replay now fails at **move 957** with `SausageLost` — the newly issued world
+sausage pushed into water. Previously it wandered to move 16,567 without ever
+touching it.
+
+That is progress of the useful kind: a concrete event at a known move beats a
+drifting refusal rate. Overworld refusals in the 800-899 window remain ~28%, so
+this is not the whole story, but the player is now interacting with the world
+sausage at all.
+
+## 12.24 Move 957 — downstream of drift that starts around 943
+
+The shrine sausage spawns at (1,-24) and the player reaches it at move 951,
+pushing it to (1,-25). At **957** the player backs north into it again, pushing
+it to (1,-26), which this model has as water: `SausageLost`.
+
+**The failure is not the interesting part.** Refusals appear earlier:
+
+| Move | Input | Refused with |
+|---|---|---|
+| 943, 944, 945 | S | `no ground at (1,-19)` |
+| 953 | D | `no ground at (2,-24)` |
+| 955, 956 | A | `no ground to pivot onto` |
+
+Three consecutive refused southward presses at 943-945 say the player should be
+able to walk south from (1,-20) and this model has void there. So the position
+by 951 is already wrong, and the sausage is being pushed from the wrong cell.
+
+### Suspicion: the shrine `cookdata` change may cut terrain
+
+§12.23 sets the shrine island's `cookdata` to 1 on issuing, which by §10.5 stops
+its mask value `-1` cells being solid. That is what the game does — but it is
+also newly introduced, and replay regressed from reaching move 16,567 (drifting)
+to failing at 957 immediately after adding it.
+
+Both readings are consistent with the evidence:
+
+- The change is correct and merely converted a silent drift into an early loud
+  failure, which is what §12.23 claims.
+- The change removes terrain the player still needs, and the `-1` cells around a
+  shrine are not all sausage footprints.
+
+**Resolved by counting.** `temple2j1`'s mask holds exactly **two** `-1` cells
+against **one** sausage spawn — and a sausage occupies two cells. So the `-1`
+cells at a shrine are precisely that sausage's footprint, and setting
+`cookdata = 1` frees exactly the cells the sausage then fills. No terrain is
+lost, and §12.23's change is correct.
+
+The regression from "reaches 16,567" to "fails at 957" is therefore the intended
+effect: the world sausage now exists, so the player interacts with it, so a
+genuine failure surfaces instead of an aimless wander.
+
+### What remains
+
+Drift beginning around **move 943**, on the overworld, after world 1 is
+complete. Three consecutive southward presses are refused where the recording
+expects passage. Every earlier divergence of this shape has turned out to be one
+missing rule, and the ones found by reading alone were the minority — the
+productive ones came from the owner describing the screen.
+
+The narrow question: after completing world 1, standing near the temple2j1
+shrine, **is there ground south of the shrine sausage that this model shows as
+water?**
+
+## 12.25 The world sausage spawn is CORRECT — earlier claim retracted
+
+An earlier version of this section claimed `issue_world_sausages` placed the
+sausage about seven cells from where it belonged. **That was wrong.** Checked
+directly: immediately after move 855 the sausage sits at `(-6, -21, -1)`,
+exactly `offsets['temple2j1'] + spawn_offset`. The spawn is right.
+
+The (1, -23) position that prompted the claim was measured at move 900, by which
+point the player had **pushed** the sausage there. Comparing a spawn position
+against a state 45 moves later was the error.
+
+### What actually happens
+
+The world sausage is pushed on a long journey, and this model tracks it for
+about a hundred moves:
+
+| Move | Sausage |
+|---|---|
+| 855 | spawns at (-6, -21) |
+| 863-871 | pushed east along y=-21 to (1, -21) |
+| 873-918 | pushed north to (1, -24) |
+| 951 | (1, -25) |
+| **957** | **(1, -26) — falls, `SausageLost`** |
+
+### The real question
+
+The sausage falls at `(1, -26, -1)` because this model has no floor beneath it.
+That cell lies inside the footprint of the island named **`bridge1`**
+(x -4..10, y -26..-19), but its mask value there is not solid — while its
+neighbour `(0, -26)` is:
+
+```
+(0, -26, -2)  bridge1, mask value 1  (solid)
+(1, -26, -2)  VOID
+(2, -26, -2)  VOID
+```
+
+**The indexing is correct — verified.** `bridge1`'s mask is 15x8x2 at world
+x -4..10, y -26..-19. Its z=-2 layer reads:
+
+```
+y=-26  .####.......##.
+y=-25  ######......##.
+       x=-4          10
+```
+
+So there really is floor at (1,-25) and none at (1,-26). The notch is in the
+game's own data, not in how it is read.
+
+**Therefore the fault is upstream.** The real game would drop a sausage pushed
+into (1,-26) as well, so the sausage should not be at (1,-25) taking a northward
+push at move 957. Something earlier in its ~100-move journey — which starts at
+the shrine at move 855 — puts it one or more cells off.
+
+**This also means manual check 006 asked about the wrong cell.** The disputed
+location is `(1, -26)` on `bridge1`, not `(1, -19)`, and the character stands at
+`(1, -25)` when it happens.
+north-south mirrored, so any earlier eyeballing of overworld geometry in this
+document should be re-checked.
+
+
+## 12.26 RETRACTED — the world sausage spawn is correct
+
+An earlier version of this section concluded, from an owner tile-count, that the
+world sausage spawned one cell too far south. **That was wrong, and no offset
+should be applied.**
+
+The game's own mask settles it. `temple2j1`'s two `-1` cells — the sausage
+footprint — are at `(-6, -21, -1)` and `(-5, -21, -1)`, and
+`offsets['temple2j1'] + spawn_offset` is `(-6, -21, -1)`, which with the sausage
+facing east fills exactly those two cells. Two independent sources in the game
+data agree, so the spawn is right.
+
+### The fault was in the diagnostic map, not the simulator
+
+Maps rendered for manual checks tested a cell with `solid at z-1 AND clear at z`
+— correct for flat ground and **wrong for anything raised**. The shrine is a
+platform whose top surface is at z = -1, so every cell of it failed the "clear
+above" half and was drawn as water. That is what the owner was looking at, and
+it is why a neighbouring row scored 8/8: the comparison was between two wrong
+renderings.
+
+**Fixed:** `render.surface_map` renders the topmost solid surface in each
+column, annotated by height relative to the viewer — `0` level, `1`..`9` higher,
+`-`/`=` lower, `.` nothing. All future manual-check maps must use it.
+
+Verified against a known structure: the `temple2j1` platform is 7x7 of mask
+value 17, and `surface_map` draws all 49 cells as solid, with the raised block
+at x=-8 reading `1` and the sausage footprint at x=-6,-5 — matching the mask
+exactly. Note the platform's surface is **flush** with the surrounding ground,
+not raised; an initial expectation that it would read one step up was wrong and
+briefly looked like a renderer fault.
+
+### Where this leaves the post-855 divergence
+
+Unresolved, with three retracted hypotheses behind it:
+
+1. ~~Overworld traversal broken by undo~~ — a real inconsistency was fixed, but
+   the outcome did not change.
+2. ~~The world sausage spawns in the wrong place~~ — measured 45 moves too late.
+3. ~~The sausage is one cell too far south~~ — the diagnostic map was wrong.
+
+What still holds: the sausage is pushed on a ~100-move journey and ends in water
+at (1, -26), and `bridge1` genuinely has no floor there. With the spawn now
+confirmed correct, the error lies somewhere in the journey.
+
+All three retractions trace to measuring the wrong thing. **Fix the map renderer
+before requesting another observation** — a wrong map is what produced the last
+one.
+
+
+## 12.27 Post-855 divergence bracketed to the first seven moves
+
+The owner played the world-sausage sequence from its start. **Checkpoint 1
+(key 8) fails**, with a precise reason:
+
+> The first W key results in no rotation, because the fork gets caught on the
+> plaque, which is the raised tile two tiles west of the sausage.
+
+The plaque is at world `(-8, -21, -1)` — `temple2j1` mask value **10**, a
+pedestal (§10.3).
+
+### The pedestal mechanic is already correct
+
+For a fork to catch on it, the player must be at `(-7, -20)` facing west when
+key 8 is pressed: turning north then sweeps the diagonal `(-8, -21)`, which is
+the plaque, and the turn is refused.
+
+This simulator already refuses that turn — `(-8, -21, -1)` reads solid, and the
+swept-diagonal collision test (§12.8) would fire. **No new mechanic is needed.**
+
+### The fault is the player's position
+
+At key 8 this model has the player at `(-6, -20)`, one tile too far east, so it
+sweeps `(-7, -21)` instead — which is clear, so the turn succeeds and the world
+sausage is pushed a move early.
+
+The player starts at `(-10, -20)`. Keys 1-7 are `A z A D D D D`:
+
+| Key | Input | This model |
+|---|---|---|
+| 1 | A | turn west |
+| 2 | z | undo, back to facing north |
+| 3 | A | turn west |
+| 4-7 | D D D D | four moves east, to (-6, -20) |
+
+For the player to end at `(-7, -20)` only **three** of those eastward moves may
+land — or one of keys 1-3 must consume a move this model spends differently.
+The undo at key 2 is the obvious suspect, being the first undo in the entire
+playthrough (§12.22: all 103 undos fall after move 855).
+
+**This is a seven-move bracket on a divergence that was previously 15,000 moves
+wide.** Everything after it — the sausage's whole journey, the fall at (1,-26),
+the 26-38% overworld refusal rate — is downstream of these seven inputs.
+
+
+## 12.28 Undo is correct — the bracket narrows to two candidates
+
+Checked directly. At key 2 of the world-sausage sequence — the first undo in the
+entire playthrough — undo restores exactly the state before key 1, and the
+history depth returns from 852 to 851. **Undo is not the fault**, and the
+§12.22 suspicion is discharged.
+
+That leaves the player's position. The facts:
+
+```
+before move 855:   player (-10,-20) facing WEST, inside The Anchorage
+level35 exit pose: (-10,-20) facing NORTH
+after move 855:    player (-10,-20) facing NORTH, on the overworld
+```
+
+Move 855 turns the player north, which satisfies the exit condition, and this
+model leaves the player standing **on** the exit cell.
+
+For the fork to catch the plaque at key 8 the player must reach `(-7,-20)`.
+Keys 3-7 are `A D D D D` — turn west, then four moves east — so:
+
+| Candidate | Consequence |
+|---|---|
+| Key-0 position should be `(-11,-20)` | leaving a level puts the player one tile **off** the exit cell, not on it |
+| One of keys 4-7 should not move | something blocks an eastward step this model allows |
+
+**Do not guess between these.** Three earlier hypotheses on this thread were
+retracted, and each was adopted because the arithmetic fitted. The two above fit
+equally well.
+
+**The distinguishing observation is narrow:** on completing The Anchorage and
+returning to the overworld, is the character standing *on* the level entrance,
+or one tile away from it?
+
+
+## 12.29 Exit position confirmed; the fault is one key of timing
+
+The owner confirms: **completing a level returns you to the same tile you
+entered on.** This model already does that, so §12.28's first candidate is
+eliminated.
+
+Separately worth recording: **quitting a level with ESC puts you on a tile
+*adjacent* to the entrance**, not on it. That is a distinct path this simulator
+does not model at all, and it would be easy to conflate with the completion
+case later.
+
+### What is established
+
+- Exit leaves the player on the entrance tile — correct.
+- Undo restores exactly the prior state (§12.28) — correct.
+- After key **6** this model already has the player at `(-7,-20)`, which is
+  precisely where it must be for key 8's turn to catch the plaque.
+- Key **7** (the fourth `D`) moves it off that tile to `(-6,-20)`.
+
+So the model is not misplaced in space — it is **one key ahead in time**. Either
+key 7 should not move the player, or one of keys 1-3 should consume a move this
+model spends without one.
+
+### Why key 7 is not obviously blocked
+
+```
+(-6,-20,-1)  VOID, clear air          <- the body's destination
+(-6,-20,-2)  temple2j1, mask 17       <- solid ground beneath it
+(-6,-21,-1)  the world sausage        <- one row north, not in the path
+```
+
+Nothing in the geometry refuses that step, so if the real game refuses it the
+reason is a rule this simulator lacks, not a terrain difference.
+
+**The narrow question:** playing the sequence `A z A D D D D`, does the fourth
+`D` move the character, or does nothing happen?
+
+
+## 12.30 Sausage-only checkpoints hid a player divergence
+
+The owner re-ran the world-sausage sequence from a correctly established start.
+Checkpoints at keys **8, 16 and 20 all pass**; the one at key 63 fails, and
+**key 47 enters a level** in the real game.
+
+This simulator enters no level at key 47. At key 43 its player is at `(2,-20)`
+on the east edge of an island, and keys 45-47 press east into void:
+
+```
+(3,-20,-1)  VOID       <- destination
+(3,-20,-2)  VOID       <- and nothing beneath it
+```
+
+The nearest entrance of any uncompleted level is **11 tiles away**.
+
+### The checkpoints could not have caught this
+
+They track **only the sausage**, and in this model the sausage does not move
+between keys 20 and 63 — it sits at "7 east, 2 north" throughout. So the player
+could diverge anywhere in that stretch and every checkpoint would still pass.
+Keys 8/16/20 confirm the sausage; they say nothing about the player.
+
+**Design lesson: a checkpoint must track every piece of state the following
+inputs depend on.** These tracked the object of interest rather than the thing
+being controlled. Future manual checks must report the *player's* position and
+facing as well as the sausage's.
+
+### Where the divergence is
+
+Somewhere in keys **21-47**, in player movement, while the sausage sits still.
+That is a 27-move window, and the next check should place player checkpoints
+inside it — roughly every five keys — rather than sausage checkpoints.
+
+
+## 12.31 A climb resolves to the top, in one step
+
+Key 22 of the world-sausage sequence climbs a ladder, and the owner reported the
+result as *"9 east, 2 north, with fork pointing east"*. The first implementation
+moved the player up one level and returned. Nothing happened at all.
+
+`settle` asks only for solid ground beneath, and beneath a player on a ladder is
+the air it just left, so gravity put it straight back. Two rules follow, and the
+second subsumes the first:
+
+1. **A ladder supports what stands on it** — mid-climb the player is held by the
+   ladder, not by the floor.
+2. **A climb is not one rung.** `TryClimbUp` selects `ClimbUp_Init` or
+   `ClimbUp_End1` depending on whether another ladder continues above, and
+   `MType` also carries `ClimbUp_Loop` and `ClimbUp_End2` — the ascent runs to
+   the top of the ladder.
+
+This simulator is settle-driven (§1), so the whole ascent resolves inside one
+`step`, exactly as a fall does: rise while the ladder continues and the cell
+above is clear, then step forward onto the tile the ladder was mounted against.
+The result is a state gravity will not reclaim — which is what makes rule 1
+unnecessary, since the player is never left part-way up.
+
+The topmost ladder cell *is* the top of the wall; the step-off lands on the
+empty cell above it. A synthetic test that capped the wall with a further solid
+block left the climb hanging in mid-air — the fixture being wrong, not the rule.
+
+Confirmed against the owner's report at two checkpoints: key 22 lands 9 east,
+2 north facing east, and key 25 lands 9 east, 3 north.
+
+Entry conditions are unchanged: the branch fires only when the player is
+extended and `LadderAt(pos + dir) == dir.Inverse()`, i.e. the ladder faces back
+at the player.
+
+## 12.32 Climbing down — the branch that stranded the player on a ledge
+
+After §12.31 the player climbed *up* correctly and was then stuck: from key 39
+of the world-sausage sequence every eastward press was refused for want of
+ground. It was standing on a one-tile block with the terrain a level lower all
+around, and `TryMovePlayer` will not step down.
+
+That refusal is right. `TryMovePlayer` ends with
+
+    flag4 = StableGround(player.TargetPos())
+
+and `StableGround(c)` returns true when `EntAt(c + Down)` is null, a decoration,
+or moving — so despite the name it reports *un*stable footing, and `flag4`
+restores the entities, i.e. refuses the move. The game really does forbid
+walking off a step. This is the same rule already confirmed by observation on
+Southjaunt's westmost panel (§5.3); it simply also covers a one-level drop.
+
+Descending is a separate branch, `TryClimbDown`, which I had not implemented:
+
+    LadderDownInDir(dir)  ==  LadderAt(player.pos + Down) == dir
+
+— a ladder in the block **underfoot**, facing the way the player is going. Note
+the asymmetry with `LadderUpInDir`, which looks at `pos + dir` and wants
+`dir.Inverse()`: going up you face the ladder across a gap, going down you are
+standing on top of it.
+
+`ProcessInput` guards it with `&& !SolidEntAt(player.pos + dir + Down)` — if
+there is something to walk onto, the player walks instead of climbing.
+
+Both ladder branches appear twice in `ProcessInput`, and the two copies differ:
+
+| press | condition |
+|---|---|
+| parallel to facing | `!player.Extended()` — head-on, fork stowed |
+| perpendicular | `player.Extended()` — otherwise it is a turn |
+
+`TryClimbDown` itself is a single horizontal translation by `dir` (plus
+`player.dat = -1 - dir`); the `ClimbDown_*` movement types lower the player over
+subsequent ticks. Settle-driven, the translation alone suffices — `settle`
+already drops anything unsupported to the first solid cell beneath, which is the
+same resting place (§12.31).
+
+The symptom was key 41 `SOUTH` turning in place instead of descending, which
+left the player marooned. With the branch in place the world-1 traversal runs
+clean: key 47 enters `improv3`, whose display name is **Emerson Jetty** — the
+level the owner reported. Overworld traversal through world 1 is confirmed.
+
+## 12.33 Forking a sausage — the mechanic Emerson Jetty is built on
+
+The owner pointed out that Emerson Jetty (`improv3`, world 1's 17th level) is
+the first level where the fork can pierce a sausage and carry it. It was
+unsolvable here, and the cause was that `TryFork` had never been implemented:
+`stuckto` was read in five places and set in none, so `Laden` was permanently
+false and the `UnimplementedMechanic("laden movement")` guard never even fired.
+
+### When the fork pierces
+
+`TryFork` runs inside `TryMovePlayer`, after the forces have been applied and
+before the ground and collision checks. Its guards:
+
+- `player.stuckto >= 0` → return. One fork, one sausage.
+- `!player.Extended()` → return.
+- `player.movement == null || !translation` → return.
+- `movement.direction != player.direction` → return. **Only a forward walk
+  pierces**; a strafe or a backpedal never does. `ProcessInput` reinforces this
+  by calling `TryFork()` only under `if (dir == player.direction)`.
+
+It then looks at `player.TargetPos() + player.direction` — the fork's
+destination — for a sausage that is **not `ActivelyForced`**. That predicate is
+literally `ent.movement != null`, which is the whole rule in one line:
+
+> A sausage the push moved is pushed. A sausage the push could not move is
+> pierced.
+
+Finally `!entity.At(player.TargetPos())`: a sausage lying along the direction of
+travel whose far cell is under the player's own destination cannot be picked up —
+the player would end up standing inside it.
+
+On success `player.stuckto` and `sausage.stuckto` point at each other.
+
+### Living with a pierced sausage
+
+- `Entity.Collides` skips any entity whose `stuckto` is the player's id, which
+  is what lets the fork share a cell with the sausage it has entered.
+- `TryMovePlayer` gives the carried sausage its own `Movement.Translation` in
+  the same direction, so it travels with the player.
+- `CanFall_Liberal` defers a laden entity's fall to whatever it is stuck to, so
+  the sausage hangs from the fork rather than the floor and only descends when
+  the player does.
+- **A carrying player cannot turn.** `ProcessInput`'s laden branch has no
+  `TryTurnPlayer` in it at all: parallel presses walk, perpendicular presses
+  climb or strafe. Facing is frozen until the sausage is put down.
+- Putting it down is `unfork`. When a laden move fails and the press was
+  backward (`dir == player.direction.Inverse()`), `TryMovePlayer` recurses with
+  `unfork: true`, which withholds the sausage's movement and, on success, clears
+  both `stuckto` fields. You drop a sausage by backing off it.
+
+Confirmed on the replay: the pierce fires at move 933, which is exactly where
+the first unexplained refusal had been — the sausage could not roll north
+because island terrain sits at (7,-29,-1), so the fork went into it instead.
+Moves 934-942 carry it across the level, and move 943 unforks.
+
+### Still wrong after this
+
+Emerson Jetty is still not solved. Two faults remain, both in turning:
+
+1. A turn translates the player's body. At move 981 the player faces South at
+   (17,-29), presses East, and ends up at (16,-29) facing East.
+2. The sausage never **rolls** — its `direction` and cook faces are unchanged
+   across the whole level while fork sweeps shove it sideways.
+
+Both point at the pivot-turn force application (§12.13), which applies forces
+but does not compute torsion. `TryPivotTurn`'s weak-force path,
+`PassiveForceSweep` and `CalculateTorsion` remain unimplemented.

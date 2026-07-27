@@ -1,54 +1,56 @@
-# Manual check 006 — The Anchorage
+# Manual check 006 — is there ground south of the shrine sausage?
 
-Start from **The Anchorage** (`level35`), the sixteenth level my replay reaches.
-A save part-way through is fine.
+*(An earlier version of this map was printed upside-down — north is `-y` and I
+was printing rows the wrong way. This one is correct.)*
 
-Stand on its entrance facing **North** so you drop in.
-The first key below is the first move *after* you are inside.
+## Getting there
 
-## Keys (113 moves)
+Complete world 1 — all sixteen levels. A sausage then appears at a large
+structure. If that is the one with the plaque reading *"There were once great
+people here, but now there is something even greater"*, that is what the code
+calls a shrine and what I mean below.
+
+## What my model has
 
 ```
-  1-10   W W W W D A A A A S
- 11-20   S A W D S W A D D D
- 21-30   D W S S S A A A D D
- 31-40   S W W W D A A A A A
- 41-50   A S S S W A D D D D
- 51-60   D D W S S S D A A A
- 61-70   S A W A A D D D D S
- 71-80   W W W D A A A A A W
- 81-90   A A S S S W D D S A
- 91-100  D S S W A D D D D W
-101-110  S S S A A A A A D D
-111-113  D D W
+......###########
+..........######.
+....####..#..####
+...######.#######
+...#####S.....###
+...###..##.....##
+######.##....#.##
+#########....####
+########@#....###
+########?........
+#########........
+#####.#.#######..
+#############.#..
+##...###...##.#..
+##.#############.
 ```
 
-## The question that matters
+**North is up. South is down.**
 
-**At key 44, does the character step onto a grill tile, or bounce back off it?**
+- `@` where my character stands
+- `S` the world sausage that appeared after world 1
+- `#` ground you can stand on, `.` water or empty
+- `?` **the cell in dispute** — one step SOUTH of `@`
 
-My replay bounces it back. That rule came from your description and this is
-the first place it fires in a level where things then go wrong — so it is the
-prime suspect for being over-applied.
+## The question
 
-My replay bounces at keys: [44, 85]
+**Standing where `@` is, can you walk one step south (down)?**
 
-## Checkpoints
+My model says no: `?` is water. The recording presses south three times in a
+row there, which only makes sense if it is walkable. If you can walk south,
+my overworld is missing ground at that spot.
 
-Panels use your numbering: NW corner (1,1), south of it (2,1), east of it (1,2).
+## Easier alternative
 
-| After key | Panel | Facing |
-|---|---|---|
-| 10 | (1,6) | South |
-| 20 | (1,9) | West |
-| 30 | (4,10) | West |
-| 43 | (2,4) | South |
-| 50 | (1,8) | West |
-| 70 | (4,10) | South |
-| 90 | (1,5) | West |
+If lining up with `@` is fiddly, this is just as useful: **stand at the world
+sausage and describe the land to its south** — dead end, narrow path,
+open area? Any mismatch with the picture tells me what I need.
 
-- I solve the level at key **108** and leave at key **113**.
-- This island is 10 x 6 tiles with 3 sausages.
-
-Stop at the first checkpoint that disagrees — that is more useful than
-finishing, and it brackets the fault to a handful of moves.
+And if the picture looks nothing like what you see, say so — that would mean
+my character is not where I think it is, which is more important than the
+ground question.

@@ -75,17 +75,68 @@ def test_walking_into_a_sausage_pushes_it():
     assert result.state.by_id(50).rot == 1
 
 
-def test_unimplemented_mechanic_names_itself():
-    """Points at a mechanic that is still genuinely unimplemented."""
-    s = sausage(4, 4, ident=50, facing=Direction.EAST)
-    skewered = replace(s, stuckto=1)
-    state = flat(width=8, height=8, extra=(skewered,))
-    try:
-        step(state, Direction.NORTH)
-    except UnimplementedMechanic as exc:
-        assert exc.mechanic == "laden movement"
-    else:
-        raise AssertionError("expected UnimplementedMechanic")
+def wall(x, y, z=1, ident=90):
+    return Entity(pos=Coord(x, y, z), type=EntType.GROUND, id=ident, tileset=1)
+
+
+def wedged():
+    """A sausage that cannot be pushed: a wall sits where it would slide to.
+
+    Player faces East at (1,2) with its fork over (2,2); the sausage lies
+    East-West across (3,2)-(4,2) and a block at (5,2) stops it sliding.
+    """
+    return flat(
+        width=7,
+        player_at=(1, 2),
+        facing=Direction.EAST,
+        extra=(sausage(3, 2, facing=Direction.EAST), wall(5, 2)),
+    )
+
+
+def test_walking_into_an_immovable_sausage_pierces_it():
+    """`TryFork` fires exactly where the push failed.
+
+    Its guard is `!ActivelyForced(sausage)` — literally `movement != null` — so
+    a sausage the push moved is pushed, and one the push could not move is
+    forked. Before this existed the move was simply refused, and Emerson Jetty,
+    the first level that needs carrying, was unsolvable.
+    """
+    result = step(wedged(), Direction.EAST)
+    assert result.moved
+    assert result.state.player.stuckto == 50
+    assert result.state.by_id(50).stuckto == result.state.player.id
+
+
+def test_a_pushable_sausage_is_pushed_not_pierced():
+    state = flat(player_at=(1, 2), facing=Direction.EAST,
+                 extra=(sausage(3, 2, facing=Direction.EAST),))
+    result = step(state, Direction.EAST)
+    assert result.state.player.stuckto == -1
+
+
+def test_the_carried_sausage_travels_with_the_player():
+    state = step(wedged(), Direction.EAST).state
+    before = state.by_id(50).pos
+    after = step(state, Direction.NORTH).state
+    assert after.by_id(50).pos == before + Direction.NORTH.delta
+    assert after.player.pos == state.player.pos + Direction.NORTH.delta
+
+
+def test_a_carrying_player_cannot_turn():
+    """`ProcessInput`'s laden branch has no `TryTurnPlayer` at all."""
+    state = step(wedged(), Direction.EAST).state
+    assert state.player.direction is Direction.EAST
+    after = step(state, Direction.NORTH).state
+    assert after.player.direction is Direction.EAST, "carrying should not turn"
+
+
+def test_a_carried_sausage_does_not_fall():
+    """The fork holds it, so `settle` must leave it alone over a gap."""
+    state = step(wedged(), Direction.EAST).state
+    z = state.by_id(50).pos.z
+    # Walk north onto ground, then confirm the sausage stayed at fork height.
+    after = step(state, Direction.NORTH).state
+    assert after.by_id(50).pos.z == z
 
 
 def test_undo_restores_the_previous_state():
@@ -599,3 +650,50 @@ def test_a_lost_state_is_never_solved():
     state = flat(width=8, height=8, extra=(s,))
     state = replace(state, start_pos=state.player.pos, lost_reason="Burned")
     assert not is_solved(state)
+
+
+def ladder_world(height=2, facing=Direction.NORTH):
+    """A wall `height` tall with a ladder up its south face, player facing it."""
+    ents = []
+    for x in range(-1, 2):
+        for y in range(-1, 2):
+            ents.append(Entity(pos=Coord(x, y, 0), type=EntType.GROUND,
+                               id=100 + 10 * (y + 1) + x + 1, tileset=1))
+    # The wall occupies the north column. Its cells *are* the ladder, so the
+    # topmost ladder cell is the top of the wall and the climb steps onto it.
+    for z in range(1, height + 1):
+        ents.append(Entity(pos=Coord(0, -1, z), type=EntType.LADDER, id=200 + z,
+                           direction=Direction.SOUTH))
+    ents.append(Entity(pos=Coord(0, 0, 1), type=EntType.PLAYER, id=1, direction=Direction.EAST))
+    return GameState(entities=tuple(ents), tileset=0)
+
+
+def test_climbing_resolves_to_the_top_in_one_step():
+    """A climb must end somewhere the player can stand.
+
+    An earlier version rose one level and returned, whereupon settle — which
+    asks only for solid ground — found nothing beneath a player on a ladder and
+    dropped it back. Nothing appeared to happen at all.
+    """
+    state = ladder_world(height=2)
+    result = step(state, Direction.NORTH, masks={})
+    assert result.moved
+    assert result.state.player.pos.z > state.player.pos.z, "should have climbed"
+    # Ends on top of the wall, not floating in the ladder's column.
+    assert result.state.player.pos == Coord(0, -1, 3)
+
+
+def test_a_climb_is_not_undone_by_gravity():
+    state = ladder_world(height=3)
+    after = step(state, Direction.NORTH, masks={}).state
+    settled = step(after, None, masks={})
+    assert settled.state.player.pos == after.player.pos
+
+
+def test_climbing_needs_the_ladder_to_face_the_player():
+    """LadderUpInDir requires LadderAt(pos+dir) == dir.Inverse()."""
+    from ssr_env.mechanics import ladder_up_in_dir
+
+    state = ladder_world()
+    assert ladder_up_in_dir(state, Direction.NORTH, {})
+    assert not ladder_up_in_dir(state, Direction.SOUTH, {})
