@@ -1956,39 +1956,36 @@ That is a 27-move window, and the next check should place player checkpoints
 inside it — roughly every five keys — rather than sausage checkpoints.
 
 
-## 12.31 Ladders — the branch fires, gravity undoes it
+## 12.31 A climb resolves to the top, in one step
 
-The owner's key-22 report ("moves you up the ladder") is the first time any
-replay has reached a ladder. There is one at `(-1,-22,-1)` facing south,
-directly north of the player, and `LadderUpInDir` matches:
+Key 22 of the world-sausage sequence climbs a ladder, and the owner reported the
+result as *"9 east, 2 north, with fork pointing east"*. The first implementation
+moved the player up one level and returned. Nothing happened at all.
 
-```
-LadderUpInDir(dir) = LadderAt(pos + dir) == dir.Inverse()
-```
+`settle` asks only for solid ground beneath, and beneath a player on a ladder is
+the air it just left, so gravity put it straight back. Two rules follow, and the
+second subsumes the first:
 
-The ladder must face **back toward** the player — you climb one you are standing
-in front of. `ProcessInput` routes an extended player to `TryClimbUp` here
-rather than turning, which is the §4 branch that had never been exercised.
+1. **A ladder supports what stands on it** — mid-climb the player is held by the
+   ladder, not by the floor.
+2. **A climb is not one rung.** `TryClimbUp` selects `ClimbUp_Init` or
+   `ClimbUp_End1` depending on whether another ladder continues above, and
+   `MType` also carries `ClimbUp_Loop` and `ClimbUp_End2` — the ascent runs to
+   the top of the ladder.
 
-### Implemented, and immediately cancelled
+This simulator is settle-driven (§1), so the whole ascent resolves inside one
+`step`, exactly as a fall does: rise while the ladder continues and the cell
+above is clear, then step forward onto the tile the ladder was mounted against.
+The result is a state gravity will not reclaim — which is what makes rule 1
+unnecessary, since the player is never left part-way up.
 
-`ladder_at`, `ladder_up_in_dir`, `ladder_down_in_dir` and `try_climb_up` are in,
-and the dispatch reaches them: at key 22 the conditions all pass and
-`try_climb_up` alone moves the player from `(-1,-21,-1)` to `(-1,-21,0)`.
+The topmost ladder cell *is* the top of the wall; the step-off lands on the
+empty cell above it. A synthetic test that capped the wall with a further solid
+block left the climb hanging in mid-air — the fixture being wrong, not the rule.
 
-**But the climb is undone within the same step.** `settle` finds nothing solid
-beneath `(-1,-21,0)` — the cell below is the air the player just left — and
-drops it straight back.
+Confirmed against the owner's report at two checkpoints: key 22 lands 9 east,
+2 north facing east, and key 25 lands 9 east, 3 north.
 
-Two things follow:
-
-1. **A ladder must support what stands on it.** `settle` currently asks only for
-   solid ground; a player mid-climb is held by the ladder.
-2. **A climb is not a single step.** `TryClimbUp` picks `ClimbUp_Init` or
-   `ClimbUp_End1` depending on whether another ladder continues above, so the
-   ascent runs until it reaches the top — `MType` also carries `ClimbUp_Loop`
-   and `ClimbUp_End2`.
-
-So the settle-driven model (§1) needs climbing to resolve to its final resting
-place within one `step`, exactly as a fall does — not to leave the player
-part-way up a ladder for gravity to reclaim.
+Entry conditions are unchanged: the branch fires only when the player is
+extended and `LadderAt(pos + dir) == dir.Inverse()`, i.e. the ladder faces back
+at the player.
