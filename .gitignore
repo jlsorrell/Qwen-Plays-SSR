@@ -13,3 +13,10 @@ data/decompiled/
 # Level geometry is derived from the owner's install. Regenerate locally with
 # tools/extract_levels.py rather than redistributing it.
 data/levels
+
+# Generated executable-oracle data and .NET build outputs.
+data/oracle/
+oracle/plugin/bin/
+oracle/plugin/obj/
+oracle/plugin/tests/bin/
+oracle/plugin/tests/obj/
