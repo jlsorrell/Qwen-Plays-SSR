@@ -23,18 +23,34 @@ are **when the fork first goes into the sausage** (the simulator says key 32) an
 
 ## Key sequence
 
-Keys 1-20: `W` `U` `W` `W` `S` `N` `N` `N` `N` `N` `N` `E` `W` `W` `W` `N` `S` `S` `W` `W`
+Five keys per row, with the running key number on the left. **These are compass
+directions, not WASD letters** — "West" means walk/turn west, not the W key. An
+earlier draft of this sheet abbreviated them to single letters, where `W` meant
+west; that was too easy to misread as the up-key, so they are spelled out.
 
-Keys 21-40: `W` `W` `W` `S` `S` `W` `E` `S` `E` `E` `N` `N` `E` `E` `N` `N` `E` `E` `E` `S`
+`Undo` is the game's undo.
 
-Keys 41-60: `S` `S` `S` `W` `S` `N` `N` `N` `N` `E` `E` `S` `W` `W` `N` `W` `E` `N` `N` `E`
-
-Keys 61-80: `E` `E` `S` `E` `W` `W` `S` `S` `E` `E` `E` `E` `E` `N` `W` `N` `S` `W` `S` `E`
-
-Keys 81-100: `W` `W` `W` `W` `W` `W` `W` `N` `S` `S` `S` `S` `S` `S` `W` `E` `E` `E` `E` `E`
-
-(`W`=north, `S`=south, `A`=west, `D`=east, `U`=undo — whichever bindings you use;
-the names above are the compass directions the demo recorded.)
+| Keys | Presses | |
+|---|---|---|
+|  1-5  | West  Undo  West  West  South |
+|  6-10 | North North North North North |  <-- checkpoint at key 10
+| 11-15 | North East  West  West  West  |
+| 16-20 | North South South West  West  |  <-- checkpoint at key 20
+| 21-25 | West  West  West  South South |
+| 26-30 | West  East  South East  East  |  <-- checkpoint at key 30
+| 31-35 | North North East  East  North |  <-- checkpoint at key 32
+| 36-40 | North East  East  East  South |  <-- checkpoint at key 40
+| 41-45 | South South South West  South |
+| 46-50 | North North North North East  |  <-- checkpoint at key 50
+| 51-55 | East  South West  West  North |
+| 56-60 | West  East  North North East  |  <-- checkpoint at key 60
+| 61-65 | East  East  South East  West  |
+| 66-70 | West  South South East  East  |  <-- checkpoint at key 70
+| 71-75 | East  East  East  North West  |
+| 76-80 | North South West  South East  |  <-- checkpoint at key 80
+| 81-85 | West  West  West  West  West  |
+| 86-90 | West  West  North South South |  <-- checkpoint at key 90
+| 91-95 | South South South South West  |
 
 ## Checkpoints — what the simulator predicts
 
