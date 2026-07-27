@@ -599,3 +599,50 @@ def test_a_lost_state_is_never_solved():
     state = flat(width=8, height=8, extra=(s,))
     state = replace(state, start_pos=state.player.pos, lost_reason="Burned")
     assert not is_solved(state)
+
+
+def ladder_world(height=2, facing=Direction.NORTH):
+    """A wall `height` tall with a ladder up its south face, player facing it."""
+    ents = []
+    for x in range(-1, 2):
+        for y in range(-1, 2):
+            ents.append(Entity(pos=Coord(x, y, 0), type=EntType.GROUND,
+                               id=100 + 10 * (y + 1) + x + 1, tileset=1))
+    # The wall occupies the north column. Its cells *are* the ladder, so the
+    # topmost ladder cell is the top of the wall and the climb steps onto it.
+    for z in range(1, height + 1):
+        ents.append(Entity(pos=Coord(0, -1, z), type=EntType.LADDER, id=200 + z,
+                           direction=Direction.SOUTH))
+    ents.append(Entity(pos=Coord(0, 0, 1), type=EntType.PLAYER, id=1, direction=Direction.EAST))
+    return GameState(entities=tuple(ents), tileset=0)
+
+
+def test_climbing_resolves_to_the_top_in_one_step():
+    """A climb must end somewhere the player can stand.
+
+    An earlier version rose one level and returned, whereupon settle — which
+    asks only for solid ground — found nothing beneath a player on a ladder and
+    dropped it back. Nothing appeared to happen at all.
+    """
+    state = ladder_world(height=2)
+    result = step(state, Direction.NORTH, masks={})
+    assert result.moved
+    assert result.state.player.pos.z > state.player.pos.z, "should have climbed"
+    # Ends on top of the wall, not floating in the ladder's column.
+    assert result.state.player.pos == Coord(0, -1, 3)
+
+
+def test_a_climb_is_not_undone_by_gravity():
+    state = ladder_world(height=3)
+    after = step(state, Direction.NORTH, masks={}).state
+    settled = step(after, None, masks={})
+    assert settled.state.player.pos == after.player.pos
+
+
+def test_climbing_needs_the_ladder_to_face_the_player():
+    """LadderUpInDir requires LadderAt(pos+dir) == dir.Inverse()."""
+    from ssr_env.mechanics import ladder_up_in_dir
+
+    state = ladder_world()
+    assert ladder_up_in_dir(state, Direction.NORTH, {})
+    assert not ladder_up_in_dir(state, Direction.SOUTH, {})

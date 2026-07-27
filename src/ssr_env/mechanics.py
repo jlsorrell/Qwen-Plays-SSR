@@ -391,19 +391,51 @@ def ladder_down_in_dir(state: GameState, direction: Direction, masks, level_name
     return found is not None and found is direction
 
 
+#: A ladder taller than this means the climb rules are wrong, not the level.
+_MAX_CLIMB = 32
+
+
 def try_climb_up(
     state: GameState, direction: Direction, masks=None, level_name: str = ""
 ) -> StepResult:
-    """Climb one level up a ladder. Mirrors `TryClimbUp`.
+    """Climb a ladder to its top. Mirrors `TryClimbUp`, resolved to rest.
 
-    The player translates **upward** — not horizontally — and records the climb
-    direction in `dat`. Refused if the destination is occupied.
+    The game climbs one level per tick, choosing `ClimbUp_Init` while another
+    ladder continues above and `ClimbUp_End1` on the last rung. This simulator
+    is settle-driven (§1), so the whole ascent resolves inside one `step`: rise
+    while the ladder continues and the cell above is clear, then step forward
+    onto the top.
+
+    Resolving to rest matters. An earlier version moved the player up a single
+    level and returned, whereupon `settle` — which asks only for solid ground —
+    found nothing beneath a player standing on a ladder and dropped it straight
+    back. A climb must end somewhere it can stand.
     """
     player = state.player
-    destination = player.pos + Direction.UP.delta
-    if solid_ent_at(state, destination, masks, level_name):
+    pos = player.pos
+
+    rungs = 0
+    while rungs < _MAX_CLIMB:
+        above = pos + Direction.UP.delta
+        if solid_ent_at(state, above, masks, level_name):
+            break
+        pos = above
+        rungs += 1
+        # Keep rising only while the ladder continues at the new height.
+        if ladder_at(state, pos + direction.delta, masks, level_name) is not direction.inverse():
+            break
+
+    if rungs == 0:
         return StepResult(state=state, moved=False, reason="ladder blocked above")
-    climbed = replace(player, pos=destination, dat=str(int(direction)))
+
+    # Step off the top, onto the tile the ladder was mounted against.
+    landing = pos + direction.delta
+    if not solid_ent_at(state, landing, masks, level_name) and solid_ent_at(
+        state, landing + Direction.DOWN.delta, masks, level_name
+    ):
+        pos = landing
+
+    climbed = replace(player, pos=pos, dat=str(int(direction)))
     return StepResult(state=state.replace_entity(climbed))
 
 
