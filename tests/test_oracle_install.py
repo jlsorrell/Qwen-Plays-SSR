@@ -21,6 +21,10 @@ from ssr_env.oracle_install import (
     status_install,
 )
 
+OFFICIAL_RUNTIME_ARCHIVE_SHA256 = (
+    "01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323"
+)
+
 
 def make_fake_game(root: Path, assembly: bytes) -> Path:
     managed = root / "Sausage.app/Contents/Resources/Data/Managed"
@@ -33,12 +37,25 @@ def make_fake_game(root: Path, assembly: bytes) -> Path:
 
 def make_runtime_archive(path: Path, script: str = 'executable_name=""\n') -> Path:
     with ZipFile(path, "w") as zf:
+        zf.writestr(".doorstop_version", b"4.5.0")
+        zf.writestr("changelog.txt", b"BepInEx 5.4.23.5")
+        zf.writestr("BepInEx/", b"")
         zf.writestr("run_bepinex.sh", script)
-        zf.writestr("doorstop_config.ini", b"doorstop-config")
         zf.writestr("libdoorstop.dylib", b"doorstop")
         zf.writestr("BepInEx/core/BepInEx.dll", b"core")
         zf.writestr("BepInEx/core/0Harmony.dll", b"harmony")
     return path
+
+
+def pin_runtime_archive(
+    monkeypatch: pytest.MonkeyPatch, archive: Path
+) -> None:
+    monkeypatch.setattr(
+        oracle_install,
+        "EXPECTED_RUNTIME_ARCHIVE_SHA256",
+        sha256(archive.read_bytes()).hexdigest(),
+        raising=False,
+    )
 
 
 def make_known_game(
@@ -51,6 +68,7 @@ def make_known_game(
     )
     game = make_fake_game(tmp_path / "game", assembly)
     archive = make_runtime_archive(tmp_path / "runtime.zip")
+    pin_runtime_archive(monkeypatch, archive)
     return game, archive
 
 
@@ -123,10 +141,47 @@ def test_archive_rejects_unknown_top_level_paths(tmp_path: Path):
         inspect_archive(archive)
 
 
+def test_archive_accepts_the_exact_official_top_level_layout(tmp_path: Path):
+    archive = make_runtime_archive(tmp_path / "official-shape.zip")
+
+    members = inspect_archive(archive)
+
+    assert {
+        member.name.split("/", 1)[0]
+        for member in members
+    } == {
+        ".doorstop_version",
+        "BepInEx",
+        "changelog.txt",
+        "libdoorstop.dylib",
+        "run_bepinex.sh",
+    }
+    doorstop_version = next(
+        member for member in members if member.name == ".doorstop_version"
+    )
+    assert not doorstop_version.is_dir
+    assert doorstop_version.size == len(b"4.5.0")
+
+
+def test_archive_rejects_legacy_doorstop_config(tmp_path: Path):
+    archive = tmp_path / "legacy.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("run_bepinex.sh", 'executable_name=""\n')
+        zf.writestr("doorstop_config.ini", b"not in the official archive")
+        zf.writestr("libdoorstop.dylib", b"doorstop")
+        zf.writestr("BepInEx/core/BepInEx.dll", b"core")
+        zf.writestr("BepInEx/core/0Harmony.dll", b"harmony")
+
+    with pytest.raises(
+        InstallError, match=r"unknown top-level.*doorstop_config\.ini"
+    ):
+        inspect_archive(archive)
+
+
 def test_archive_rejects_children_under_a_top_level_file_root(tmp_path: Path):
     archive = make_runtime_archive(tmp_path / "bad.zip")
     with ZipFile(archive, "a") as zf:
-        zf.writestr("doorstop_config.ini/child", b"surprise")
+        zf.writestr("changelog.txt/child", b"surprise")
     with pytest.raises(InstallError, match="top-level runtime file"):
         inspect_archive(archive)
 
@@ -135,7 +190,7 @@ def test_archive_rejects_children_under_a_top_level_file_root(tmp_path: Path):
     "missing",
     [
         "run_bepinex.sh",
-        "doorstop_config.ini",
+        ".doorstop_version",
         "libdoorstop.dylib",
         "BepInEx/core/BepInEx.dll",
         "BepInEx/core/0Harmony.dll",
@@ -144,13 +199,15 @@ def test_archive_rejects_children_under_a_top_level_file_root(tmp_path: Path):
 def test_archive_requires_bepinex_and_harmony(tmp_path: Path, missing: str):
     required = {
         "run_bepinex.sh": b'executable_name=""\n',
-        "doorstop_config.ini": b"doorstop-config",
+        ".doorstop_version": b"4.5.0",
         "libdoorstop.dylib": b"doorstop",
         "BepInEx/core/BepInEx.dll": b"core",
         "BepInEx/core/0Harmony.dll": b"harmony",
     }
     archive = tmp_path / "incomplete.zip"
     with ZipFile(archive, "w") as zf:
+        zf.writestr("BepInEx/", b"")
+        zf.writestr("changelog.txt", b"BepInEx 5.4.23.5")
         for name, payload in required.items():
             if name != missing:
                 zf.writestr(name, payload)
@@ -163,6 +220,27 @@ def test_install_refuses_wrong_game_assembly(tmp_path: Path):
     archive = make_runtime_archive(tmp_path / "runtime.zip")
     with pytest.raises(InstallError, match=EXPECTED_ASSEMBLY_SHA256):
         install_runtime(game, archive)
+
+
+def test_install_refuses_wrong_runtime_archive_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    assembly = b"known"
+    monkeypatch.setattr(
+        oracle_install,
+        "EXPECTED_ASSEMBLY_SHA256",
+        sha256(assembly).hexdigest(),
+    )
+    game = make_fake_game(tmp_path / "game", assembly)
+    archive = make_runtime_archive(tmp_path / "not-official-bytes.zip")
+
+    with pytest.raises(
+        InstallError, match=OFFICIAL_RUNTIME_ARCHIVE_SHA256
+    ):
+        install_runtime(game, archive)
+
+    assert not (game / "BepInEx").exists()
+    assert not (game / MANIFEST_NAME).exists()
 
 
 def test_install_refuses_existing_unmanaged_bepinex(
@@ -199,6 +277,7 @@ def test_install_rewrites_only_the_executable_name_assignment(
         'executable_name="already-set"\r\n'
     )
     archive = make_runtime_archive(tmp_path / "custom.zip", script)
+    pin_runtime_archive(monkeypatch, archive)
 
     install_runtime(game, archive)
 
@@ -232,6 +311,12 @@ def test_install_manifest_records_archive_hash_and_created_roots(
     assert entries["BepInEx/core/BepInEx.dll"].sha256 == sha256(
         b"core"
     ).hexdigest()
+    assert entries[".doorstop_version"].sha256 == sha256(b"4.5.0").hexdigest()
+    assert entries["changelog.txt"].sha256 == sha256(
+        b"BepInEx 5.4.23.5"
+    ).hexdigest()
+    assert "doorstop_config.ini" not in entries
+    assert not (game / "doorstop_config.ini").exists()
     encoded = (game / MANIFEST_NAME).read_text()
     assert encoded.endswith("\n")
     assert json.loads(encoded) == {
@@ -724,6 +809,29 @@ def test_status_rejects_a_non_string_manifest_kind(
     write_manifest(game, data)
 
     with pytest.raises(InstallError, match="kind"):
+        status_install(game)
+
+
+def test_status_rejects_a_forged_legacy_doorstop_config_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    data = manifest_data(game)
+    entries = data["entries"]
+    assert isinstance(entries, list)
+    doorstop_version = next(
+        entry
+        for entry in entries
+        if entry["relative_path"] == ".doorstop_version"
+    )
+    doorstop_version["relative_path"] = "doorstop_config.ini"
+    (game / ".doorstop_version").replace(game / "doorstop_config.ini")
+    write_manifest(game, data)
+
+    with pytest.raises(
+        InstallError, match=r"doorstop_config\.ini"
+    ):
         status_install(game)
 
 

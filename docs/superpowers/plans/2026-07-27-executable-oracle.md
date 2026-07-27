@@ -181,10 +181,14 @@ Expected: collection fails with `ModuleNotFoundError: No module named 'ssr_env.o
 EXPECTED_ASSEMBLY_SHA256 = (
     "886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564"
 )
+EXPECTED_RUNTIME_ARCHIVE_SHA256 = (
+    "01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323"
+)
 MANIFEST_NAME = ".ssr-oracle-install.json"
 ALLOWED_TOP_LEVEL = {
+    ".doorstop_version",
     "BepInEx",
-    "doorstop_config.ini",
+    "changelog.txt",
     "libdoorstop.dylib",
     "run_bepinex.sh",
 }
@@ -241,10 +245,15 @@ inspect_game:
 inspect_archive:
   normalize every POSIX member path
   reject absolute paths, "..", symlinks, and unknown top-level names
-  require run_bepinex.sh, BepInEx/core/BepInEx.dll, and BepInEx/core/0Harmony.dll
+  allow exactly .doorstop_version, changelog.txt, libdoorstop.dylib,
+    run_bepinex.sh, and BepInEx/ as top-level roots
+  require .doorstop_version, run_bepinex.sh, libdoorstop.dylib,
+    BepInEx/core/BepInEx.dll, and BepInEx/core/0Harmony.dll
 
 install_runtime:
   refuse an existing unmanaged BepInEx directory or manifest
+  compute the exact archive SHA-256 and require
+    01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323
   extract each member through _inside
   change only executable_name="" to executable_name="Sausage.app"
   chmod run_bepinex.sh to 0o755
@@ -449,11 +458,17 @@ shasum -a 256 /private/tmp/BepInEx_macos_universal_5.4.23.5.zip
 unzip -l /private/tmp/BepInEx_macos_universal_5.4.23.5.zip
 ```
 
-Expected: the archive contains `BepInEx/core/BepInEx.dll`,
-`BepInEx/core/0Harmony.dll`, Doorstop, and a macOS run script. If the official
-release redirects to a differently named macOS asset, stop before installation
-and change only the pinned archive name/URL after confirming the release tag is
-still `v5.4.23.5`.
+Expected SHA-256:
+`01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323`.
+The exact top-level members are `.doorstop_version`, `changelog.txt`,
+`libdoorstop.dylib`, `run_bepinex.sh`, and `BepInEx/`.
+`.doorstop_version` contains `4.5.0`; there is no `doorstop_config.ini`.
+The wrapper script supplies Doorstop configuration through environment
+variables. The archive also contains `BepInEx/core/BepInEx.dll` and
+`BepInEx/core/0Harmony.dll`. If the official release redirects to a differently
+named macOS asset, stop before installation and change only the pinned archive
+name/URL after confirming the release tag is still `v5.4.23.5` and re-verifying
+the approved archive SHA-256 and exact member layout.
 
 - [ ] **Step 5: Install the runtime with the tested installer**
 

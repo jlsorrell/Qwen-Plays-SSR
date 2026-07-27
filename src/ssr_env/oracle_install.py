@@ -19,16 +19,20 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 EXPECTED_ASSEMBLY_SHA256 = (
     "886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564"
 )
+EXPECTED_RUNTIME_ARCHIVE_SHA256 = (
+    "01c2ae782eb016dfd6c345a18dbd2dcafffb3d9d318449d6486689f426b4a323"
+)
 MANIFEST_NAME = ".ssr-oracle-install.json"
 ALLOWED_TOP_LEVEL = {
+    ".doorstop_version",
     "BepInEx",
-    "doorstop_config.ini",
+    "changelog.txt",
     "libdoorstop.dylib",
     "run_bepinex.sh",
 }
 REQUIRED_ARCHIVE_FILES = {
     "run_bepinex.sh",
-    "doorstop_config.ini",
+    ".doorstop_version",
     "libdoorstop.dylib",
     "BepInEx/core/BepInEx.dll",
     "BepInEx/core/0Harmony.dll",
@@ -488,6 +492,12 @@ def install_runtime(game_root: Path, archive: Path) -> InstallManifest:
     if _path_exists(manifest_path):
         raise InstallError(f"install manifest already exists: {manifest_path}")
 
+    archive_hash = _sha256_file(archive)
+    if archive_hash != EXPECTED_RUNTIME_ARCHIVE_SHA256:
+        raise InstallError(
+            "unsupported BepInEx runtime archive: "
+            f"expected {EXPECTED_RUNTIME_ARCHIVE_SHA256}, got {archive_hash}"
+        )
     validated = _validated_archive_infos(archive)
     members = tuple(member for member, _ in validated)
     top_levels = sorted(
@@ -532,6 +542,8 @@ def install_runtime(game_root: Path, archive: Path) -> InstallManifest:
 
         script = staging / "run_bepinex.sh"
         _rewrite_executable_assignment(script)
+        if _sha256_file(archive) != archive_hash:
+            raise InstallError("BepInEx runtime archive changed during installation")
         directories = _entry_directories(members)
         entries = [
             ManifestEntry(path, "directory", None)
@@ -551,7 +563,7 @@ def install_runtime(game_root: Path, archive: Path) -> InstallManifest:
         manifest = InstallManifest(
             schema_version=1,
             game_assembly_sha256=game.assembly_sha256,
-            runtime_archive_sha256=_sha256_file(archive),
+            runtime_archive_sha256=archive_hash,
             entries=tuple(
                 sorted(entries, key=lambda entry: entry.relative_path)
             ),
