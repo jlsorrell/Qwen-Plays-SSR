@@ -697,3 +697,70 @@ def test_climbing_needs_the_ladder_to_face_the_player():
     state = ladder_world()
     assert ladder_up_in_dir(state, Direction.NORTH, {})
     assert not ladder_up_in_dir(state, Direction.SOUTH, {})
+
+
+def island_floor(width=7):
+    """A floor made of one ISLAND entity, resolved through a mask.
+
+    The distinction matters: `TryPivotTurn` returns false unless the floor is an
+    island, so a GROUND floor refuses the pivot for a different reason and would
+    not exercise the path under test.
+    """
+    mask = {"offset": [0, 0, 0],
+            "mask": [[[1] for _ in range(width)] for _ in range(width)]}
+    return {"isle": mask}
+
+
+def pillared_island():
+    """Player *inside a level*, on that level's island, facing South.
+
+    `pushtargetlevel` matching the island's `dat` is the whole point: it is what
+    makes the floor unpushable and so the pivot impossible. A pillar east of the
+    player blocks the turn's fork sweep and forces the pivot to be attempted.
+    """
+    ents = [
+        Entity(pos=Coord(0, 0, 0), type=EntType.ISLAND, id=70, dat="isle", tileset=1),
+        Entity(pos=Coord(2, 2, 1), type=EntType.PLAYER, id=1, direction=Direction.SOUTH),
+        wall(3, 2, z=1, ident=91),
+        wall(3, 3, z=1, ident=92),
+    ]
+    state = GameState(entities=tuple(ents), tileset=0,
+                      overworld=False, pushtargetlevel="isle")
+    return state, island_floor()
+
+
+def test_a_pivot_turn_fails_when_the_footing_cannot_move():
+    """`TryPivotTurn` keeps the result of shoving its own floor.
+
+        flag = ApplyForce(e.pos + Coord.Down, pushdir, 0, 1, ...);
+        if (!flag || e.Collides()) { RestoreEntities(); return false; }
+
+    The floor here is the island the player stands on, which `TryPushEnt`
+    refuses to move, so `flag` is false and the pivot cannot succeed — the turn
+    is simply refused. Inside a level the same holds for a stronger reason:
+    `pushtargetlevel == e.dat` rejects the level's own island outright.
+
+    Confirmed by play at key 80 of Emerson Jetty. With a pillar east of the
+    player, pressing East leaves it facing South; this simulator used to swing
+    the body one cell west and complete the turn.
+    """
+    state, masks = pillared_island()
+    before = state.player
+    result = step(state, Direction.EAST, masks=masks)
+    assert not result.moved
+    assert result.state.player.pos == before.pos, "a failed pivot must not move the body"
+    assert result.state.player.direction is Direction.SOUTH, "facing must not change"
+
+
+def test_a_free_island_still_pivots():
+    """The counterpart: outside a level the floor *can* move, so the pivot works.
+
+    `canchangeplayerfooting` bypasses the "cannot push your own footing" guard,
+    which is why this case must keep working — the level guard is what stops the
+    other one, not the footing guard.
+    """
+    state, masks = pillared_island()
+    free = replace(state, overworld=True, pushtargetlevel="")
+    result = step(free, Direction.EAST, masks=masks)
+    assert result.moved
+    assert result.state.player.direction is Direction.EAST

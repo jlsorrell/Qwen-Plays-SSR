@@ -82,7 +82,12 @@ def _free(state: GameState, pos, masks, level_name: str) -> bool:
 
 
 def _force_at(
-    state: GameState, cell, direction: Direction, masks, level_name: str
+    state: GameState,
+    cell,
+    direction: Direction,
+    masks,
+    level_name: str,
+    can_change_player_footing: bool = False,
 ) -> GameState:
     """Apply a force at one cell. Mirrors `ApplyForce(pos, dir, ...)`.
 
@@ -94,7 +99,14 @@ def _force_at(
     target = ent_at(state, cell, masks, level_name)
     if target is None or not is_solid(target, state.tileset):
         return state
-    return try_push(state, target, direction, masks, level_name)
+    return try_push(
+        state,
+        target,
+        direction,
+        masks,
+        level_name,
+        can_change_player_footing=can_change_player_footing,
+    )
 
 
 def apply_pivot_forces_1(
@@ -166,14 +178,40 @@ def try_pivot_turn(
         return StepResult(state=state, moved=False, reason="no diagonal to pivot through")
     pushdir = target_facing.inverse()
 
+    entry = state
     state = apply_pivot_forces_1(
         state, player, pushdir, player.direction, diagonal, masks, level_name
     )
     # The player braces against its own footing — the one place the game passes
     # canchangeplayerfooting, because a pivot moves the island underneath.
     state = _force_at(
-        state, player.pos + Direction.DOWN.delta, pushdir, masks, level_name
+        state,
+        player.pos + Direction.DOWN.delta,
+        pushdir,
+        masks,
+        level_name,
+        can_change_player_footing=True,
     )
+
+    # **The pivot only happens if the floor actually moved.** The game keeps that
+    # result and refuses on it:
+    #
+    #     flag = ApplyForce(e.pos + Coord.Down, pushdir, 0, 1, ...);
+    #     if (!flag || e.Collides()) { RestoreEntities(); return false; }
+    #
+    # Discarding it made every blocked turn pivot, walking the player a cell
+    # backwards and completing a turn the game refuses outright. Inside a level
+    # this is not an edge case but the norm: the floor is the level's own
+    # island, and `TryPushEnt` rejects it (`pushtargetlevel == e.dat`), so a
+    # pivot turn can never succeed there. Confirmed by play at key 80 of
+    # Emerson Jetty — see docs/mechanics.md §12.34.
+    if state.by_id(footing.id).pos == footing.pos:
+        return StepResult(
+            state=entry,
+            moved=False,
+            reason="turn blocked (pivot needs the footing to move)",
+        )
+
     player = state.player
     state = apply_pivot_forces_2(
         state, player, pushdir, player.direction, diagonal, masks, level_name
@@ -599,6 +637,7 @@ def try_push(
     masks=None,
     level_name: str = "",
     depth: int = 0,
+    can_change_player_footing: bool = False,
 ) -> GameState:
     """Push one entity. Mirrors `GameState.TryPushEnt`, partially.
 
@@ -622,15 +661,26 @@ def try_push(
         footing = (
             floor_under(players[0], state, masks, level_name) if players else None
         )
-        if not direction.is_vertical and footing is not None and footing.id == entity.id:
+        if (
+            not can_change_player_footing
+            and not direction.is_vertical
+            and footing is not None
+            and footing.id == entity.id
+        ):
+            return state
+        # `pushtargetlevel == e.dat` — the island of the level you are inside is
+        # never pushable, and unlike the footing guard above, this one is *not*
+        # bypassed by `canchangeplayerfooting`. That asymmetry is what makes a
+        # pivot turn impossible inside a level: the pivot must shove its own
+        # floor, and inside a level the floor is precisely this island (§12.34).
+        if state.pushtargetlevel and state.pushtargetlevel == entity.dat:
             return state
         # Otherwise `TryPushEnt` builds an ordinary translation: an island is a
         # movable terrain chunk (the world-6 mechanic). Its mask is indexed
         # relative to `entity.pos`, so moving the entity carries the terrain.
         #
-        # Two further refusals are not modelled because their state is not
-        # represented here: `overworld && pushestotry == 0`, and
-        # `pushtargetlevel == e.dat`. Neither applies inside a level.
+        # `overworld && pushestotry == 0` is still not modelled; that state is
+        # not represented here.
 
     rolls = entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction)
 

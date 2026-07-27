@@ -2145,3 +2145,60 @@ region down the x=11 column and east along y=-18 to the grills at (13,-15),
 (13,-14), (14,-15), (14,-14), all of which resolve correctly. The player simply
 never gets there — it stays north of y=-25 for a thousand moves while the grills
 sit ten tiles further south.
+
+## 12.34 A pivot turn must move its own floor — so it cannot happen inside a level
+
+Key 80 of Emerson Jetty, reported by the owner from play: the player stands at
+4 east / 6 north facing **south**, with a pillar directly east. Pressing east
+leaves it exactly there, still facing south. This simulator instead swung the
+body one cell west and completed the turn to face east.
+
+The turn is refused because the pivot fallback fails. `TryTurn` rotates in place
+and pushes whatever sits in the swept diagonal; if the result collides — here the
+fork's destination is the pillar — it restores and calls `TryPivotTurn`. That
+function ends:
+
+    flag = ApplyForce(e.pos + Coord.Down, pushdir, 0, 1, ..., canchangeplayerfooting: true);
+    ...
+    if (!flag || e.Collides()) { RestoreEntities(); return false; }
+
+**The pivot shoves its own floor, and only happens if the floor actually moved.**
+This simulator applied that force and discarded the result, so every blocked turn
+pivoted.
+
+Two guards in `TryPushEnt` decide whether the floor moves, and the difference
+between them is the whole rule:
+
+| guard | bypassed by `canchangeplayerfooting`? |
+|---|---|
+| `Footing(player) == e && !dir.Vertical()` — cannot push what you stand on | **yes** |
+| `pushtargetlevel == e.dat` — cannot push the island of the level you are in | **no** |
+
+So on the overworld a pivot works: the footing guard is bypassed and the island
+slides. **Inside a level it can never work**, because the floor is that level's
+own island and the second guard rejects it outright. A blocked turn inside a
+level is simply a refused turn.
+
+An earlier note here claimed `pushtargetlevel == e.dat` did not apply inside a
+level. It is the one that does.
+
+The sausage still gets shoved east before the turn is refused — the owner saw
+this and this simulator reproduces it, because the diagonal sweep's push happens
+in `TryTurn` before the collision test. Whether that push should survive
+`RestoreEntities` is not yet settled from the source; `moveattempts` plus
+`PassiveForceSweep` is the likely mechanism, and observation is what this rests
+on for now.
+
+Effect on the replay: refusals across segment `2-1` fall from 56/195 to 13/195,
+and the sausage now reaches the grills and finishes fully cooked,
+`faces=(2,2,2,2)`.
+
+### Two faults this exposed
+
+1. **Sausage 206 is marked `SausageLost`.** It belongs to another, still-sunken
+   level and sits parked at z=-11, below `OUT_OF_WORLD_Z`. Entities belonging to
+   levels that have not been entered must not be subject to the drowning check.
+2. **The completion test counts it.** With sausage 207 fully cooked the level
+   still does not complete, because an uncooked sausage elsewhere in the
+   composite overworld fails the all-cooked test. Only the current level's
+   sausages should count.
