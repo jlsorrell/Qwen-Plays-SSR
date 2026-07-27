@@ -40,10 +40,13 @@ Usage:  uv run python tools/level_audit.py [--limit N] [--json out.json]
 
 import argparse
 import json
-from dataclasses import dataclass, replace
+from collections import deque
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 from ssr_env.dem import parse_dem_file
+from ssr_env.diagnostics import StepTrace, trace_step
 from ssr_env.level import load_island_masks, load_overworld, load_overworld_meta
 from ssr_env.mechanics import (
     UnimplementedMechanic,
@@ -55,6 +58,8 @@ from ssr_env.state import with_entities
 from ssr_env.types import EntType
 
 DEM_DIR = Path("data/dem")
+TraceMode = Literal["none", "failures", "changes"]
+FAILURE_CONTEXT = 5
 
 
 def segment_order() -> list[str]:
@@ -82,6 +87,9 @@ class Segment:
     entered_at: int | None = None
     completed_at: int | None = None
     lost: str = ""
+    lost_at: int | None = None
+    failure_at: int | None = None
+    events: list[StepTrace] = field(default_factory=list)
     error: str = ""
     resynced_before: bool = False
     #: True when the level was already active as the segment opened — only then
@@ -149,7 +157,11 @@ def resync(state, level: str, meta, masks):
     return restored
 
 
-def audit(limit: int | None = None) -> list[Segment]:
+def audit(
+    limit: int | None = None,
+    trace_mode: TraceMode = "none",
+    segment_filter: str | None = None,
+) -> list[Segment]:
     masks = load_island_masks()
     meta = load_overworld_meta()
     state = load_overworld()
@@ -162,6 +174,7 @@ def audit(limit: int | None = None) -> list[Segment]:
     forced_previous = False
 
     for seg in segs:
+        recent: deque[StepTrace] = deque(maxlen=FAILURE_CONTEXT)
         seg.resynced_before = forced_previous
         # Segment boundaries fall at level *entry*, not exit: a segment ends by
         # walking into the next level, which is then solved during the segment
@@ -175,10 +188,31 @@ def audit(limit: int | None = None) -> list[Segment]:
                 result = step(state, inputs[k], history, masks, "", meta)
             except UnimplementedMechanic as exc:
                 seg.error = f"unimplemented: {exc}"
+                seg.failure_at = k + 1
                 break
             except Exception as exc:  # noqa: BLE001 - the audit must not stop
                 seg.error = f"{type(exc).__name__}: {exc}"
+                seg.failure_at = k + 1
                 break
+            event = trace_step(
+                state,
+                result.state,
+                input_index=k,
+                segment=seg.name,
+                segment_index=k - seg.start,
+                action=inputs[k],
+                moved=result.moved,
+                reason=result.reason,
+            )
+            keep_trace = segment_filter is None or segment_filter == seg.name
+            first_loss = bool(result.state.lost_reason) and seg.lost_at is None
+            if event is not None and keep_trace:
+                if trace_mode == "changes":
+                    seg.events.append(event)
+                elif trace_mode == "failures" and first_loss:
+                    seg.events = [*recent, event]
+                elif trace_mode == "failures":
+                    recent.append(event)
             before_level = state.pushtargetlevel
             state = result.state
             if state.pushtargetlevel and seg.entered_at is None:
@@ -187,8 +221,10 @@ def audit(limit: int | None = None) -> list[Segment]:
                     seg.level = state.pushtargetlevel
             if before_level == under_test and not state.pushtargetlevel:
                 seg.completed_at = k
-            if state.lost_reason:
+            if state.lost_reason and seg.lost_at is None:
                 seg.lost = state.lost_reason
+                seg.lost_at = k + 1
+                seg.failure_at = k + 1
 
         # Only force a resync for a level that was under test and did not
         # finish. A segment that merely walks into the next level is fine.
@@ -203,6 +239,25 @@ def audit(limit: int | None = None) -> list[Segment]:
         else:
             forced_previous = False
     return segs
+
+
+def segment_to_dict(segment: Segment) -> dict[str, object]:
+    return {
+        "name": segment.name,
+        "start": segment.start,
+        "end": segment.end,
+        "level": segment.level,
+        "entered_at": segment.entered_at,
+        "completed_at": segment.completed_at,
+        "lost": segment.lost or None,
+        "lost_at": segment.lost_at,
+        "failure_at": segment.failure_at,
+        "error": segment.error or None,
+        "resynced_before": segment.resynced_before,
+        "under_test": segment.under_test,
+        "status": segment.status,
+        "events": [event.to_dict() for event in segment.events],
+    }
 
 
 def main() -> None:
@@ -237,7 +292,9 @@ def main() -> None:
         print("  failure kinds:", ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
 
     if args.json:
-        args.json.write_text(json.dumps([s.__dict__ for s in segs], indent=2))
+        args.json.write_text(
+            json.dumps([segment_to_dict(segment) for segment in segs], indent=2)
+        )
         print(f"\nwrote {args.json}")
 
 
