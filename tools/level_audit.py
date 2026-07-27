@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Literal
 
 from ssr_env.dem import parse_dem_file
-from ssr_env.diagnostics import StepTrace, trace_step
+from ssr_env.diagnostics import EntityDelta, EntitySnapshot, StepTrace, trace_step
 from ssr_env.level import load_island_masks, load_overworld, load_overworld_meta
 from ssr_env.mechanics import (
     UnimplementedMechanic,
@@ -55,7 +55,7 @@ from ssr_env.mechanics import (
     step,
 )
 from ssr_env.state import with_entities
-from ssr_env.types import EntType
+from ssr_env.types import EntType, Input
 
 DEM_DIR = Path("data/dem")
 TraceMode = Literal["none", "failures", "changes"]
@@ -78,6 +78,31 @@ def segment_order() -> list[str]:
     return names
 
 
+@dataclass(frozen=True, slots=True)
+class ExceptionTrace:
+    input_index: int
+    global_move: int
+    segment: str
+    segment_index: int
+    segment_move: int
+    input: Input
+    error: str
+    changes: tuple[EntityDelta, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kind": "exception",
+            "input_index": self.input_index,
+            "global_move": self.global_move,
+            "segment": self.segment,
+            "segment_index": self.segment_index,
+            "segment_move": self.segment_move,
+            "input": self.input.name,
+            "error": self.error,
+            "changes": [],
+        }
+
+
 @dataclass
 class Segment:
     name: str
@@ -89,7 +114,7 @@ class Segment:
     lost: str = ""
     lost_at: int | None = None
     failure_at: int | None = None
-    events: list[StepTrace] = field(default_factory=list)
+    events: list[StepTrace | ExceptionTrace] = field(default_factory=list)
     error: str = ""
     resynced_before: bool = False
     #: True when the level was already active as the segment opened — only then
@@ -161,6 +186,7 @@ def audit(
     limit: int | None = None,
     trace_mode: TraceMode = "none",
     segment_filter: str | None = None,
+    step_fn=step,
 ) -> list[Segment]:
     masks = load_island_masks()
     meta = load_overworld_meta()
@@ -183,16 +209,32 @@ def audit(
         under_test = state.pushtargetlevel or None
         seg.level = under_test
         seg.under_test = under_test is not None
+        keep_trace = segment_filter is None or segment_filter == seg.name
         for k in range(seg.start, min(seg.end + 1, len(inputs))):
             try:
-                result = step(state, inputs[k], history, masks, "", meta)
-            except UnimplementedMechanic as exc:
-                seg.error = f"unimplemented: {exc}"
-                seg.failure_at = k + 1
-                break
+                result = step_fn(state, inputs[k], history, masks, "", meta)
             except Exception as exc:  # noqa: BLE001 - the audit must not stop
-                seg.error = f"{type(exc).__name__}: {exc}"
-                seg.failure_at = k + 1
+                seg.error = (
+                    f"unimplemented: {exc}"
+                    if isinstance(exc, UnimplementedMechanic)
+                    else f"{type(exc).__name__}: {exc}"
+                )
+                if seg.failure_at is None:
+                    seg.failure_at = k + 1
+                exception_event = ExceptionTrace(
+                    input_index=k,
+                    global_move=k + 1,
+                    segment=seg.name,
+                    segment_index=k - seg.start,
+                    segment_move=k - seg.start + 1,
+                    input=inputs[k],
+                    error=seg.error,
+                )
+                if keep_trace:
+                    if trace_mode == "failures":
+                        seg.events = [*recent, exception_event]
+                    elif trace_mode == "changes":
+                        seg.events.append(exception_event)
                 break
             event = trace_step(
                 state,
@@ -204,14 +246,13 @@ def audit(
                 moved=result.moved,
                 reason=result.reason,
             )
-            keep_trace = segment_filter is None or segment_filter == seg.name
             first_loss = bool(result.state.lost_reason) and seg.lost_at is None
             if event is not None and keep_trace:
                 if trace_mode == "changes":
                     seg.events.append(event)
                 elif trace_mode == "failures" and first_loss:
                     seg.events = [*recent, event]
-                elif trace_mode == "failures":
+                if trace_mode == "failures" and event.changes:
                     recent.append(event)
             before_level = state.pushtargetlevel
             state = result.state
@@ -260,7 +301,60 @@ def segment_to_dict(segment: Segment) -> dict[str, object]:
     }
 
 
-def format_event(event: StepTrace) -> str:
+def _format_coord(coord) -> str:
+    return f"[{coord.x},{coord.y},{coord.z}]"
+
+
+def _format_faces(faces: tuple[int, int, int, int]) -> str:
+    return "[" + ",".join(str(face) for face in faces) + "]"
+
+
+def _format_snapshot(snapshot: EntitySnapshot) -> str:
+    return ", ".join(
+        (
+            f"pos={_format_coord(snapshot.pos)}",
+            f"direction={snapshot.direction.name}",
+            f"rot={snapshot.rot}",
+            f"faces={_format_faces(snapshot.faces)}",
+            f"stuckto={snapshot.stuckto}",
+            f"status={snapshot.status}",
+        )
+    )
+
+
+def _format_delta(delta: EntityDelta) -> str:
+    snapshot = delta.before or delta.after
+    assert snapshot is not None
+    identity = f"{snapshot.type.name}#{delta.entity_id}"
+    if delta.before is None:
+        return f"{identity}(spawn {_format_snapshot(delta.after)})"
+    if delta.after is None:
+        return f"{identity}(removed {_format_snapshot(delta.before)})"
+
+    before = delta.before
+    after = delta.after
+    values = (
+        ("pos", _format_coord(before.pos), _format_coord(after.pos)),
+        ("direction", before.direction.name, after.direction.name),
+        ("rot", str(before.rot), str(after.rot)),
+        ("faces", _format_faces(before.faces), _format_faces(after.faces)),
+        ("stuckto", str(before.stuckto), str(after.stuckto)),
+        ("status", before.status, after.status),
+    )
+    changed = ", ".join(
+        f"{name}={old}->{new}" for name, old, new in values if old != new
+    )
+    return f"{identity}({changed})"
+
+
+def format_event(event: StepTrace | ExceptionTrace) -> str:
+    if isinstance(event, ExceptionTrace):
+        return (
+            f"global {event.global_move} "
+            f"{event.segment}:{event.segment_move} "
+            f"{event.input.name}: exception={event.error}; entities=-"
+        )
+
     labels: list[str] = []
     if not event.moved:
         labels.append("refused")
@@ -273,11 +367,27 @@ def format_event(event: StepTrace) -> str:
     if event.loss:
         labels.append(f"loss={event.loss}")
     summary = "; ".join(labels) if labels else "changed"
-    changed = ", ".join(str(delta.entity_id) for delta in event.changes) or "-"
+    changed = ", ".join(_format_delta(delta) for delta in event.changes) or "-"
     return (
         f"global {event.global_move} "
         f"{event.segment}:{event.segment_move} "
         f"{event.input.name}: {summary}; entities={changed}"
+    )
+
+
+def format_segment_row(segment: Segment) -> str:
+    entered_move = (
+        segment.entered_at + 1 if segment.entered_at is not None else ""
+    )
+    completed_move = (
+        segment.completed_at + 1 if segment.completed_at is not None else ""
+    )
+    return (
+        f"{segment.name:<10} {(segment.level or ''):<16} {segment.status:<16} "
+        f"{segment.failure_at if segment.failure_at is not None else '':>8} "
+        f"{entered_move:>8} "
+        f"{completed_move:>8}"
+        f"  {'after-resync' if segment.resynced_before else 'clean'}"
     )
 
 
@@ -304,13 +414,7 @@ def main() -> None:
         f"{'at':>8} {'entered':>8} {'done':>8}  run-up"
     )
     for s in with_level:
-        print(
-            f"{s.name:<10} {(s.level or ''):<16} {s.status:<16} "
-            f"{s.failure_at if s.failure_at is not None else '':>8} "
-            f"{s.entered_at if s.entered_at is not None else '':>8} "
-            f"{s.completed_at if s.completed_at is not None else '':>8}"
-            f"  {'after-resync' if s.resynced_before else 'clean'}"
-        )
+        print(format_segment_row(s))
 
     print(f"\nsegments carrying a level: {len(with_level)}")
     print(f"  solved:                  {len(ok)}")

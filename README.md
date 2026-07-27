@@ -26,5 +26,9 @@ UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python tools/level_audit.py \
   --limit 21 --trace failures --segment 2-3
 ```
 
-Add `--json PATH` for machine-readable output. Move numbers shown to users are
-one-based; JSON also includes the zero-based `input_index`.
+Add `--json PATH` for machine-readable output. Move numbers shown in the human
+table and trace are one-based. JSON fields ending in `_at` retain their
+established stored meanings: `entered_at` and `completed_at` are zero-based
+input indices, while `lost_at` and `failure_at` are one-based move numbers.
+Trace events likewise include zero-based `input_index` and `segment_index`
+alongside one-based `global_move` and `segment_move`.
