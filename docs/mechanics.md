@@ -1846,3 +1846,38 @@ playthrough (§12.22: all 103 undos fall after move 855).
 **This is a seven-move bracket on a divergence that was previously 15,000 moves
 wide.** Everything after it — the sausage's whole journey, the fall at (1,-26),
 the 26-38% overworld refusal rate — is downstream of these seven inputs.
+
+
+## 12.28 Undo is correct — the bracket narrows to two candidates
+
+Checked directly. At key 2 of the world-sausage sequence — the first undo in the
+entire playthrough — undo restores exactly the state before key 1, and the
+history depth returns from 852 to 851. **Undo is not the fault**, and the
+§12.22 suspicion is discharged.
+
+That leaves the player's position. The facts:
+
+```
+before move 855:   player (-10,-20) facing WEST, inside The Anchorage
+level35 exit pose: (-10,-20) facing NORTH
+after move 855:    player (-10,-20) facing NORTH, on the overworld
+```
+
+Move 855 turns the player north, which satisfies the exit condition, and this
+model leaves the player standing **on** the exit cell.
+
+For the fork to catch the plaque at key 8 the player must reach `(-7,-20)`.
+Keys 3-7 are `A D D D D` — turn west, then four moves east — so:
+
+| Candidate | Consequence |
+|---|---|
+| Key-0 position should be `(-11,-20)` | leaving a level puts the player one tile **off** the exit cell, not on it |
+| One of keys 4-7 should not move | something blocks an eastward step this model allows |
+
+**Do not guess between these.** Three earlier hypotheses on this thread were
+retracted, and each was adopted because the arithmetic fitted. The two above fit
+equally well.
+
+**The distinguishing observation is narrow:** on completing The Anchorage and
+returning to the overworld, is the character standing *on* the level entrance,
+or one tile away from it?
