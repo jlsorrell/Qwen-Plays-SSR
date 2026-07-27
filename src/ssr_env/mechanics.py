@@ -27,6 +27,7 @@ from .geometry import (
 )
 from .level import (
     bbq_direction_from_mask,
+    ladder_direction_from_mask,
     mask_value_at,
     resolve_island_mask,
 )
@@ -354,6 +355,58 @@ _MAX_SETTLE_STEPS = 64
 _MAX_PUSH_DEPTH = 8
 
 
+def ladder_at(state: GameState, cell, masks, level_name: str = ""):
+    """Direction of the ladder at `cell`, or None. Mirrors `GameState.LadderAt`.
+
+    A ladder is either an `EntType.LADDER` entity — whose `direction` is the way
+    it faces — or an island mask value in 3..6 (§10.3).
+    """
+    entity = ent_at(state, cell, masks, level_name)
+    if entity is None:
+        return None
+    if entity.type is EntType.LADDER:
+        return entity.direction
+    if entity.type is EntType.ISLAND and masks:
+        mask = resolve_island_mask(level_name, entity.dat, masks)
+        if mask is not None:
+            return ladder_direction_from_mask(mask_value_at(mask, entity.pos, cell))
+    return None
+
+
+def ladder_up_in_dir(state: GameState, direction: Direction, masks, level_name="") -> bool:
+    """Mirrors `LadderUpInDir`: `LadderAt(pos + dir) == dir.Inverse()`.
+
+    The ladder must *face back toward* the player — you climb a ladder you are
+    standing in front of, not one facing away.
+    """
+    found = ladder_at(state, state.player.pos + direction.delta, masks, level_name)
+    return found is not None and found is direction.inverse()
+
+
+def ladder_down_in_dir(state: GameState, direction: Direction, masks, level_name="") -> bool:
+    """Mirrors `LadderDownInDir`: `LadderAt(pos + Down) == dir`."""
+    found = ladder_at(
+        state, state.player.pos + Direction.DOWN.delta, masks, level_name
+    )
+    return found is not None and found is direction
+
+
+def try_climb_up(
+    state: GameState, direction: Direction, masks=None, level_name: str = ""
+) -> StepResult:
+    """Climb one level up a ladder. Mirrors `TryClimbUp`.
+
+    The player translates **upward** — not horizontally — and records the climb
+    direction in `dat`. Refused if the destination is occupied.
+    """
+    player = state.player
+    destination = player.pos + Direction.UP.delta
+    if solid_ent_at(state, destination, masks, level_name):
+        return StepResult(state=state, moved=False, reason="ladder blocked above")
+    climbed = replace(player, pos=destination, dat=str(int(direction)))
+    return StepResult(state=state.replace_entity(climbed))
+
+
 def bbqs_on(state: GameState) -> bool:
     """Whether grills are hot. Mirrors `GameState.bbqsOn`.
 
@@ -679,6 +732,13 @@ def step(
 
     if action.parallel_to(player.direction):
         result = try_move_player(state, action, masks, level_name)
+    elif is_extended(player, state) and ladder_up_in_dir(
+        state, action, masks, level_name
+    ):
+        # `ProcessInput`: an extended player facing a ladder climbs it rather
+        # than turning. This branch was transcribed in §4 and left unimplemented
+        # for a long time because no replay had reached a ladder.
+        result = try_climb_up(state, action, masks, level_name)
     else:
         result = try_turn_player(state, action, masks, level_name)
 

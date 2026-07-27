@@ -1954,3 +1954,41 @@ facing as well as the sausage's.
 Somewhere in keys **21-47**, in player movement, while the sausage sits still.
 That is a 27-move window, and the next check should place player checkpoints
 inside it — roughly every five keys — rather than sausage checkpoints.
+
+
+## 12.31 Ladders — the branch fires, gravity undoes it
+
+The owner's key-22 report ("moves you up the ladder") is the first time any
+replay has reached a ladder. There is one at `(-1,-22,-1)` facing south,
+directly north of the player, and `LadderUpInDir` matches:
+
+```
+LadderUpInDir(dir) = LadderAt(pos + dir) == dir.Inverse()
+```
+
+The ladder must face **back toward** the player — you climb one you are standing
+in front of. `ProcessInput` routes an extended player to `TryClimbUp` here
+rather than turning, which is the §4 branch that had never been exercised.
+
+### Implemented, and immediately cancelled
+
+`ladder_at`, `ladder_up_in_dir`, `ladder_down_in_dir` and `try_climb_up` are in,
+and the dispatch reaches them: at key 22 the conditions all pass and
+`try_climb_up` alone moves the player from `(-1,-21,-1)` to `(-1,-21,0)`.
+
+**But the climb is undone within the same step.** `settle` finds nothing solid
+beneath `(-1,-21,0)` — the cell below is the air the player just left — and
+drops it straight back.
+
+Two things follow:
+
+1. **A ladder must support what stands on it.** `settle` currently asks only for
+   solid ground; a player mid-climb is held by the ladder.
+2. **A climb is not a single step.** `TryClimbUp` picks `ClimbUp_Init` or
+   `ClimbUp_End1` depending on whether another ladder continues above, so the
+   ascent runs until it reaches the top — `MType` also carries `ClimbUp_Loop`
+   and `ClimbUp_End2`.
+
+So the settle-driven model (§1) needs climbing to resolve to its final resting
+place within one `step`, exactly as a fall does — not to leave the player
+part-way up a ladder for gravity to reclaim.
