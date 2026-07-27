@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from .entity import Entity
 from .state import GameState
-from .types import Coord, Direction, EntType, Input
+from .types import Coord, Direction, EntType
 
 
 @dataclass(frozen=True, slots=True)

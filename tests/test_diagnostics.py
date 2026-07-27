@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import replace
 
 from ssr_env.diagnostics import EntitySnapshot, entity_deltas, snapshot_dynamic
@@ -85,8 +86,8 @@ def test_spawn_and_removal_use_none_for_the_absent_side():
 def test_delta_calculation_does_not_mutate_either_state():
     before = dynamic_state(player(), sausage())
     after = dynamic_state(player(), replace(sausage(), pos=Coord(5, 5, 1)))
-    expected_before = before
-    expected_after = after
+    expected_before = deepcopy(before)
+    expected_after = deepcopy(after)
     entity_deltas(before, after)
     assert before == expected_before
     assert after == expected_after
