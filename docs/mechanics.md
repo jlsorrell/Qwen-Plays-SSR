@@ -1989,3 +1989,50 @@ Confirmed against the owner's report at two checkpoints: key 22 lands 9 east,
 Entry conditions are unchanged: the branch fires only when the player is
 extended and `LadderAt(pos + dir) == dir.Inverse()`, i.e. the ladder faces back
 at the player.
+
+## 12.32 Climbing down — the branch that stranded the player on a ledge
+
+After §12.31 the player climbed *up* correctly and was then stuck: from key 39
+of the world-sausage sequence every eastward press was refused for want of
+ground. It was standing on a one-tile block with the terrain a level lower all
+around, and `TryMovePlayer` will not step down.
+
+That refusal is right. `TryMovePlayer` ends with
+
+    flag4 = StableGround(player.TargetPos())
+
+and `StableGround(c)` returns true when `EntAt(c + Down)` is null, a decoration,
+or moving — so despite the name it reports *un*stable footing, and `flag4`
+restores the entities, i.e. refuses the move. The game really does forbid
+walking off a step. This is the same rule already confirmed by observation on
+Southjaunt's westmost panel (§5.3); it simply also covers a one-level drop.
+
+Descending is a separate branch, `TryClimbDown`, which I had not implemented:
+
+    LadderDownInDir(dir)  ==  LadderAt(player.pos + Down) == dir
+
+— a ladder in the block **underfoot**, facing the way the player is going. Note
+the asymmetry with `LadderUpInDir`, which looks at `pos + dir` and wants
+`dir.Inverse()`: going up you face the ladder across a gap, going down you are
+standing on top of it.
+
+`ProcessInput` guards it with `&& !SolidEntAt(player.pos + dir + Down)` — if
+there is something to walk onto, the player walks instead of climbing.
+
+Both ladder branches appear twice in `ProcessInput`, and the two copies differ:
+
+| press | condition |
+|---|---|
+| parallel to facing | `!player.Extended()` — head-on, fork stowed |
+| perpendicular | `player.Extended()` — otherwise it is a turn |
+
+`TryClimbDown` itself is a single horizontal translation by `dir` (plus
+`player.dat = -1 - dir`); the `ClimbDown_*` movement types lower the player over
+subsequent ticks. Settle-driven, the translation alone suffices — `settle`
+already drops anything unsupported to the first solid cell beneath, which is the
+same resting place (§12.31).
+
+The symptom was key 41 `SOUTH` turning in place instead of descending, which
+left the player marooned. With the branch in place the world-1 traversal runs
+clean: key 47 enters `improv3`, whose display name is **Emerson Jetty** — the
+level the owner reported. Overworld traversal through world 1 is confirmed.

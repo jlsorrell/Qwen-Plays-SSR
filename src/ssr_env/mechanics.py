@@ -439,6 +439,25 @@ def try_climb_up(
     return StepResult(state=state.replace_entity(climbed))
 
 
+def try_climb_down(
+    state: GameState, direction: Direction, masks=None, level_name: str = ""
+) -> StepResult:
+    """Descend a ladder mounted on the block underfoot. Mirrors `TryClimbDown`.
+
+    `TryClimbDown` is a single horizontal translation by `dir` — the player
+    steps off the top of the block and onto the ladder on its face; the
+    `ClimbDown_*` movement types then lower it. Here the descent is left to
+    `settle`, which already drops anything unsupported to the first solid cell
+    beneath it. That is the same resting place, reached in one step (§12.31).
+    """
+    player = state.player
+    destination = player.pos + direction.delta
+    if solid_ent_at(state, destination, masks, level_name):
+        return StepResult(state=state, moved=False, reason="ladder blocked ahead")
+    stepped = replace(player, pos=destination, dat=str(-1 - int(direction)))
+    return StepResult(state=state.replace_entity(stepped))
+
+
 def bbqs_on(state: GameState) -> bool:
     """Whether grills are hot. Mirrors `GameState.bbqsOn`.
 
@@ -762,15 +781,36 @@ def step(
     if history is not None:
         history.append(state)
 
+    # Mirrors `ProcessInput`. Both ladder branches appear twice there, once for
+    # a move parallel to the player's facing and once for a perpendicular one,
+    # and the two differ in whether the player must be extended: walking into a
+    # ladder head-on climbs it only with the fork stowed, whereas a sideways
+    # press climbs only when extended (otherwise it is a turn).
+    extended = is_extended(player, state)
+    ahead_is_supported = solid_ent_at(
+        state, player.pos + action.delta + Direction.DOWN.delta, masks, level_name
+    )
+
+    def climbs_down() -> bool:
+        # Descending needs a ladder on the block underfoot facing the way the
+        # player is going, and nothing to simply walk onto — otherwise it walks.
+        return not ahead_is_supported and ladder_down_in_dir(
+            state, action, masks, level_name
+        )
+
     if action.parallel_to(player.direction):
-        result = try_move_player(state, action, masks, level_name)
-    elif is_extended(player, state) and ladder_up_in_dir(
-        state, action, masks, level_name
-    ):
-        # `ProcessInput`: an extended player facing a ladder climbs it rather
-        # than turning. This branch was transcribed in §4 and left unimplemented
-        # for a long time because no replay had reached a ladder.
+        if not extended and action is player.direction and ladder_up_in_dir(
+            state, action, masks, level_name
+        ):
+            result = try_climb_up(state, action, masks, level_name)
+        elif not extended and action is player.direction.inverse() and climbs_down():
+            result = try_climb_down(state, action, masks, level_name)
+        else:
+            result = try_move_player(state, action, masks, level_name)
+    elif extended and ladder_up_in_dir(state, action, masks, level_name):
         result = try_climb_up(state, action, masks, level_name)
+    elif extended and climbs_down():
+        result = try_climb_down(state, action, masks, level_name)
     else:
         result = try_turn_player(state, action, masks, level_name)
 
