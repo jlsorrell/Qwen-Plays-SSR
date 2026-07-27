@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 uv.lock
+.worktrees/
 
 # Extracted or decompiled from the owner's game install — never commit.
 # Rules are read from here, documented in docs/mechanics.md, and reimplemented
