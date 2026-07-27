@@ -82,7 +82,12 @@ def _free(state: GameState, pos, masks, level_name: str) -> bool:
 
 
 def _force_at(
-    state: GameState, cell, direction: Direction, masks, level_name: str
+    state: GameState,
+    cell,
+    direction: Direction,
+    masks,
+    level_name: str,
+    can_change_player_footing: bool = False,
 ) -> GameState:
     """Apply a force at one cell. Mirrors `ApplyForce(pos, dir, ...)`.
 
@@ -94,7 +99,14 @@ def _force_at(
     target = ent_at(state, cell, masks, level_name)
     if target is None or not is_solid(target, state.tileset):
         return state
-    return try_push(state, target, direction, masks, level_name)
+    return try_push(
+        state,
+        target,
+        direction,
+        masks,
+        level_name,
+        can_change_player_footing=can_change_player_footing,
+    )
 
 
 def apply_pivot_forces_1(
@@ -166,14 +178,40 @@ def try_pivot_turn(
         return StepResult(state=state, moved=False, reason="no diagonal to pivot through")
     pushdir = target_facing.inverse()
 
+    entry = state
     state = apply_pivot_forces_1(
         state, player, pushdir, player.direction, diagonal, masks, level_name
     )
     # The player braces against its own footing — the one place the game passes
     # canchangeplayerfooting, because a pivot moves the island underneath.
     state = _force_at(
-        state, player.pos + Direction.DOWN.delta, pushdir, masks, level_name
+        state,
+        player.pos + Direction.DOWN.delta,
+        pushdir,
+        masks,
+        level_name,
+        can_change_player_footing=True,
     )
+
+    # **The pivot only happens if the floor actually moved.** The game keeps that
+    # result and refuses on it:
+    #
+    #     flag = ApplyForce(e.pos + Coord.Down, pushdir, 0, 1, ...);
+    #     if (!flag || e.Collides()) { RestoreEntities(); return false; }
+    #
+    # Discarding it made every blocked turn pivot, walking the player a cell
+    # backwards and completing a turn the game refuses outright. Inside a level
+    # this is not an edge case but the norm: the floor is the level's own
+    # island, and `TryPushEnt` rejects it (`pushtargetlevel == e.dat`), so a
+    # pivot turn can never succeed there. Confirmed by play at key 80 of
+    # Emerson Jetty — see docs/mechanics.md §12.34.
+    if state.by_id(footing.id).pos == footing.pos:
+        return StepResult(
+            state=entry,
+            moved=False,
+            reason="turn blocked (pivot needs the footing to move)",
+        )
+
     player = state.player
     state = apply_pivot_forces_2(
         state, player, pushdir, player.direction, diagonal, masks, level_name
@@ -321,6 +359,7 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
     Falling below `OUT_OF_WORLD_Z` is fatal: the player drowns, and a sausage is
     marked lost via its `dat` prefix.
     """
+    fell: set[int] = set()
     for _ in range(_MAX_SETTLE_STEPS):
         falling = [
             e
@@ -333,6 +372,7 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
         if not falling:
             break
         for entity in falling:
+            fell.add(entity.id)
             state = state.replace_entity(
                 replace(entity, pos=entity.pos + Direction.DOWN.delta)
             )
@@ -346,13 +386,32 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
     else:
         raise UnimplementedMechanic("settle-loop", "gravity did not reach quiescence")
 
+    # A sausage is only lost if it *fell* there. The game marks it inside the
+    # movement loop, on `movement.target` — an entity that just moved:
+    #
+    #     if (movement.target.type == sausage && movement.target.pos.z < -2
+    #         && pushestotry == 0
+    #         && (dat.Length == 0 || dat[0] == 'M')) { pos.z = -100; dat = 'L'... }
+    #
+    # Marking on depth alone drowned sausages that were merely *parked* deep —
+    # the world sausage rides the overworld down twenty cells whenever a level
+    # is entered, and was being declared lost every step thereafter (§12.35).
+    # The `dat[0] == 'M'` test also means an already-lost or spectral sausage is
+    # never re-marked.
     for entity in state.entities:
         if entity.pos.z >= OUT_OF_WORLD_Z:
             continue
         if entity.type is EntType.PLAYER:
             return replace(state, lost_reason="Drowned")
-        if entity.type is EntType.SAUSAGE and not entity.dat.startswith("L"):
-            state = state.replace_entity(replace(entity, dat="L" + entity.dat[1:]))
+        if (
+            entity.type is EntType.SAUSAGE
+            and entity.id in fell
+            and (not entity.dat or entity.dat.startswith("M"))
+        ):
+            state = state.replace_entity(
+                replace(entity, pos=Coord(entity.pos.x, entity.pos.y, -100),
+                        dat="L" + entity.dat[1:])
+            )
             state = replace(state, lost_reason="SausageLost")
     return state
 
@@ -599,6 +658,7 @@ def try_push(
     masks=None,
     level_name: str = "",
     depth: int = 0,
+    can_change_player_footing: bool = False,
 ) -> GameState:
     """Push one entity. Mirrors `GameState.TryPushEnt`, partially.
 
@@ -622,15 +682,26 @@ def try_push(
         footing = (
             floor_under(players[0], state, masks, level_name) if players else None
         )
-        if not direction.is_vertical and footing is not None and footing.id == entity.id:
+        if (
+            not can_change_player_footing
+            and not direction.is_vertical
+            and footing is not None
+            and footing.id == entity.id
+        ):
+            return state
+        # `pushtargetlevel == e.dat` — the island of the level you are inside is
+        # never pushable, and unlike the footing guard above, this one is *not*
+        # bypassed by `canchangeplayerfooting`. That asymmetry is what makes a
+        # pivot turn impossible inside a level: the pivot must shove its own
+        # floor, and inside a level the floor is precisely this island (§12.34).
+        if state.pushtargetlevel and state.pushtargetlevel == entity.dat:
             return state
         # Otherwise `TryPushEnt` builds an ordinary translation: an island is a
         # movable terrain chunk (the world-6 mechanic). Its mask is indexed
         # relative to `entity.pos`, so moving the entity carries the terrain.
         #
-        # Two further refusals are not modelled because their state is not
-        # represented here: `overworld && pushestotry == 0`, and
-        # `pushtargetlevel == e.dat`. Neither applies inside a level.
+        # `overworld && pushestotry == 0` is still not modelled; that state is
+        # not represented here.
 
     rolls = entity.type in ROLLABLE_TYPES and not direction.parallel_to(entity.direction)
 
@@ -751,6 +822,26 @@ def try_move_player(
         else None
     )
     carried_cells = frozenset(cells_of(carried, state)) if carried else frozenset()
+    # Captured before the push loop, which rebinds `player` after a pierce.
+    was_unladen = player.stuckto < 0
+
+    def refuse(current: GameState, reason: str) -> StepResult:
+        """Refuse the move, releasing any fork this attempt established.
+
+        `TryFork` runs inside `TryMovePlayer` *before* its two failure tests, and
+        both of them end in `RestoreEntities()` — so a move that does not happen
+        leaves the fork unmade. Keeping it let the player skewer a sausage while
+        bouncing off a hot grill, then drag it about; in levelb11 that burned
+        both sausages and lost the level (§12.37).
+
+        Pushes are deliberately *not* undone here: the owner confirmed that a
+        grill rebound still moves whatever the player shoved on the way (§10.4).
+        """
+        if was_unladen and current.player.stuckto >= 0:
+            skewered = current.by_id(current.player.stuckto)
+            current = current.replace_entity(replace(current.player, stuckto=-1))
+            current = current.replace_entity(replace(skewered, stuckto=-1))
+        return StepResult(state=current, moved=False, reason=reason)
 
     # The fork's destination matters too. Moving forward pushes the fork into
     # the cell beyond it; moving backward vacates the body's own cell.
@@ -783,9 +874,7 @@ def try_move_player(
             player = state.player
             continue
 
-        return StepResult(
-            state=state, moved=False, reason=f"blocked at {tuple(cell)}"
-        )
+        return refuse(state, f"blocked at {tuple(cell)}")
 
     # You cannot walk off the island. The move is refused outright rather than
     # permitted and then resolved by gravity.
@@ -796,9 +885,7 @@ def try_move_player(
     # `under()` reported support — but the test is on the **body's** destination,
     # not on the pair.
     if not solid_ent_at(state, destination + Direction.DOWN.delta, masks, level_name):
-        return StepResult(
-            state=state, moved=False, reason=f"no ground at {tuple(destination)}"
-        )
+        return refuse(state, f"no ground at {tuple(destination)}")
 
     # A **hot** grill repels: stepping onto one bounces the player back to the
     # tile it came from, though anything it pushed on the way still moved.
@@ -809,9 +896,7 @@ def try_move_player(
     ) is not None:
         # The player rebounds, but anything it pushed on the way still moved,
         # so this must not short-circuit settling and cooking (see `step`).
-        return StepResult(
-            state=state, moved=False, reason="hot grill: bounced back"
-        )
+        return refuse(state, "hot grill: bounced back")
 
     if carried is not None:
         vacated = carried_cells | {player.pos, fork_cell(state, player)}
@@ -1082,30 +1167,68 @@ def is_solved(state: GameState) -> bool:
 ISLAND_SINK_DEPTH = 20
 
 
-def sink_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+def _shift_islands(state: GameState, target: str, dz: int, masks) -> GameState:
+    """Move every island but `target` by `dz`, carrying whatever rides on them.
+
+    `TryLowerAll` and `TryRaiseAll` do not teleport islands — they call
+    `TryPushEnt(island, Direction.Down, 0, 1)`, and a push in this engine carries
+    everything resting on the pushed entity. Displacing only the island left
+    riders hanging: the world sausage standing on the overworld dropped out from
+    under itself the moment a level was entered, and `settle` then marked it
+    `SausageLost` (§12.35).
+
+    Riders are resolved *before* anything moves, because `floor_under` stops
+    reporting an island once that island has been displaced.
+    """
+    moving = {
+        e.id for e in state.entities if e.type is EntType.ISLAND and e.dat != target
+    }
+    riders = set()
+    for entity in state.entities:
+        if entity.type is EntType.ISLAND or entity.type not in NEEDS_GROUND_TYPES:
+            continue
+        floor = floor_under(entity, state, masks, "")
+        if floor is not None and floor.id in moving:
+            riders.add(entity.id)
+
+    shift = Coord(0, 0, dz)
+
+    def moved(e: Entity) -> Entity:
+        e = replace(e, pos=e.pos + shift)
+        # A sausage carried below the waterline while the islands are sinking is
+        # adjudicated as it passes z = -3 (`Movement`, under `pushestotry > 0`):
+        # if an island lies in the ten cells beneath either of its halves it is
+        # marked 'S' and survives; otherwise it is marked 'L' and lost. A rider
+        # is on an island *by construction* and the island descends with it, so
+        # the island is always there — riders take the 'S' branch. The losing
+        # branch belongs to sausages that were never riding anything, and those
+        # do not move here at all; they fall in `settle`.
+        if dz < 0 and e.type is EntType.SAUSAGE and e.pos.z < -2:
+            if not e.dat or e.dat.startswith("M"):
+                e = replace(e, dat="S" + (e.dat[1:] if e.dat else " ; ; "))
+        return e
+
+    return with_entities(
+        state,
+        tuple(
+            moved(e) if e.id in moving or e.id in riders else e
+            for e in state.entities
+        ),
+    )
+
+
+def sink_other_islands(
+    state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH, masks=None
+):
     """Lower every island except `target`. Mirrors `TryLowerAll`."""
-    return with_entities(
-        state,
-        tuple(
-            replace(e, pos=e.pos + Coord(0, 0, -depth))
-            if e.type is EntType.ISLAND and e.dat != target
-            else e
-            for e in state.entities
-        ),
-    )
+    return _shift_islands(state, target, -depth, masks)
 
 
-def raise_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+def raise_other_islands(
+    state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH, masks=None
+):
     """Restore every island except `target`. Mirrors `TryRaiseAll`."""
-    return with_entities(
-        state,
-        tuple(
-            replace(e, pos=e.pos + Coord(0, 0, depth))
-            if e.type is EntType.ISLAND and e.dat != target
-            else e
-            for e in state.entities
-        ),
-    )
+    return _shift_islands(state, target, depth, masks)
 
 
 def check_overworld_entry(
@@ -1173,7 +1296,7 @@ def check_overworld_entry(
         )
         # `TryLowerAll`: every other island sinks, so only this level is
         # reachable while you are inside it.
-        return sink_other_islands(entered, name)
+        return sink_other_islands(entered, name, masks=masks)
     return state
 
 
@@ -1232,7 +1355,18 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
     if not is_extended(player, state):
         return state
 
-    remaining = tuple(e for e in state.entities if e.type is not EntType.SAUSAGE)
+    # `DespawnSubworldSausages` does not clear every sausage. It removes those
+    # with `dat` empty or beginning 'M' — the level's own, which explode as it is
+    # completed — and converts 'S' back to 'M'. An 'S' sausage is one riding the
+    # sunken overworld, i.e. a world sausage the player left outside; deleting it
+    # here destroyed it every time a level was solved.
+    remaining = tuple(
+        replace(e, dat="M" + e.dat[1:])
+        if e.type is EntType.SAUSAGE and e.dat.startswith("S")
+        else e
+        for e in state.entities
+        if e.type is not EntType.SAUSAGE or e.dat.startswith("S")
+    )
     left = with_entities(
         state,
         remaining,
@@ -1245,4 +1379,4 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
         exit_attachment=None,
     )
     # `SubworldLeave` calls `TryRaiseAll`: the surrounding islands come back up.
-    return raise_other_islands(left, name)
+    return raise_other_islands(left, name, masks=masks)

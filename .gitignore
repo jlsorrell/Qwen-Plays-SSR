@@ -1,8 +1,9 @@
-.venv/
+.venv
 __pycache__/
 *.pyc
 .pytest_cache/
 uv.lock
+.worktrees/
 
 # Extracted or decompiled from the owner's game install — never commit.
 # Rules are read from here, documented in docs/mechanics.md, and reimplemented
@@ -11,4 +12,4 @@ data/raw_assets/
 data/decompiled/
 # Level geometry is derived from the owner's install. Regenerate locally with
 # tools/extract_levels.py rather than redistributing it.
-data/levels/
+data/levels

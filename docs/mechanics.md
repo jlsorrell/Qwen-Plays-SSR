@@ -2092,15 +2092,294 @@ the first unexplained refusal had been — the sausage could not roll north
 because island terrain sits at (7,-29,-1), so the fork went into it instead.
 Moves 934-942 carry it across the level, and move 943 unforks.
 
-### Still wrong after this
+### Still wrong after this — and two retracted claims
 
-Emerson Jetty is still not solved. Two faults remain, both in turning:
+Emerson Jetty is still not solved. I first recorded two causes here; **both were
+wrong**, and the retraction is worth keeping because both mistakes were made by
+reading my own diagnostics carelessly rather than by misreading the game.
 
-1. A turn translates the player's body. At move 981 the player faces South at
-   (17,-29), presses East, and ends up at (16,-29) facing East.
-2. The sausage never **rolls** — its `direction` and cook faces are unchanged
-   across the whole level while fork sweeps shove it sideways.
+**Retracted: "sausages never roll."** I read `faces` — which is *cook state* —
+as though it were orientation, and concluded from `(0,0,0,0)` that nothing was
+rolling. All zeros only means the sausage was never cooked. Roll state lives in
+`rot`, which I had not printed; it changes five times in the stretch I was
+looking at. Rolling works.
 
-Both point at the pivot-turn force application (§12.13), which applies forces
-but does not compute torsion. `TryPivotTurn`'s weak-force path,
-`PassiveForceSweep` and `CalculateTorsion` remain unimplemented.
+**Retracted: "a turn translates the player's body."** At move 981 the player
+faces South at (17,-29), presses East and ends at (16,-29), which I called a
+bug. It is correct. `TryTurn` rotates in place and pushes whatever sits in the
+diagonal cell `e.pos + RotBetween(old, new)`; if that collides it is rolled back
+and `TryPivotTurn` runs as a fallback. `TryPivotTurn` sets
+
+    pushdir = direction.Inverse()      // direction is the *new* facing
+
+and pivots the body along `pushdir`. Turning to face East therefore moves the
+body West. The simulator did exactly that.
+
+So the turning code was never the problem. `CalculateTorsion` and
+`PassiveForceSweep` do remain unimplemented, but nothing observed so far is
+evidence against them.
+
+### Where the fault actually is
+
+The demo segments give an exact bound. In true play order — `1-0`, `1-1` … `1-16`,
+`1-final`, then `2-1` — the boundaries land on this simulator precisely:
+
+| segment | moves | what the simulator does |
+|---|---|---|
+| `1-16` | 743..854 | completes The Anchorage at move 854 |
+| `1-final` | 855..901 | enters Emerson Jetty at move 901 (its length, 47, is the owner's "key 47") |
+| `2-1` | 902..1096 | Emerson Jetty, 195 moves |
+
+Emerson Jetty is **world 2's first level**, not world 1's seventeenth; world 1
+has sixteen levels plus `1-0` and `1-final`. An earlier count omitted those two
+files and sorted the rest lexicographically, which put `1-10` before `1-2`.
+
+Within segment `2-1` the replay refuses **nothing** for the first 90 moves and
+then refuses 56 of the remaining 106, including pressing into the same wall five
+times running. Repeated identical refusals mean the state drifted silently
+earlier and everything after is downstream. The fault is therefore in moves
+902-991, and `docs/manual-checks/009-emerson-jetty.md` brackets it.
+
+The geometry is not the problem: the island is connected from the northern
+region down the x=11 column and east along y=-18 to the grills at (13,-15),
+(13,-14), (14,-15), (14,-14), all of which resolve correctly. The player simply
+never gets there — it stays north of y=-25 for a thousand moves while the grills
+sit ten tiles further south.
+
+## 12.34 A pivot turn must move its own floor — so it cannot happen inside a level
+
+Key 80 of Emerson Jetty, reported by the owner from play: the player stands at
+4 east / 6 north facing **south**, with a pillar directly east. Pressing east
+leaves it exactly there, still facing south. This simulator instead swung the
+body one cell west and completed the turn to face east.
+
+The turn is refused because the pivot fallback fails. `TryTurn` rotates in place
+and pushes whatever sits in the swept diagonal; if the result collides — here the
+fork's destination is the pillar — it restores and calls `TryPivotTurn`. That
+function ends:
+
+    flag = ApplyForce(e.pos + Coord.Down, pushdir, 0, 1, ..., canchangeplayerfooting: true);
+    ...
+    if (!flag || e.Collides()) { RestoreEntities(); return false; }
+
+**The pivot shoves its own floor, and only happens if the floor actually moved.**
+This simulator applied that force and discarded the result, so every blocked turn
+pivoted.
+
+Two guards in `TryPushEnt` decide whether the floor moves, and the difference
+between them is the whole rule:
+
+| guard | bypassed by `canchangeplayerfooting`? |
+|---|---|
+| `Footing(player) == e && !dir.Vertical()` — cannot push what you stand on | **yes** |
+| `pushtargetlevel == e.dat` — cannot push the island of the level you are in | **no** |
+
+So on the overworld a pivot works: the footing guard is bypassed and the island
+slides. **Inside a level it can never work**, because the floor is that level's
+own island and the second guard rejects it outright. A blocked turn inside a
+level is simply a refused turn.
+
+An earlier note here claimed `pushtargetlevel == e.dat` did not apply inside a
+level. It is the one that does.
+
+The sausage still gets shoved east before the turn is refused — the owner saw
+this and this simulator reproduces it, because the diagonal sweep's push happens
+in `TryTurn` before the collision test. Whether that push should survive
+`RestoreEntities` is not yet settled from the source; `moveattempts` plus
+`PassiveForceSweep` is the likely mechanism, and observation is what this rests
+on for now.
+
+Effect on the replay: refusals across segment `2-1` fall from 56/195 to 13/195,
+and the sausage now reaches the grills and finishes fully cooked,
+`faces=(2,2,2,2)`.
+
+### Two faults this exposed
+
+1. **Sausage 206 is marked `SausageLost`.** It belongs to another, still-sunken
+   level and sits parked at z=-11, below `OUT_OF_WORLD_Z`. Entities belonging to
+   levels that have not been entered must not be subject to the drowning check.
+2. **The completion test counts it.** With sausage 207 fully cooked the level
+   still does not complete, because an uncooked sausage elsewhere in the
+   composite overworld fails the all-cooked test. Only the current level's
+   sausages should count.
+
+## 12.35 Islands are pushed, not teleported — riders go with them
+
+Both faults §12.34 exposed turn out to be one bug, and it is not in the loss
+check or the win check.
+
+`TryLowerAll` does not displace islands directly. It calls
+
+    TryPushEnt(current, Direction.Down, 0, 1);
+
+once per tick while `pushestotry` counts down from about 20, and a push in this
+engine carries everything resting on the pushed entity. `sink_other_islands`
+teleported the island alone, so anything standing on it was left hanging in the
+air. The world sausage — which is out on the overworld precisely because the
+`1-final` sequence walks the player to it — dropped out from under itself the
+moment a level was entered, fell, and was declared lost.
+
+`TryRaiseAll` is the same shape, so the restore carries riders too.
+
+### A sausage is lost only if it *fell* there
+
+The second half. The game marks a sausage lost inside the movement loop, on
+`movement.target` — an entity that has just moved:
+
+    if (movement.target.type == sausage && movement.target.pos.z < -2
+        && pushestotry == 0
+        && (dat.Length == 0 || dat[0] == 'M'))
+    { movement.target.pos.z = -100; dat = 'L' + dat.Substring(1); }
+
+Three consequences this simulator was missing:
+
+- **Falling is required.** Marking on depth alone drowned sausages that were
+  merely parked deep, which is exactly what a world sausage is after the
+  overworld sinks twenty cells beneath it.
+- `dat[0] == 'M'` means an already-lost sausage is never re-marked, and a
+  sausage whose `dat` begins `'S'` is never lost at all.
+- The marked sausage is **moved to z = -100**, not left where it fell.
+
+`pushestotry == 0` additionally means nothing can be lost while the islands are
+still sinking.
+
+`Lost()` itself is not depth-based for sausages at all — it reads the flag:
+`dat[0] == 'B'` is "Burned", `dat[0] == 'L'` is "Lost". Only the player and the
+fork are lost by depth, both at `z < -2`.
+
+### Where this leaves Emerson Jetty
+
+The spurious loss is gone and the level's own sausage finishes fully cooked,
+`faces=(2,2,2,2)`, on the grill at (13,-14,-1). Refusals across segment `2-1`
+stay at 13/195.
+
+It still does not register as solved, and the remaining cause is precise:
+
+> `Won()` skips a sausage only for `pos.z > 8` or `dat[0] == 'S'`, and returns
+> false outright for any counted sausage with `pos.z < -3`. The world sausage
+> now correctly rides the overworld down to z = -21, and so fails that test.
+
+`is_solved` already mirrors `Won()` faithfully; the win check was never the
+problem. What is unresolved is how the real game stops an out-on-the-overworld
+world sausage from blocking every level entered afterwards. Three candidates,
+none yet confirmed:
+
+1. The sausage should be standing on the **target** island, which does not sink.
+   improv3's island spans roughly x 3..21; the sausage sits at x=1, just outside.
+   A small error in island extent or in where `1-final` leaves the sausage would
+   do it.
+2. World sausages are removed from play on level entry, as level sausages are.
+3. Delivering a world sausage rewrites its `dat` to begin `'S'`, which is
+   exactly the marker `Won()` skips — and the only thing that marker is for.
+
+Candidate 3 is the most likely, since `'S'` otherwise has no producer anywhere in
+the code read so far.
+
+## 12.36 `'S'` — the marker that lets a world sausage survive a level
+
+§12.35 left one question: how does the real game stop a world sausage left out on
+the overworld from blocking every level entered afterwards, given `Won()` rejects
+any counted sausage below z = -3?
+
+The answer is the `'S'` prefix, and it is produced in `Movement.cs`, not
+`GameState.cs` — which is why reading only the latter never found it. While the
+islands are sinking (`pushestotry > 0`), every descending sausage is adjudicated
+at the instant it passes **exactly z = -3**:
+
+    coord = target.pos + target.direction;          // the sausage's other half
+    array = [ (pos.x, pos.y, pos.z - i), (coord.x, coord.y, coord.z - i) for i in 0..9 ]
+    if (EntsAt(array).Any(e => e.type == EntType.island))
+        target.dat = "S ; ; ";                       // riding an island down — survives
+    else
+        { target.dat = "L ; ; "; sausagelost = true; }   // nothing beneath — lost
+
+Twenty cells are tested: ten below each half of the sausage. So the rule is
+simply **is this sausage going down *with* the world, or falling *through* it?**
+
+The marker then does three things:
+
+| site | behaviour |
+|---|---|
+| `Won()` | skips `dat[0] == 'S'` outright — a sunken world sausage cannot block a level |
+| `DespawnSubworldSausages` | removes `''`/`'M'` sausages, converts `'S'` back to `'M'` |
+| the loss rule (§12.35) | requires `''`/`'M'`, so an `'S'` sausage is never lost |
+
+`'S'` is therefore not a kind of sausage but a *state*: "temporarily out of play
+beneath a level you are inside". It is set on entry and cleared on exit.
+
+In this settle-driven model the adjudication needs no z = -3 tripwire. A rider is
+standing on a moving island by construction and the island descends with it, so
+the island is always beneath — riders take the `'S'` branch unconditionally. The
+losing branch belongs to sausages that were never riding anything, and those do
+not move during the sink at all; they fall in `settle` and are marked there.
+
+The exit half mattered as much. `check_overworld_exit` was clearing *every*
+sausage, so a world sausage left outside was destroyed each time a level was
+solved.
+
+### Result
+
+Emerson Jetty completes at move **1076**, inside segment `2-1`'s bound of 1096,
+and the level after it at **1196**, inside `2-2`'s bound of 1203. Eighteen levels
+now replay correctly, with 5 refused moves in the first 1196.
+
+Beyond that the replay degrades again, so world 2's third level has its own
+fault. That is the next thread.
+
+## 12.37 A refused move must not leave the fork attached
+
+World 2's third level, `levelb11`, burned both sausages and lost. The cause was
+at move 1232: the player pressed west, bounced off a hot grill — and kept a
+sausage it had skewered on the way.
+
+`TryFork` runs inside `TryMovePlayer` *before* its two failure tests, and both
+of those end in `RestoreEntities()`. So a move that does not happen leaves the
+fork unmade. This simulator established the fork inside the push loop and then
+returned the refusal without unwinding it, so the player ended up towing a
+sausage it had never successfully walked into, dragging it across grills until
+a face cooked twice and burned.
+
+The pierce itself was legitimate: the player at (1,-32) facing west has its fork
+destination at (-1,-32), and sausage 208 lying south occupies (-1,-33) *and*
+(-1,-32). Only its persistence through the refusal was wrong.
+
+**Pushes are deliberately not unwound.** The owner confirmed that a grill
+rebound still moves whatever the player shoved on the way (§10.4), so the two
+are not symmetric here; only the fork is released.
+
+One implementation note worth keeping: the guard has to capture the player's
+`stuckto` *before* the push loop, because that loop rebinds `player` after a
+pierce. Reading it afterwards silently never fires, which is exactly what the
+first attempt at this fix did — it passed every test and changed nothing.
+
+### Not yet fixed — and a retracted hypothesis
+
+`levelb11` still burns, six moves later at 1240.
+
+I recorded here that a turn was "applying a force sideways to an entity the
+sweep never touches", and pointed at `apply_pivot_forces_1`/`_2`. **That was
+wrong.** The push is the ordinary `TurnOut` force and it is correct:
+
+    Coord pos = e.pos + turndir;                       // the target cardinal cell
+    Direction d = ContinueRot(turndir, e.direction);   // e.direction is the DIAGONAL here
+    ApplyForce(pos, d.Inverse(), 1, 1, out entsfound);
+
+At move 1240 the player at (-1,-31) turns west→north. The cardinal cell is
+(-1,-32), which sausage 208 occupies (it lies south from (-1,-33)), so it is
+pushed `ContinueRot(NORTH, NORTHWEST).Inverse()` = **east**. That is what this
+simulator does.
+
+The one ambiguity — whether `e.direction` at `TurnOut` is still the original
+cardinal or already the diagonal — resolves itself: `ContinueRot(NORTH, WEST)`
+is `None`, not a direction, so only the diagonal reading yields a valid push.
+
+The burn that follows is then legitimate. Sausage 208 lies north-south, so an
+east push **rolls** it, presenting a face already cooked to 2 back to the grill,
+which takes it to 3. Rolling a cooked face onto a grill burns — that is the
+central hazard of the game, not a bug.
+
+So the fault is **upstream of 1240**: the sausage should not be at (-1,-33) with
+faces (0,2,2,0) and that orientation by then. Nothing between 1204 and 1240 has
+been checked against real play, and the level turns on exactly the kind of
+cook-order detail that the replay cannot self-check. This is the point to ask
+the owner for a manual check rather than to keep reading source.
