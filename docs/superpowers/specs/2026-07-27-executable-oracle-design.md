@@ -189,6 +189,7 @@ flushed independently. The first line is a run header:
   "game_assembly_sha256": "...",
   "plugin_version": "...",
   "input_sha256": "...",
+  "expected_input_count": 16567,
   "started_at_utc": "..."
 }
 ```
@@ -219,6 +220,21 @@ diagnostics also display the one-based global and segment-relative move
 numbers. The writer flushes after every complete line. It writes no partial
 JSON object and never overwrites an existing run.
 
+A successful replay finishes with an `end` record containing the emitted input
+count. Replay-mode run headers also contain the expected input count. Therefore
+a trace ending cleanly at a JSON line boundary is still rejected if it was
+truncated before all inputs or before the `end` record.
+
+```json
+{
+  "kind": "end",
+  "schema_version": 1,
+  "run_id": "opaque-id",
+  "input_count": 16567,
+  "finished_at_utc": "..."
+}
+```
+
 If an input does not settle within a configured frame and wall-clock limit,
 the plugin writes a terminal `error` record containing the last observed
 movement count, `pushestotry`, state identity, and raw save, then stops replay.
@@ -236,7 +252,8 @@ For each step, the comparator will:
    and terminal status.
 2. Parse the game save string without discarding the raw value.
 3. Normalize the game state and Python `GameState` to a shared representation.
-4. Compare global fields and entities by stable entity id.
+4. Establish and maintain an explicit identity bridge between game and
+   simulator entities, then compare global fields and bridged entities.
 5. Stop at the first unequal settled boundary.
 6. Print the input location, differing fields, relevant entity before/after
    values, and both simulator and oracle state renderings.
@@ -250,6 +267,16 @@ The shared representation will cover at least:
 - current level/overworld state;
 - completed levels, issued world sausages, tileset, display name, cooked count,
   and music seed.
+
+The game and simulator do not initially use the same numeric entity ids. The
+comparator will not equate those numbers directly or renumber simulator state.
+At the initial boundary it will pair uniquely identifiable entities by
+semantics: islands by their unique `dat`, unique player/fork/barrier entities by
+type and full state, and remaining entities by an unambiguous full-state key.
+The mapping persists across moves. Newly spawned entities are paired from the
+unmatched sets using type, pose, direction, data, cooking state, and creation
+order only when that pairing is unique. Attachments are translated through the
+same map. An ambiguous pairing is a comparison error, not a guessed match.
 
 Comparison policy will be explicit. Fields proved to be presentation-only may
 be ignored by name, but no unknown or unparsable field will silently disappear.
