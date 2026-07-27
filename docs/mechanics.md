@@ -2325,3 +2325,38 @@ now replay correctly, with 5 refused moves in the first 1196.
 
 Beyond that the replay degrades again, so world 2's third level has its own
 fault. That is the next thread.
+
+## 12.37 A refused move must not leave the fork attached
+
+World 2's third level, `levelb11`, burned both sausages and lost. The cause was
+at move 1232: the player pressed west, bounced off a hot grill — and kept a
+sausage it had skewered on the way.
+
+`TryFork` runs inside `TryMovePlayer` *before* its two failure tests, and both
+of those end in `RestoreEntities()`. So a move that does not happen leaves the
+fork unmade. This simulator established the fork inside the push loop and then
+returned the refusal without unwinding it, so the player ended up towing a
+sausage it had never successfully walked into, dragging it across grills until
+a face cooked twice and burned.
+
+The pierce itself was legitimate: the player at (1,-32) facing west has its fork
+destination at (-1,-32), and sausage 208 lying south occupies (-1,-33) *and*
+(-1,-32). Only its persistence through the refusal was wrong.
+
+**Pushes are deliberately not unwound.** The owner confirmed that a grill
+rebound still moves whatever the player shoved on the way (§10.4), so the two
+are not symmetric here; only the fork is released.
+
+One implementation note worth keeping: the guard has to capture the player's
+`stuckto` *before* the push loop, because that loop rebinds `player` after a
+pierce. Reading it afterwards silently never fires, which is exactly what the
+first attempt at this fix did — it passed every test and changed nothing.
+
+### Not yet fixed
+
+`levelb11` still burns, six moves later at 1240. Pressing north while facing
+west sweeps the fork through the diagonal at (-2,-32), which correctly pushes
+sausage 207 north — but sausage 208, at (-1,-33) and nowhere near the sweep,
+moves **east** and burns. A turn is applying a force sideways to an entity the
+sweep never touches, which points at `apply_pivot_forces_1`/`_2` or the phase-2
+push of `try_turn_player`, not at cooking.

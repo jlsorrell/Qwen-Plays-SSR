@@ -822,6 +822,26 @@ def try_move_player(
         else None
     )
     carried_cells = frozenset(cells_of(carried, state)) if carried else frozenset()
+    # Captured before the push loop, which rebinds `player` after a pierce.
+    was_unladen = player.stuckto < 0
+
+    def refuse(current: GameState, reason: str) -> StepResult:
+        """Refuse the move, releasing any fork this attempt established.
+
+        `TryFork` runs inside `TryMovePlayer` *before* its two failure tests, and
+        both of them end in `RestoreEntities()` — so a move that does not happen
+        leaves the fork unmade. Keeping it let the player skewer a sausage while
+        bouncing off a hot grill, then drag it about; in levelb11 that burned
+        both sausages and lost the level (§12.37).
+
+        Pushes are deliberately *not* undone here: the owner confirmed that a
+        grill rebound still moves whatever the player shoved on the way (§10.4).
+        """
+        if was_unladen and current.player.stuckto >= 0:
+            skewered = current.by_id(current.player.stuckto)
+            current = current.replace_entity(replace(current.player, stuckto=-1))
+            current = current.replace_entity(replace(skewered, stuckto=-1))
+        return StepResult(state=current, moved=False, reason=reason)
 
     # The fork's destination matters too. Moving forward pushes the fork into
     # the cell beyond it; moving backward vacates the body's own cell.
@@ -854,9 +874,7 @@ def try_move_player(
             player = state.player
             continue
 
-        return StepResult(
-            state=state, moved=False, reason=f"blocked at {tuple(cell)}"
-        )
+        return refuse(state, f"blocked at {tuple(cell)}")
 
     # You cannot walk off the island. The move is refused outright rather than
     # permitted and then resolved by gravity.
@@ -867,9 +885,7 @@ def try_move_player(
     # `under()` reported support — but the test is on the **body's** destination,
     # not on the pair.
     if not solid_ent_at(state, destination + Direction.DOWN.delta, masks, level_name):
-        return StepResult(
-            state=state, moved=False, reason=f"no ground at {tuple(destination)}"
-        )
+        return refuse(state, f"no ground at {tuple(destination)}")
 
     # A **hot** grill repels: stepping onto one bounces the player back to the
     # tile it came from, though anything it pushed on the way still moved.
@@ -880,9 +896,7 @@ def try_move_player(
     ) is not None:
         # The player rebounds, but anything it pushed on the way still moved,
         # so this must not short-circuit settling and cooking (see `step`).
-        return StepResult(
-            state=state, moved=False, reason="hot grill: bounced back"
-        )
+        return refuse(state, "hot grill: bounced back")
 
     if carried is not None:
         vacated = carried_cells | {player.pos, fork_cell(state, player)}
