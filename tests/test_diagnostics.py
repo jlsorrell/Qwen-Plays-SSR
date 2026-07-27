@@ -2,6 +2,7 @@ from copy import deepcopy
 from dataclasses import replace
 
 from ssr_env.diagnostics import EntitySnapshot, entity_deltas, snapshot_dynamic
+from ssr_env.diagnostics import trace_step
 from ssr_env.entity import Entity, pack_cookdata
 from ssr_env.state import GameState
 from ssr_env.types import Coord, Direction, EntType
@@ -91,3 +92,80 @@ def test_delta_calculation_does_not_mutate_either_state():
     entity_deltas(before, after)
     assert before == expected_before
     assert after == expected_after
+
+
+def test_trace_step_omits_an_unchanged_accepted_step():
+    state = dynamic_state(player(), sausage())
+    assert trace_step(
+        state,
+        state,
+        input_index=9,
+        segment="1-1",
+        segment_index=4,
+        action=Direction.NORTH,
+        moved=True,
+        reason=None,
+    ) is None
+
+
+def test_trace_step_keeps_a_refusal_without_entity_changes():
+    state = dynamic_state(player(), sausage())
+    trace = trace_step(
+        state,
+        state,
+        input_index=9,
+        segment="1-1",
+        segment_index=4,
+        action=Direction.NORTH,
+        moved=False,
+        reason="blocked",
+    )
+    assert trace is not None
+    assert trace.global_move == 10
+    assert trace.segment_move == 5
+    assert trace.reason == "blocked"
+
+
+def test_trace_step_serializes_level_entry_and_loss():
+    before = dynamic_state(player(), sausage())
+    after = replace(
+        dynamic_state(player(), replace(sausage(), dat="B;grill-a;")),
+        pushtargetlevel="levelb11",
+        lost_reason="Burned",
+    )
+    trace = trace_step(
+        before,
+        after,
+        input_index=1240,
+        segment="2-3",
+        segment_index=36,
+        action=Direction.NORTH,
+        moved=True,
+        reason="Burned",
+    )
+    assert trace.to_dict()["input"] == "NORTH"
+    assert trace.to_dict()["level_after"] == "levelb11"
+    assert trace.to_dict()["loss"] == "Burned"
+
+
+def test_trace_step_names_a_completed_level():
+    before = replace(
+        dynamic_state(player(), sausage()),
+        overworld=False,
+        pushtargetlevel="level47",
+    )
+    after = replace(
+        dynamic_state(player()),
+        completed=frozenset({"level47"}),
+    )
+    trace = trace_step(
+        before,
+        after,
+        input_index=82,
+        segment="1-1",
+        segment_index=67,
+        action=Direction.SOUTH,
+        moved=True,
+        reason=None,
+    )
+    assert trace.to_dict()["completed_level"] == "level47"
