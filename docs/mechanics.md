@@ -2352,11 +2352,34 @@ One implementation note worth keeping: the guard has to capture the player's
 pierce. Reading it afterwards silently never fires, which is exactly what the
 first attempt at this fix did — it passed every test and changed nothing.
 
-### Not yet fixed
+### Not yet fixed — and a retracted hypothesis
 
-`levelb11` still burns, six moves later at 1240. Pressing north while facing
-west sweeps the fork through the diagonal at (-2,-32), which correctly pushes
-sausage 207 north — but sausage 208, at (-1,-33) and nowhere near the sweep,
-moves **east** and burns. A turn is applying a force sideways to an entity the
-sweep never touches, which points at `apply_pivot_forces_1`/`_2` or the phase-2
-push of `try_turn_player`, not at cooking.
+`levelb11` still burns, six moves later at 1240.
+
+I recorded here that a turn was "applying a force sideways to an entity the
+sweep never touches", and pointed at `apply_pivot_forces_1`/`_2`. **That was
+wrong.** The push is the ordinary `TurnOut` force and it is correct:
+
+    Coord pos = e.pos + turndir;                       // the target cardinal cell
+    Direction d = ContinueRot(turndir, e.direction);   // e.direction is the DIAGONAL here
+    ApplyForce(pos, d.Inverse(), 1, 1, out entsfound);
+
+At move 1240 the player at (-1,-31) turns west→north. The cardinal cell is
+(-1,-32), which sausage 208 occupies (it lies south from (-1,-33)), so it is
+pushed `ContinueRot(NORTH, NORTHWEST).Inverse()` = **east**. That is what this
+simulator does.
+
+The one ambiguity — whether `e.direction` at `TurnOut` is still the original
+cardinal or already the diagonal — resolves itself: `ContinueRot(NORTH, WEST)`
+is `None`, not a direction, so only the diagonal reading yields a valid push.
+
+The burn that follows is then legitimate. Sausage 208 lies north-south, so an
+east push **rolls** it, presenting a face already cooked to 2 back to the grill,
+which takes it to 3. Rolling a cooked face onto a grill burns — that is the
+central hazard of the game, not a bug.
+
+So the fault is **upstream of 1240**: the sausage should not be at (-1,-33) with
+faces (0,2,2,0) and that orientation by then. Nothing between 1204 and 1240 has
+been checked against real play, and the level turns on exactly the kind of
+cook-order detail that the replay cannot self-check. This is the point to ask
+the owner for a manual check rather than to keep reading source.
