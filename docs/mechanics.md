@@ -2274,3 +2274,54 @@ none yet confirmed:
 
 Candidate 3 is the most likely, since `'S'` otherwise has no producer anywhere in
 the code read so far.
+
+## 12.36 `'S'` — the marker that lets a world sausage survive a level
+
+§12.35 left one question: how does the real game stop a world sausage left out on
+the overworld from blocking every level entered afterwards, given `Won()` rejects
+any counted sausage below z = -3?
+
+The answer is the `'S'` prefix, and it is produced in `Movement.cs`, not
+`GameState.cs` — which is why reading only the latter never found it. While the
+islands are sinking (`pushestotry > 0`), every descending sausage is adjudicated
+at the instant it passes **exactly z = -3**:
+
+    coord = target.pos + target.direction;          // the sausage's other half
+    array = [ (pos.x, pos.y, pos.z - i), (coord.x, coord.y, coord.z - i) for i in 0..9 ]
+    if (EntsAt(array).Any(e => e.type == EntType.island))
+        target.dat = "S ; ; ";                       // riding an island down — survives
+    else
+        { target.dat = "L ; ; "; sausagelost = true; }   // nothing beneath — lost
+
+Twenty cells are tested: ten below each half of the sausage. So the rule is
+simply **is this sausage going down *with* the world, or falling *through* it?**
+
+The marker then does three things:
+
+| site | behaviour |
+|---|---|
+| `Won()` | skips `dat[0] == 'S'` outright — a sunken world sausage cannot block a level |
+| `DespawnSubworldSausages` | removes `''`/`'M'` sausages, converts `'S'` back to `'M'` |
+| the loss rule (§12.35) | requires `''`/`'M'`, so an `'S'` sausage is never lost |
+
+`'S'` is therefore not a kind of sausage but a *state*: "temporarily out of play
+beneath a level you are inside". It is set on entry and cleared on exit.
+
+In this settle-driven model the adjudication needs no z = -3 tripwire. A rider is
+standing on a moving island by construction and the island descends with it, so
+the island is always beneath — riders take the `'S'` branch unconditionally. The
+losing branch belongs to sausages that were never riding anything, and those do
+not move during the sink at all; they fall in `settle` and are marked there.
+
+The exit half mattered as much. `check_overworld_exit` was clearing *every*
+sausage, so a world sausage left outside was destroyed each time a level was
+solved.
+
+### Result
+
+Emerson Jetty completes at move **1076**, inside segment `2-1`'s bound of 1096,
+and the level after it at **1196**, inside `2-2`'s bound of 1203. Eighteen levels
+now replay correctly, with 5 refused moves in the first 1196.
+
+Beyond that the replay degrades again, so world 2's third level has its own
+fault. That is the next thread.

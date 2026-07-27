@@ -1178,10 +1178,26 @@ def _shift_islands(state: GameState, target: str, dz: int, masks) -> GameState:
             riders.add(entity.id)
 
     shift = Coord(0, 0, dz)
+
+    def moved(e: Entity) -> Entity:
+        e = replace(e, pos=e.pos + shift)
+        # A sausage carried below the waterline while the islands are sinking is
+        # adjudicated as it passes z = -3 (`Movement`, under `pushestotry > 0`):
+        # if an island lies in the ten cells beneath either of its halves it is
+        # marked 'S' and survives; otherwise it is marked 'L' and lost. A rider
+        # is on an island *by construction* and the island descends with it, so
+        # the island is always there — riders take the 'S' branch. The losing
+        # branch belongs to sausages that were never riding anything, and those
+        # do not move here at all; they fall in `settle`.
+        if dz < 0 and e.type is EntType.SAUSAGE and e.pos.z < -2:
+            if not e.dat or e.dat.startswith("M"):
+                e = replace(e, dat="S" + (e.dat[1:] if e.dat else " ; ; "))
+        return e
+
     return with_entities(
         state,
         tuple(
-            replace(e, pos=e.pos + shift) if e.id in moving or e.id in riders else e
+            moved(e) if e.id in moving or e.id in riders else e
             for e in state.entities
         ),
     )
@@ -1325,7 +1341,18 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
     if not is_extended(player, state):
         return state
 
-    remaining = tuple(e for e in state.entities if e.type is not EntType.SAUSAGE)
+    # `DespawnSubworldSausages` does not clear every sausage. It removes those
+    # with `dat` empty or beginning 'M' — the level's own, which explode as it is
+    # completed — and converts 'S' back to 'M'. An 'S' sausage is one riding the
+    # sunken overworld, i.e. a world sausage the player left outside; deleting it
+    # here destroyed it every time a level was solved.
+    remaining = tuple(
+        replace(e, dat="M" + e.dat[1:])
+        if e.type is EntType.SAUSAGE and e.dat.startswith("S")
+        else e
+        for e in state.entities
+        if e.type is not EntType.SAUSAGE or e.dat.startswith("S")
+    )
     left = with_entities(
         state,
         remaining,
