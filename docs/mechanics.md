@@ -2036,3 +2036,71 @@ The symptom was key 41 `SOUTH` turning in place instead of descending, which
 left the player marooned. With the branch in place the world-1 traversal runs
 clean: key 47 enters `improv3`, whose display name is **Emerson Jetty** — the
 level the owner reported. Overworld traversal through world 1 is confirmed.
+
+## 12.33 Forking a sausage — the mechanic Emerson Jetty is built on
+
+The owner pointed out that Emerson Jetty (`improv3`, world 1's 17th level) is
+the first level where the fork can pierce a sausage and carry it. It was
+unsolvable here, and the cause was that `TryFork` had never been implemented:
+`stuckto` was read in five places and set in none, so `Laden` was permanently
+false and the `UnimplementedMechanic("laden movement")` guard never even fired.
+
+### When the fork pierces
+
+`TryFork` runs inside `TryMovePlayer`, after the forces have been applied and
+before the ground and collision checks. Its guards:
+
+- `player.stuckto >= 0` → return. One fork, one sausage.
+- `!player.Extended()` → return.
+- `player.movement == null || !translation` → return.
+- `movement.direction != player.direction` → return. **Only a forward walk
+  pierces**; a strafe or a backpedal never does. `ProcessInput` reinforces this
+  by calling `TryFork()` only under `if (dir == player.direction)`.
+
+It then looks at `player.TargetPos() + player.direction` — the fork's
+destination — for a sausage that is **not `ActivelyForced`**. That predicate is
+literally `ent.movement != null`, which is the whole rule in one line:
+
+> A sausage the push moved is pushed. A sausage the push could not move is
+> pierced.
+
+Finally `!entity.At(player.TargetPos())`: a sausage lying along the direction of
+travel whose far cell is under the player's own destination cannot be picked up —
+the player would end up standing inside it.
+
+On success `player.stuckto` and `sausage.stuckto` point at each other.
+
+### Living with a pierced sausage
+
+- `Entity.Collides` skips any entity whose `stuckto` is the player's id, which
+  is what lets the fork share a cell with the sausage it has entered.
+- `TryMovePlayer` gives the carried sausage its own `Movement.Translation` in
+  the same direction, so it travels with the player.
+- `CanFall_Liberal` defers a laden entity's fall to whatever it is stuck to, so
+  the sausage hangs from the fork rather than the floor and only descends when
+  the player does.
+- **A carrying player cannot turn.** `ProcessInput`'s laden branch has no
+  `TryTurnPlayer` in it at all: parallel presses walk, perpendicular presses
+  climb or strafe. Facing is frozen until the sausage is put down.
+- Putting it down is `unfork`. When a laden move fails and the press was
+  backward (`dir == player.direction.Inverse()`), `TryMovePlayer` recurses with
+  `unfork: true`, which withholds the sausage's movement and, on success, clears
+  both `stuckto` fields. You drop a sausage by backing off it.
+
+Confirmed on the replay: the pierce fires at move 933, which is exactly where
+the first unexplained refusal had been — the sausage could not roll north
+because island terrain sits at (7,-29,-1), so the fork went into it instead.
+Moves 934-942 carry it across the level, and move 943 unforks.
+
+### Still wrong after this
+
+Emerson Jetty is still not solved. Two faults remain, both in turning:
+
+1. A turn translates the player's body. At move 981 the player faces South at
+   (17,-29), presses East, and ends up at (16,-29) facing East.
+2. The sausage never **rolls** — its `direction` and cook faces are unchanged
+   across the whole level while fork sweeps shove it sideways.
+
+Both point at the pivot-turn force application (§12.13), which applies forces
+but does not compute torsion. `TryPivotTurn`'s weak-force path,
+`PassiveForceSweep` and `CalculateTorsion` remain unimplemented.

@@ -75,17 +75,68 @@ def test_walking_into_a_sausage_pushes_it():
     assert result.state.by_id(50).rot == 1
 
 
-def test_unimplemented_mechanic_names_itself():
-    """Points at a mechanic that is still genuinely unimplemented."""
-    s = sausage(4, 4, ident=50, facing=Direction.EAST)
-    skewered = replace(s, stuckto=1)
-    state = flat(width=8, height=8, extra=(skewered,))
-    try:
-        step(state, Direction.NORTH)
-    except UnimplementedMechanic as exc:
-        assert exc.mechanic == "laden movement"
-    else:
-        raise AssertionError("expected UnimplementedMechanic")
+def wall(x, y, z=1, ident=90):
+    return Entity(pos=Coord(x, y, z), type=EntType.GROUND, id=ident, tileset=1)
+
+
+def wedged():
+    """A sausage that cannot be pushed: a wall sits where it would slide to.
+
+    Player faces East at (1,2) with its fork over (2,2); the sausage lies
+    East-West across (3,2)-(4,2) and a block at (5,2) stops it sliding.
+    """
+    return flat(
+        width=7,
+        player_at=(1, 2),
+        facing=Direction.EAST,
+        extra=(sausage(3, 2, facing=Direction.EAST), wall(5, 2)),
+    )
+
+
+def test_walking_into_an_immovable_sausage_pierces_it():
+    """`TryFork` fires exactly where the push failed.
+
+    Its guard is `!ActivelyForced(sausage)` — literally `movement != null` — so
+    a sausage the push moved is pushed, and one the push could not move is
+    forked. Before this existed the move was simply refused, and Emerson Jetty,
+    the first level that needs carrying, was unsolvable.
+    """
+    result = step(wedged(), Direction.EAST)
+    assert result.moved
+    assert result.state.player.stuckto == 50
+    assert result.state.by_id(50).stuckto == result.state.player.id
+
+
+def test_a_pushable_sausage_is_pushed_not_pierced():
+    state = flat(player_at=(1, 2), facing=Direction.EAST,
+                 extra=(sausage(3, 2, facing=Direction.EAST),))
+    result = step(state, Direction.EAST)
+    assert result.state.player.stuckto == -1
+
+
+def test_the_carried_sausage_travels_with_the_player():
+    state = step(wedged(), Direction.EAST).state
+    before = state.by_id(50).pos
+    after = step(state, Direction.NORTH).state
+    assert after.by_id(50).pos == before + Direction.NORTH.delta
+    assert after.player.pos == state.player.pos + Direction.NORTH.delta
+
+
+def test_a_carrying_player_cannot_turn():
+    """`ProcessInput`'s laden branch has no `TryTurnPlayer` at all."""
+    state = step(wedged(), Direction.EAST).state
+    assert state.player.direction is Direction.EAST
+    after = step(state, Direction.NORTH).state
+    assert after.player.direction is Direction.EAST, "carrying should not turn"
+
+
+def test_a_carried_sausage_does_not_fall():
+    """The fork holds it, so `settle` must leave it alone over a gap."""
+    state = step(wedged(), Direction.EAST).state
+    z = state.by_id(50).pos.z
+    # Walk north onto ground, then confirm the sausage stayed at fork height.
+    after = step(state, Direction.NORTH).state
+    assert after.by_id(50).pos.z == z
 
 
 def test_undo_restores_the_previous_state():

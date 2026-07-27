@@ -17,6 +17,7 @@ from .entity import Entity, pack_cookdata
 from .geometry import (
     NEEDS_GROUND_TYPES,
     border_cells,
+    cells_of,
     ent_at,
     is_extended,
     floor_under,
@@ -325,6 +326,7 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
             e
             for e in state.entities
             if e.type in NEEDS_GROUND_TYPES
+            and e.stuckto < 0  # a forked sausage hangs from the fork, not the floor
             and not under(e, state, masks, level_name)
             and e.pos.z >= -10
         ]
@@ -334,6 +336,13 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
             state = state.replace_entity(
                 replace(entity, pos=entity.pos + Direction.DOWN.delta)
             )
+            # `CanFall_Liberal` defers a laden entity's fall to whatever it is
+            # stuck to, so a carried sausage descends with the player.
+            if entity.type is EntType.PLAYER and entity.stuckto >= 0:
+                carried = state.by_id(entity.stuckto)
+                state = state.replace_entity(
+                    replace(carried, pos=carried.pos + Direction.DOWN.delta)
+                )
     else:
         raise UnimplementedMechanic("settle-loop", "gravity did not reach quiescence")
 
@@ -683,8 +692,48 @@ def try_push(
     return settle(after, masks, level_name)
 
 
+def can_fork(
+    state: GameState, target, destination, direction: Direction
+) -> bool:
+    """`TryFork`'s guards, minus the ones the caller has already established.
+
+    The game requires the player to be extended, to be mid-*translation*, and
+    for that translation to run along the way it faces — so a strafe or a
+    backward step never pierces, only a forward walk. The target cell is
+    `player.TargetPos() + player.direction`, which is the fork's destination.
+
+    Two conditions remain to check here:
+
+    - the player must not already be carrying something (`stuckto >= 0`), since
+      one fork holds one sausage;
+    - the sausage must not *also* occupy the body's destination. A sausage lying
+      along the direction of travel with its far end under the player's own
+      target cell cannot be picked up — the player would be standing inside it.
+    """
+    player = state.player
+    if player.stuckto >= 0 or target.type is not EntType.SAUSAGE:
+        return False
+    if direction is not player.direction:
+        return False
+    return destination not in cells_of(target, state)
+
+
+def pierce(state: GameState, target) -> GameState:
+    """Fork the sausage: `stuckto` points both ways, as `TryFork` sets it.
+
+    `Entity.Collides` skips any entity whose `stuckto` is the player's id, which
+    is what lets the fork share a cell with the sausage it has gone into.
+    """
+    state = state.replace_entity(replace(state.player, stuckto=target.id))
+    return state.replace_entity(replace(target, stuckto=state.player.id))
+
+
 def try_move_player(
-    state: GameState, direction: Direction, masks=None, level_name: str = ""
+    state: GameState,
+    direction: Direction,
+    masks=None,
+    level_name: str = "",
+    unfork: bool = False,
 ) -> StepResult:
     """Walk forward or backward. See docs/mechanics.md §5.1-5.3.
 
@@ -693,23 +742,50 @@ def try_move_player(
     player = state.player
     destination = player.pos + direction.delta
 
+    # A carried sausage travels with the player: `TryMovePlayer` gives it its own
+    # `Movement.Translation` in the same direction. With `unfork` it gets none,
+    # which is how the player pulls the fork back out of it.
+    carried = (
+        state.by_id(player.stuckto)
+        if player.stuckto >= 0 and not unfork
+        else None
+    )
+    carried_cells = frozenset(cells_of(carried, state)) if carried else frozenset()
+
     # The fork's destination matters too. Moving forward pushes the fork into
     # the cell beyond it; moving backward vacates the body's own cell.
+    fork_destination = (
+        destination + player.direction.delta if is_extended(player, state) else None
+    )
     cells_needed = [destination]
-    if is_extended(player, state):
-        cells_needed.append(destination + player.direction.delta)
+    if fork_destination is not None:
+        cells_needed.append(fork_destination)
 
     for cell in cells_needed:
         if cell == player.pos or cell == fork_cell(state, player):
             continue  # the player is vacating this cell as part of the move
+        if cell in carried_cells:
+            continue  # the fork is inside this sausage and moving with it
         blocker = ent_at(state, cell, masks, level_name)
-        if blocker is not None and solid_ent_at(state, cell, masks, level_name):
-            state = try_push(state, blocker, direction, masks, level_name)
-            if solid_ent_at(state, cell, masks, level_name):
-                return StepResult(
-                    state=state, moved=False, reason=f"blocked at {tuple(cell)}"
-                )
+        if blocker is None or not solid_ent_at(state, cell, masks, level_name):
+            continue
+        state = try_push(state, blocker, direction, masks, level_name)
+        if not solid_ent_at(state, cell, masks, level_name):
             player = state.player
+            continue
+
+        # Nothing shifted. `TryFork` runs at exactly this point in
+        # `TryMovePlayer`, and its `!ActivelyForced(sausage)` test — literally
+        # `movement != null` — is this same distinction: a sausage the push
+        # moved is carried along, a sausage the push could not move is pierced.
+        if cell == fork_destination and can_fork(state, blocker, destination, direction):
+            state = pierce(state, blocker)
+            player = state.player
+            continue
+
+        return StepResult(
+            state=state, moved=False, reason=f"blocked at {tuple(cell)}"
+        )
 
     # You cannot walk off the island. The move is refused outright rather than
     # permitted and then resolved by gravity.
@@ -737,7 +813,33 @@ def try_move_player(
             state=state, moved=False, reason="hot grill: bounced back"
         )
 
-    return StepResult(state=state.replace_entity(replace(player, pos=destination)))
+    if carried is not None:
+        vacated = carried_cells | {player.pos, fork_cell(state, player)}
+        for cell in (c + direction.delta for c in carried_cells):
+            if cell in vacated or cell == destination:
+                continue
+            if solid_ent_at(state, cell, masks, level_name):
+                # `TryMovePlayer` retries with `unfork: true` when a laden move
+                # fails going backward — backing away pulls the fork out and
+                # leaves the sausage behind. Any other direction simply fails.
+                if direction is player.direction.inverse():
+                    return try_move_player(
+                        state, direction, masks, level_name, unfork=True
+                    )
+                return StepResult(
+                    state=state, moved=False, reason=f"carried sausage hits {tuple(cell)}"
+                )
+
+    state = state.replace_entity(replace(player, pos=destination))
+    if carried is not None:
+        state = state.replace_entity(
+            replace(carried, pos=carried.pos + direction.delta)
+        )
+    elif unfork and player.stuckto >= 0:
+        dropped = state.by_id(player.stuckto)
+        state = state.replace_entity(replace(state.player, stuckto=-1))
+        state = state.replace_entity(replace(dropped, stuckto=-1))
+    return StepResult(state=state)
 
 
 def step(
@@ -775,21 +877,20 @@ def step(
     if player.pos.z < -2:
         return StepResult(state=state, moved=False, reason="player out of world")
 
-    if _laden(state):
-        raise UnimplementedMechanic("laden movement", "player is carrying a sausage")
-
     if history is not None:
         history.append(state)
 
-    # Mirrors `ProcessInput`. Both ladder branches appear twice there, once for
-    # a move parallel to the player's facing and once for a perpendicular one,
-    # and the two differ in whether the player must be extended: walking into a
-    # ladder head-on climbs it only with the fork stowed, whereas a sideways
-    # press climbs only when extended (otherwise it is a turn).
+    # Mirrors `ProcessInput`, which branches three ways. The ladder tests appear
+    # in each branch with different guards, so they are spelled out rather than
+    # factored: what changes is *when* a press climbs instead of walking.
+    laden = player.stuckto >= 0
     extended = is_extended(player, state)
     ahead_is_supported = solid_ent_at(
         state, player.pos + action.delta + Direction.DOWN.delta, masks, level_name
     )
+
+    def climbs_up() -> bool:
+        return ladder_up_in_dir(state, action, masks, level_name)
 
     def climbs_down() -> bool:
         # Descending needs a ladder on the block underfoot facing the way the
@@ -798,16 +899,27 @@ def step(
             state, action, masks, level_name
         )
 
-    if action.parallel_to(player.direction):
-        if not extended and action is player.direction and ladder_up_in_dir(
-            state, action, masks, level_name
-        ):
+    if laden:
+        # A player carrying a sausage cannot turn: every press moves it. Facing
+        # is fixed until the sausage is put down, which is what makes carrying
+        # awkward to steer and is the whole difficulty of the levels that use it.
+        if action.parallel_to(player.direction):
+            result = try_move_player(state, action, masks, level_name)
+        elif climbs_up():
+            result = try_climb_up(state, action, masks, level_name)
+        elif climbs_down():
+            result = try_climb_down(state, action, masks, level_name)
+        else:
+            result = try_move_player(state, action, masks, level_name)
+    elif action.parallel_to(player.direction):
+        # Head-on, climbing needs the fork stowed.
+        if not extended and action is player.direction and climbs_up():
             result = try_climb_up(state, action, masks, level_name)
         elif not extended and action is player.direction.inverse() and climbs_down():
             result = try_climb_down(state, action, masks, level_name)
         else:
             result = try_move_player(state, action, masks, level_name)
-    elif extended and ladder_up_in_dir(state, action, masks, level_name):
+    elif extended and climbs_up():
         result = try_climb_up(state, action, masks, level_name)
     elif extended and climbs_down():
         result = try_climb_down(state, action, masks, level_name)
