@@ -2092,15 +2092,56 @@ the first unexplained refusal had been — the sausage could not roll north
 because island terrain sits at (7,-29,-1), so the fork went into it instead.
 Moves 934-942 carry it across the level, and move 943 unforks.
 
-### Still wrong after this
+### Still wrong after this — and two retracted claims
 
-Emerson Jetty is still not solved. Two faults remain, both in turning:
+Emerson Jetty is still not solved. I first recorded two causes here; **both were
+wrong**, and the retraction is worth keeping because both mistakes were made by
+reading my own diagnostics carelessly rather than by misreading the game.
 
-1. A turn translates the player's body. At move 981 the player faces South at
-   (17,-29), presses East, and ends up at (16,-29) facing East.
-2. The sausage never **rolls** — its `direction` and cook faces are unchanged
-   across the whole level while fork sweeps shove it sideways.
+**Retracted: "sausages never roll."** I read `faces` — which is *cook state* —
+as though it were orientation, and concluded from `(0,0,0,0)` that nothing was
+rolling. All zeros only means the sausage was never cooked. Roll state lives in
+`rot`, which I had not printed; it changes five times in the stretch I was
+looking at. Rolling works.
 
-Both point at the pivot-turn force application (§12.13), which applies forces
-but does not compute torsion. `TryPivotTurn`'s weak-force path,
-`PassiveForceSweep` and `CalculateTorsion` remain unimplemented.
+**Retracted: "a turn translates the player's body."** At move 981 the player
+faces South at (17,-29), presses East and ends at (16,-29), which I called a
+bug. It is correct. `TryTurn` rotates in place and pushes whatever sits in the
+diagonal cell `e.pos + RotBetween(old, new)`; if that collides it is rolled back
+and `TryPivotTurn` runs as a fallback. `TryPivotTurn` sets
+
+    pushdir = direction.Inverse()      // direction is the *new* facing
+
+and pivots the body along `pushdir`. Turning to face East therefore moves the
+body West. The simulator did exactly that.
+
+So the turning code was never the problem. `CalculateTorsion` and
+`PassiveForceSweep` do remain unimplemented, but nothing observed so far is
+evidence against them.
+
+### Where the fault actually is
+
+The demo segments give an exact bound. In true play order — `1-0`, `1-1` … `1-16`,
+`1-final`, then `2-1` — the boundaries land on this simulator precisely:
+
+| segment | moves | what the simulator does |
+|---|---|---|
+| `1-16` | 743..854 | completes The Anchorage at move 854 |
+| `1-final` | 855..901 | enters Emerson Jetty at move 901 (its length, 47, is the owner's "key 47") |
+| `2-1` | 902..1096 | Emerson Jetty, 195 moves |
+
+Emerson Jetty is **world 2's first level**, not world 1's seventeenth; world 1
+has sixteen levels plus `1-0` and `1-final`. An earlier count omitted those two
+files and sorted the rest lexicographically, which put `1-10` before `1-2`.
+
+Within segment `2-1` the replay refuses **nothing** for the first 90 moves and
+then refuses 56 of the remaining 106, including pressing into the same wall five
+times running. Repeated identical refusals mean the state drifted silently
+earlier and everything after is downstream. The fault is therefore in moves
+902-991, and `docs/manual-checks/009-emerson-jetty.md` brackets it.
+
+The geometry is not the problem: the island is connected from the northern
+region down the x=11 column and east along y=-18 to the grills at (13,-15),
+(13,-14), (14,-15), (14,-14), all of which resolve correctly. The player simply
+never gets there — it stays north of y=-25 for a thousand moves while the grills
+sit ten tiles further south.
