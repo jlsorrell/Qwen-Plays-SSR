@@ -28,8 +28,14 @@ ALLOWED_TOP_LEVEL = {
 }
 REQUIRED_ARCHIVE_FILES = {
     "run_bepinex.sh",
+    "doorstop_config.ini",
+    "libdoorstop.dylib",
     "BepInEx/core/BepInEx.dll",
     "BepInEx/core/0Harmony.dll",
+}
+REQUIRED_RUNTIME_DIRECTORIES = {
+    "BepInEx",
+    "BepInEx/core",
 }
 PLUGIN_RELATIVE_PATH = "BepInEx/plugins/SsrOracle.Plugin.dll"
 CONFIG_RELATIVE_PATH = "BepInEx/config/dev.jlsor.ssr.oracle.cfg"
@@ -80,6 +86,12 @@ class InstallStatus:
     @property
     def healthy(self) -> bool:
         return not self.missing and not self.changed
+
+
+@dataclass(frozen=True, slots=True)
+class _FileSnapshot:
+    payload: bytes
+    mode: int
 
 
 def _sha256_file(path: Path) -> str:
@@ -233,28 +245,39 @@ def _manifest_to_dict(manifest: InstallManifest) -> dict[str, object]:
     }
 
 
-def _atomic_write_bytes(target: Path, payload: bytes, mode: int = 0o644) -> None:
+def _atomic_replace_bytes(target: Path, payload: bytes, mode: int = 0o644) -> None:
+    temporary: Path | None = None
+    descriptor = -1
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise InstallError(f"cannot create parent for {target}: {exc}") from exc
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=target.parent,
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+        )
+        temporary = Path(temporary_name)
+        stream = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        with stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
         temporary.chmod(mode)
         os.replace(temporary, target)
     except OSError as exc:
-        if _path_exists(temporary):
-            temporary.unlink()
         raise InstallError(f"cannot atomically write {target}: {exc}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary is not None and _path_exists(temporary):
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
+def _atomic_write_bytes(target: Path, payload: bytes, mode: int = 0o644) -> None:
+    _atomic_replace_bytes(target, payload, mode)
 
 
 def _write_manifest(root: Path, manifest: InstallManifest) -> None:
@@ -283,6 +306,10 @@ def _require_keys(
 
 def _validated_manifest_path(root: Path, relative_path: str) -> Path:
     pure = PurePosixPath(relative_path)
+    if any(part == ".." for part in pure.parts):
+        raise InstallError(
+            f"manifest path contains parent traversal: {relative_path!r}"
+        )
     candidate = root / Path(*pure.parts)
     _inside(root, candidate)
     if (
@@ -388,6 +415,25 @@ def _load_manifest(root: Path) -> InstallManifest:
                 raise InstallError(
                     f"manifest path lacks owned directory parent: {entry.relative_path}"
                 )
+    if archive_hash is not None:
+        missing_runtime_ownership = sorted(
+            path
+            for path in REQUIRED_ARCHIVE_FILES
+            if by_path.get(path) is None or by_path[path].kind != "file"
+        )
+        missing_runtime_ownership.extend(
+            sorted(
+                path
+                for path in REQUIRED_RUNTIME_DIRECTORIES
+                if by_path.get(path) is None
+                or by_path[path].kind != "directory"
+            )
+        )
+        if missing_runtime_ownership:
+            raise InstallError(
+                "manifest lacks required runtime ownership: "
+                + ", ".join(missing_runtime_ownership)
+            )
     return InstallManifest(
         schema_version=1,
         game_assembly_sha256=game_hash,
@@ -458,9 +504,12 @@ def install_runtime(game_root: Path, archive: Path) -> InstallManifest:
                 f"unmanaged install target already exists: {target}"
             )
 
-    staging = Path(
-        tempfile.mkdtemp(prefix=".ssr-oracle-staging-", dir=game.root)
-    )
+    try:
+        staging = Path(
+            tempfile.mkdtemp(prefix=".ssr-oracle-staging-", dir=game.root)
+        )
+    except OSError as exc:
+        raise InstallError(f"cannot create runtime staging directory: {exc}") from exc
     moved: list[tuple[Path, Path]] = []
     try:
         with ZipFile(archive) as zf:
@@ -476,7 +525,7 @@ def install_runtime(game_root: Path, archive: Path) -> InstallManifest:
                 try:
                     with zf.open(info) as source, target.open("xb") as destination:
                         shutil.copyfileobj(source, destination)
-                except OSError as exc:
+                except (OSError, BadZipFile, EOFError, RuntimeError) as exc:
                     raise InstallError(
                         f"cannot extract archive member {member.name}: {exc}"
                     ) from exc
@@ -511,7 +560,12 @@ def install_runtime(game_root: Path, archive: Path) -> InstallManifest:
         for top_level in top_levels:
             source = _inside(staging, staging / top_level)
             target = _inside(game.root, game.root / top_level)
-            source.replace(target)
+            try:
+                source.replace(target)
+            except OSError as exc:
+                raise InstallError(
+                    f"cannot publish runtime root {top_level}: {exc}"
+                ) from exc
             moved.append((source, target))
         _write_manifest(game.root, manifest)
         return manifest
@@ -548,6 +602,151 @@ def _validate_deploy_parents(root: Path, target: Path) -> None:
             )
 
 
+def _entry_health(
+    root: Path, entries: Sequence[ManifestEntry]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    missing: list[str] = []
+    changed: list[str] = []
+    for entry in entries:
+        target = _validated_manifest_path(root, entry.relative_path)
+        if not _path_exists(target):
+            missing.append(entry.relative_path)
+        elif entry.kind == "directory":
+            if target.is_symlink() or not target.is_dir():
+                changed.append(entry.relative_path)
+        elif target.is_symlink() or not target.is_file():
+            changed.append(entry.relative_path)
+        elif _sha256_file(target) != entry.sha256:
+            changed.append(entry.relative_path)
+    return tuple(sorted(missing)), tuple(sorted(changed))
+
+
+def _require_healthy_runtime(root: Path, manifest: InstallManifest) -> None:
+    required_paths = REQUIRED_ARCHIVE_FILES | REQUIRED_RUNTIME_DIRECTORIES
+    required_entries = tuple(
+        entry
+        for entry in manifest.entries
+        if entry.relative_path in required_paths
+    )
+    missing, changed = _entry_health(root, required_entries)
+    if missing or changed:
+        details = []
+        if missing:
+            details.append("missing=" + ",".join(missing))
+        if changed:
+            details.append("changed=" + ",".join(changed))
+        raise InstallError("installed runtime is not healthy: " + "; ".join(details))
+
+
+def _snapshot_file(path: Path) -> _FileSnapshot:
+    try:
+        return _FileSnapshot(
+            payload=path.read_bytes(),
+            mode=stat.S_IMODE(path.stat().st_mode),
+        )
+    except OSError as exc:
+        raise InstallError(f"cannot preserve existing file {path}: {exc}") from exc
+
+
+def _stage_deploy_payloads(
+    root: Path, payloads: dict[str, bytes]
+) -> tuple[Path, dict[str, Path]]:
+    try:
+        staging = Path(
+            tempfile.mkdtemp(prefix=".ssr-oracle-deploy-staging-", dir=root)
+        )
+    except OSError as exc:
+        raise InstallError(f"cannot create deploy staging directory: {exc}") from exc
+    staged: dict[str, Path] = {}
+    try:
+        for relative_path, payload in payloads.items():
+            target = _inside(
+                staging,
+                staging / Path(*PurePosixPath(relative_path).parts),
+            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("xb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            staged[relative_path] = target
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise InstallError(f"cannot stage deploy payloads: {exc}") from exc
+    return staging, staged
+
+
+def _create_deploy_parents(
+    root: Path, targets: Sequence[Path]
+) -> list[Path]:
+    created: list[Path] = []
+    try:
+        for target in targets:
+            relative = target.relative_to(root)
+            current = root
+            for part in relative.parts[:-1]:
+                current /= part
+                if not _path_exists(current):
+                    current.mkdir()
+                    created.append(current)
+    except OSError as exc:
+        for directory in reversed(created):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        raise InstallError(f"cannot create deploy parent directories: {exc}") from exc
+    return created
+
+
+def _restore_deploy_state(
+    *,
+    targets: dict[str, Path],
+    snapshots: dict[str, _FileSnapshot | None],
+    manifest_path: Path,
+    manifest_snapshot: _FileSnapshot,
+    created_directories: Sequence[Path],
+) -> None:
+    errors: list[str] = []
+    for relative_path, target in targets.items():
+        snapshot = snapshots[relative_path]
+        try:
+            if snapshot is None:
+                if _path_exists(target):
+                    if target.is_symlink() or not target.is_file():
+                        raise InstallError(
+                            f"rollback target changed type: {target}"
+                        )
+                    target.unlink()
+            else:
+                _atomic_replace_bytes(target, snapshot.payload, snapshot.mode)
+        except (InstallError, OSError) as exc:
+            errors.append(str(exc))
+
+    try:
+        current_manifest = (
+            _snapshot_file(manifest_path)
+            if _path_exists(manifest_path)
+            else None
+        )
+        if current_manifest != manifest_snapshot:
+            _atomic_replace_bytes(
+                manifest_path,
+                manifest_snapshot.payload,
+                manifest_snapshot.mode,
+            )
+    except InstallError as exc:
+        errors.append(str(exc))
+
+    for directory in reversed(created_directories):
+        try:
+            directory.rmdir()
+        except OSError as exc:
+            errors.append(f"cannot remove created deploy directory {directory}: {exc}")
+    if errors:
+        raise InstallError("deploy rollback failed: " + "; ".join(errors))
+
+
 def deploy_plugin(
     game_root: Path, plugin: Path, config_text: str
 ) -> InstallManifest:
@@ -559,10 +758,15 @@ def deploy_plugin(
     game, manifest = _inspected_manifest(game_root)
     if manifest.runtime_archive_sha256 is None:
         raise InstallError("manifest does not describe an installed runtime")
+    _require_healthy_runtime(game.root, manifest)
 
+    try:
+        plugin_payload = plugin.read_bytes()
+    except OSError as exc:
+        raise InstallError(f"cannot read plugin {plugin}: {exc}") from exc
     by_path = {entry.relative_path: entry for entry in manifest.entries}
     payloads = {
-        PLUGIN_RELATIVE_PATH: plugin.read_bytes(),
+        PLUGIN_RELATIVE_PATH: plugin_payload,
         CONFIG_RELATIVE_PATH: config_text.encode(),
     }
     targets: dict[str, Path] = {}
@@ -579,49 +783,79 @@ def deploy_plugin(
                 raise InstallError(f"owned deploy target has changed type: {target}")
         _validate_deploy_parents(game.root, target)
 
-    for relative_path, target in targets.items():
-        _atomic_write_bytes(target, payloads[relative_path])
-        parts = PurePosixPath(relative_path).parts
-        for index in range(1, len(parts)):
-            directory = PurePosixPath(*parts[:index]).as_posix()
-            by_path[directory] = ManifestEntry(directory, "directory", None)
-        by_path[relative_path] = ManifestEntry(
-            relative_path,
-            "file",
-            sha256(payloads[relative_path]).hexdigest(),
+    staging, staged = _stage_deploy_payloads(game.root, payloads)
+    try:
+        snapshots = {
+            relative_path: (
+                _snapshot_file(target) if _path_exists(target) else None
+            )
+            for relative_path, target in targets.items()
+        }
+        manifest_path = game.root / MANIFEST_NAME
+        manifest_snapshot = _snapshot_file(manifest_path)
+        for relative_path in targets:
+            parts = PurePosixPath(relative_path).parts
+            for index in range(1, len(parts)):
+                directory = PurePosixPath(*parts[:index]).as_posix()
+                by_path[directory] = ManifestEntry(
+                    directory, "directory", None
+                )
+            by_path[relative_path] = ManifestEntry(
+                relative_path,
+                "file",
+                sha256(payloads[relative_path]).hexdigest(),
+            )
+        updated = InstallManifest(
+            schema_version=manifest.schema_version,
+            game_assembly_sha256=manifest.game_assembly_sha256,
+            runtime_archive_sha256=manifest.runtime_archive_sha256,
+            entries=tuple(
+                sorted(by_path.values(), key=lambda entry: entry.relative_path)
+            ),
         )
-    updated = InstallManifest(
-        schema_version=manifest.schema_version,
-        game_assembly_sha256=manifest.game_assembly_sha256,
-        runtime_archive_sha256=manifest.runtime_archive_sha256,
-        entries=tuple(
-            sorted(by_path.values(), key=lambda entry: entry.relative_path)
-        ),
-    )
-    _write_manifest(game.root, updated)
-    return updated
+        created_directories: list[Path] = []
+        try:
+            created_directories = _create_deploy_parents(
+                game.root, tuple(targets.values())
+            )
+            for relative_path, target in targets.items():
+                _atomic_write_bytes(
+                    target, staged[relative_path].read_bytes()
+                )
+            _write_manifest(game.root, updated)
+            return updated
+        except Exception as exc:
+            try:
+                _restore_deploy_state(
+                    targets=targets,
+                    snapshots=snapshots,
+                    manifest_path=manifest_path,
+                    manifest_snapshot=manifest_snapshot,
+                    created_directories=created_directories,
+                )
+            except InstallError as rollback_error:
+                raise InstallError(
+                    f"deploy failed ({exc}); {rollback_error}"
+                ) from exc
+            if isinstance(exc, InstallError):
+                raise
+            if isinstance(exc, OSError):
+                raise InstallError(
+                    f"cannot publish deploy payloads: {exc}"
+                ) from exc
+            raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def status_install(game_root: Path) -> InstallStatus:
     """Check every manifest-owned path without modifying the install."""
     game, manifest = _inspected_manifest(game_root)
-    missing: list[str] = []
-    changed: list[str] = []
-    for entry in manifest.entries:
-        target = _validated_manifest_path(game.root, entry.relative_path)
-        if not _path_exists(target):
-            missing.append(entry.relative_path)
-        elif entry.kind == "directory":
-            if target.is_symlink() or not target.is_dir():
-                changed.append(entry.relative_path)
-        elif target.is_symlink() or not target.is_file():
-            changed.append(entry.relative_path)
-        elif _sha256_file(target) != entry.sha256:
-            changed.append(entry.relative_path)
+    missing, changed = _entry_health(game.root, manifest.entries)
     return InstallStatus(
         manifest=manifest,
-        missing=tuple(sorted(missing)),
-        changed=tuple(sorted(changed)),
+        missing=missing,
+        changed=changed,
     )
 
 

@@ -6,6 +6,7 @@ from zipfile import ZipFile, ZipInfo
 
 import pytest
 
+import ssr_env.oracle_install as oracle_install
 from ssr_env.oracle_install import (
     EXPECTED_ASSEMBLY_SHA256,
     MANIFEST_NAME,
@@ -33,6 +34,8 @@ def make_fake_game(root: Path, assembly: bytes) -> Path:
 def make_runtime_archive(path: Path, script: str = 'executable_name=""\n') -> Path:
     with ZipFile(path, "w") as zf:
         zf.writestr("run_bepinex.sh", script)
+        zf.writestr("doorstop_config.ini", b"doorstop-config")
+        zf.writestr("libdoorstop.dylib", b"doorstop")
         zf.writestr("BepInEx/core/BepInEx.dll", b"core")
         zf.writestr("BepInEx/core/0Harmony.dll", b"harmony")
     return path
@@ -132,6 +135,8 @@ def test_archive_rejects_children_under_a_top_level_file_root(tmp_path: Path):
     "missing",
     [
         "run_bepinex.sh",
+        "doorstop_config.ini",
+        "libdoorstop.dylib",
         "BepInEx/core/BepInEx.dll",
         "BepInEx/core/0Harmony.dll",
     ],
@@ -139,6 +144,8 @@ def test_archive_rejects_children_under_a_top_level_file_root(tmp_path: Path):
 def test_archive_requires_bepinex_and_harmony(tmp_path: Path, missing: str):
     required = {
         "run_bepinex.sh": b'executable_name=""\n',
+        "doorstop_config.ini": b"doorstop-config",
+        "libdoorstop.dylib": b"doorstop",
         "BepInEx/core/BepInEx.dll": b"core",
         "BepInEx/core/0Harmony.dll": b"harmony",
     }
@@ -245,6 +252,60 @@ def test_install_manifest_records_archive_hash_and_created_roots(
     )
 
 
+def test_install_wraps_archive_extraction_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+
+    def fail_open(*args, **kwargs):
+        raise RuntimeError("injected extraction failure")
+
+    monkeypatch.setattr(ZipFile, "open", fail_open)
+
+    with pytest.raises(InstallError, match="extract archive member"):
+        install_runtime(game, archive)
+
+    assert not (game / "BepInEx").exists()
+
+
+def test_install_wraps_top_level_publication_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    original_replace = Path.replace
+
+    def fail_runtime_move(path: Path, target: Path):
+        if path.name == "BepInEx" and ".ssr-oracle-staging-" in str(path.parent):
+            raise OSError("injected publication failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_runtime_move)
+
+    with pytest.raises(InstallError, match="publish runtime root"):
+        install_runtime(game, archive)
+
+    assert not (game / "BepInEx").exists()
+
+
+def test_install_wraps_manifest_tempfile_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+
+    def fail_mkstemp(*args, **kwargs):
+        raise OSError("injected temporary-file failure")
+
+    monkeypatch.setattr(oracle_install.tempfile, "mkstemp", fail_mkstemp)
+
+    with pytest.raises(InstallError, match="atomically write"):
+        install_runtime(game, archive)
+
+    assert not (game / "BepInEx").exists()
+
+
 def test_deploy_refuses_a_non_dll_plugin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -265,6 +326,64 @@ def test_deploy_requires_a_recognized_runtime_manifest(
     plugin.write_bytes(b"plugin")
 
     with pytest.raises(InstallError, match="manifest"):
+        deploy_plugin(game, plugin, "enabled = true\n")
+
+
+def test_deploy_rejects_a_manifest_without_required_runtime_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    assembly_hash = sha256(b"known").hexdigest()
+    write_manifest(
+        game,
+        {
+            "schema_version": 1,
+            "game_assembly_sha256": assembly_hash,
+            "runtime_archive_sha256": sha256(archive.read_bytes()).hexdigest(),
+            "entries": [],
+        },
+    )
+    plugin = tmp_path / "plugin.dll"
+    plugin.write_bytes(b"plugin")
+
+    with pytest.raises(InstallError, match="required runtime ownership"):
+        deploy_plugin(game, plugin, "enabled = true\n")
+
+    assert not (game / "BepInEx").exists()
+
+
+def test_deploy_refuses_changed_required_runtime_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    (game / "BepInEx/core/BepInEx.dll").write_bytes(b"changed")
+    plugin = tmp_path / "plugin.dll"
+    plugin.write_bytes(b"plugin")
+
+    with pytest.raises(InstallError, match="runtime is not healthy"):
+        deploy_plugin(game, plugin, "enabled = true\n")
+
+    assert not (game / "BepInEx/plugins/SsrOracle.Plugin.dll").exists()
+
+
+def test_deploy_wraps_plugin_read_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    plugin = tmp_path / "plugin.dll"
+    plugin.write_bytes(b"plugin")
+    original_read_bytes = Path.read_bytes
+
+    def fail_plugin_read(path: Path):
+        if path == plugin:
+            raise OSError("injected plugin read failure")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_plugin_read)
+
+    with pytest.raises(InstallError, match="cannot read plugin"):
         deploy_plugin(game, plugin, "enabled = true\n")
 
 
@@ -291,6 +410,106 @@ def test_deploy_uses_fixed_paths_and_is_idempotent(
         b"plugin-v2"
     ).hexdigest()
     assert len(first.entries) == len(second.entries)
+
+
+def test_deploy_rolls_back_when_the_second_payload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    manifest_before = (game / MANIFEST_NAME).read_bytes()
+    plugin = tmp_path / "plugin.dll"
+    plugin.write_bytes(b"plugin")
+    original_atomic_write = oracle_install._atomic_write_bytes
+
+    def fail_config(target: Path, payload: bytes, mode: int = 0o644):
+        if target == game / "BepInEx/config/dev.jlsor.ssr.oracle.cfg":
+            raise InstallError("injected config publication failure")
+        return original_atomic_write(target, payload, mode)
+
+    monkeypatch.setattr(oracle_install, "_atomic_write_bytes", fail_config)
+
+    with pytest.raises(InstallError, match="config publication"):
+        deploy_plugin(game, plugin, "enabled = true\n")
+
+    assert (game / MANIFEST_NAME).read_bytes() == manifest_before
+    assert not (game / "BepInEx/plugins/SsrOracle.Plugin.dll").exists()
+    assert not (game / "BepInEx/config/dev.jlsor.ssr.oracle.cfg").exists()
+    assert not (game / "BepInEx/plugins").exists()
+    assert not (game / "BepInEx/config").exists()
+
+
+def test_deploy_rolls_back_when_manifest_publication_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    plugin = tmp_path / "plugin.dll"
+    plugin.write_bytes(b"plugin-v1")
+    deploy_plugin(game, plugin, "enabled = true\n")
+    plugin_target = game / "BepInEx/plugins/SsrOracle.Plugin.dll"
+    config_target = game / "BepInEx/config/dev.jlsor.ssr.oracle.cfg"
+    plugin_target.chmod(0o600)
+    config_target.chmod(0o640)
+    manifest_before = (game / MANIFEST_NAME).read_bytes()
+    plugin_before = plugin_target.read_bytes()
+    config_before = config_target.read_bytes()
+    modes_before = (
+        stat.S_IMODE(plugin_target.stat().st_mode),
+        stat.S_IMODE(config_target.stat().st_mode),
+    )
+    plugin.write_bytes(b"plugin-v2")
+    original_atomic_write = oracle_install._atomic_write_bytes
+
+    def fail_manifest(target: Path, payload: bytes, mode: int = 0o644):
+        if target == game / MANIFEST_NAME:
+            raise InstallError("injected manifest publication failure")
+        return original_atomic_write(target, payload, mode)
+
+    monkeypatch.setattr(oracle_install, "_atomic_write_bytes", fail_manifest)
+
+    with pytest.raises(InstallError, match="manifest publication"):
+        deploy_plugin(game, plugin, "enabled = false\n")
+
+    assert (game / MANIFEST_NAME).read_bytes() == manifest_before
+    assert plugin_target.read_bytes() == plugin_before
+    assert config_target.read_bytes() == config_before
+    assert (
+        stat.S_IMODE(plugin_target.stat().st_mode),
+        stat.S_IMODE(config_target.stat().st_mode),
+    ) == modes_before
+
+
+def test_deploy_cleans_staging_when_preserving_an_owned_target_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    plugin = tmp_path / "plugin.dll"
+    plugin.write_bytes(b"plugin-v1")
+    deploy_plugin(game, plugin, "enabled = true\n")
+    plugin_target = game / "BepInEx/plugins/SsrOracle.Plugin.dll"
+    config_target = game / "BepInEx/config/dev.jlsor.ssr.oracle.cfg"
+    manifest_before = (game / MANIFEST_NAME).read_bytes()
+    plugin_before = plugin_target.read_bytes()
+    config_before = config_target.read_bytes()
+    original_read_bytes = Path.read_bytes
+
+    def fail_owned_snapshot(path: Path):
+        if path == plugin_target:
+            raise OSError("injected snapshot failure")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_owned_snapshot)
+    plugin.write_bytes(b"plugin-v2")
+
+    with pytest.raises(InstallError, match="preserve existing file"):
+        deploy_plugin(game, plugin, "enabled = false\n")
+
+    assert original_read_bytes(game / MANIFEST_NAME) == manifest_before
+    assert original_read_bytes(plugin_target) == plugin_before
+    assert original_read_bytes(config_target) == config_before
+    assert not tuple(game.glob(".ssr-oracle-deploy-staging-*"))
 
 
 def test_deploy_refuses_an_owned_target_redirected_by_symlink(
@@ -330,7 +549,7 @@ def test_deploy_refuses_a_runtime_root_with_the_wrong_type(
     plugin = tmp_path / "plugin.dll"
     plugin.write_bytes(b"plugin")
 
-    with pytest.raises(InstallError, match="deploy parent"):
+    with pytest.raises(InstallError, match="runtime is not healthy"):
         deploy_plugin(game, plugin, "generated")
 
 
@@ -451,6 +670,48 @@ def test_status_rejects_malformed_file_hash(
         status_install(game)
 
 
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [
+            {
+                "relative_path": "BepInEx/..",
+                "kind": "directory",
+                "sha256": None,
+            },
+        ],
+        [
+            {
+                "relative_path": "BepInEx/..",
+                "kind": "directory",
+                "sha256": None,
+            },
+            {
+                "relative_path": "BepInEx/../keep-me.txt",
+                "kind": "file",
+                "sha256": sha256(b"user").hexdigest(),
+            },
+        ],
+    ],
+)
+def test_status_rejects_parent_components_even_when_they_resolve_inside_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entries: list[dict[str, object]],
+):
+    game, archive = make_known_game(tmp_path, monkeypatch)
+    install_runtime(game, archive)
+    (game / "keep-me.txt").write_bytes(b"user")
+    data = manifest_data(game)
+    raw_entries = data["entries"]
+    assert isinstance(raw_entries, list)
+    raw_entries.extend(entries)
+    write_manifest(game, data)
+
+    with pytest.raises(InstallError, match="parent traversal"):
+        status_install(game)
+
+
 def test_status_rejects_a_non_string_manifest_kind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -498,7 +759,7 @@ def test_recover_refuses_manifest_paths_outside_game_root(
     outside = game.parent / "keep-me.txt"
     outside.write_text("user")
 
-    with pytest.raises(InstallError, match="path escapes game root"):
+    with pytest.raises(InstallError, match="parent traversal"):
         recover_install(game)
 
     assert outside.read_text() == "user"
