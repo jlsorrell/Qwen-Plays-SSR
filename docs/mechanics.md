@@ -2202,3 +2202,75 @@ and the sausage now reaches the grills and finishes fully cooked,
    still does not complete, because an uncooked sausage elsewhere in the
    composite overworld fails the all-cooked test. Only the current level's
    sausages should count.
+
+## 12.35 Islands are pushed, not teleported — riders go with them
+
+Both faults §12.34 exposed turn out to be one bug, and it is not in the loss
+check or the win check.
+
+`TryLowerAll` does not displace islands directly. It calls
+
+    TryPushEnt(current, Direction.Down, 0, 1);
+
+once per tick while `pushestotry` counts down from about 20, and a push in this
+engine carries everything resting on the pushed entity. `sink_other_islands`
+teleported the island alone, so anything standing on it was left hanging in the
+air. The world sausage — which is out on the overworld precisely because the
+`1-final` sequence walks the player to it — dropped out from under itself the
+moment a level was entered, fell, and was declared lost.
+
+`TryRaiseAll` is the same shape, so the restore carries riders too.
+
+### A sausage is lost only if it *fell* there
+
+The second half. The game marks a sausage lost inside the movement loop, on
+`movement.target` — an entity that has just moved:
+
+    if (movement.target.type == sausage && movement.target.pos.z < -2
+        && pushestotry == 0
+        && (dat.Length == 0 || dat[0] == 'M'))
+    { movement.target.pos.z = -100; dat = 'L' + dat.Substring(1); }
+
+Three consequences this simulator was missing:
+
+- **Falling is required.** Marking on depth alone drowned sausages that were
+  merely parked deep, which is exactly what a world sausage is after the
+  overworld sinks twenty cells beneath it.
+- `dat[0] == 'M'` means an already-lost sausage is never re-marked, and a
+  sausage whose `dat` begins `'S'` is never lost at all.
+- The marked sausage is **moved to z = -100**, not left where it fell.
+
+`pushestotry == 0` additionally means nothing can be lost while the islands are
+still sinking.
+
+`Lost()` itself is not depth-based for sausages at all — it reads the flag:
+`dat[0] == 'B'` is "Burned", `dat[0] == 'L'` is "Lost". Only the player and the
+fork are lost by depth, both at `z < -2`.
+
+### Where this leaves Emerson Jetty
+
+The spurious loss is gone and the level's own sausage finishes fully cooked,
+`faces=(2,2,2,2)`, on the grill at (13,-14,-1). Refusals across segment `2-1`
+stay at 13/195.
+
+It still does not register as solved, and the remaining cause is precise:
+
+> `Won()` skips a sausage only for `pos.z > 8` or `dat[0] == 'S'`, and returns
+> false outright for any counted sausage with `pos.z < -3`. The world sausage
+> now correctly rides the overworld down to z = -21, and so fails that test.
+
+`is_solved` already mirrors `Won()` faithfully; the win check was never the
+problem. What is unresolved is how the real game stops an out-on-the-overworld
+world sausage from blocking every level entered afterwards. Three candidates,
+none yet confirmed:
+
+1. The sausage should be standing on the **target** island, which does not sink.
+   improv3's island spans roughly x 3..21; the sausage sits at x=1, just outside.
+   A small error in island extent or in where `1-final` leaves the sausage would
+   do it.
+2. World sausages are removed from play on level entry, as level sausages are.
+3. Delivering a world sausage rewrites its `dat` to begin `'S'`, which is
+   exactly the marker `Won()` skips — and the only thing that marker is for.
+
+Candidate 3 is the most likely, since `'S'` otherwise has no producer anywhere in
+the code read so far.

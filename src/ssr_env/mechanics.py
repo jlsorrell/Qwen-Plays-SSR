@@ -359,6 +359,7 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
     Falling below `OUT_OF_WORLD_Z` is fatal: the player drowns, and a sausage is
     marked lost via its `dat` prefix.
     """
+    fell: set[int] = set()
     for _ in range(_MAX_SETTLE_STEPS):
         falling = [
             e
@@ -371,6 +372,7 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
         if not falling:
             break
         for entity in falling:
+            fell.add(entity.id)
             state = state.replace_entity(
                 replace(entity, pos=entity.pos + Direction.DOWN.delta)
             )
@@ -384,13 +386,32 @@ def settle(state: GameState, masks=None, level_name: str = "") -> GameState:
     else:
         raise UnimplementedMechanic("settle-loop", "gravity did not reach quiescence")
 
+    # A sausage is only lost if it *fell* there. The game marks it inside the
+    # movement loop, on `movement.target` — an entity that just moved:
+    #
+    #     if (movement.target.type == sausage && movement.target.pos.z < -2
+    #         && pushestotry == 0
+    #         && (dat.Length == 0 || dat[0] == 'M')) { pos.z = -100; dat = 'L'... }
+    #
+    # Marking on depth alone drowned sausages that were merely *parked* deep —
+    # the world sausage rides the overworld down twenty cells whenever a level
+    # is entered, and was being declared lost every step thereafter (§12.35).
+    # The `dat[0] == 'M'` test also means an already-lost or spectral sausage is
+    # never re-marked.
     for entity in state.entities:
         if entity.pos.z >= OUT_OF_WORLD_Z:
             continue
         if entity.type is EntType.PLAYER:
             return replace(state, lost_reason="Drowned")
-        if entity.type is EntType.SAUSAGE and not entity.dat.startswith("L"):
-            state = state.replace_entity(replace(entity, dat="L" + entity.dat[1:]))
+        if (
+            entity.type is EntType.SAUSAGE
+            and entity.id in fell
+            and (not entity.dat or entity.dat.startswith("M"))
+        ):
+            state = state.replace_entity(
+                replace(entity, pos=Coord(entity.pos.x, entity.pos.y, -100),
+                        dat="L" + entity.dat[1:])
+            )
             state = replace(state, lost_reason="SausageLost")
     return state
 
@@ -1132,30 +1153,52 @@ def is_solved(state: GameState) -> bool:
 ISLAND_SINK_DEPTH = 20
 
 
-def sink_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+def _shift_islands(state: GameState, target: str, dz: int, masks) -> GameState:
+    """Move every island but `target` by `dz`, carrying whatever rides on them.
+
+    `TryLowerAll` and `TryRaiseAll` do not teleport islands — they call
+    `TryPushEnt(island, Direction.Down, 0, 1)`, and a push in this engine carries
+    everything resting on the pushed entity. Displacing only the island left
+    riders hanging: the world sausage standing on the overworld dropped out from
+    under itself the moment a level was entered, and `settle` then marked it
+    `SausageLost` (§12.35).
+
+    Riders are resolved *before* anything moves, because `floor_under` stops
+    reporting an island once that island has been displaced.
+    """
+    moving = {
+        e.id for e in state.entities if e.type is EntType.ISLAND and e.dat != target
+    }
+    riders = set()
+    for entity in state.entities:
+        if entity.type is EntType.ISLAND or entity.type not in NEEDS_GROUND_TYPES:
+            continue
+        floor = floor_under(entity, state, masks, "")
+        if floor is not None and floor.id in moving:
+            riders.add(entity.id)
+
+    shift = Coord(0, 0, dz)
+    return with_entities(
+        state,
+        tuple(
+            replace(e, pos=e.pos + shift) if e.id in moving or e.id in riders else e
+            for e in state.entities
+        ),
+    )
+
+
+def sink_other_islands(
+    state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH, masks=None
+):
     """Lower every island except `target`. Mirrors `TryLowerAll`."""
-    return with_entities(
-        state,
-        tuple(
-            replace(e, pos=e.pos + Coord(0, 0, -depth))
-            if e.type is EntType.ISLAND and e.dat != target
-            else e
-            for e in state.entities
-        ),
-    )
+    return _shift_islands(state, target, -depth, masks)
 
 
-def raise_other_islands(state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH):
+def raise_other_islands(
+    state: GameState, target: str, depth: int = ISLAND_SINK_DEPTH, masks=None
+):
     """Restore every island except `target`. Mirrors `TryRaiseAll`."""
-    return with_entities(
-        state,
-        tuple(
-            replace(e, pos=e.pos + Coord(0, 0, depth))
-            if e.type is EntType.ISLAND and e.dat != target
-            else e
-            for e in state.entities
-        ),
-    )
+    return _shift_islands(state, target, depth, masks)
 
 
 def check_overworld_entry(
@@ -1223,7 +1266,7 @@ def check_overworld_entry(
         )
         # `TryLowerAll`: every other island sinks, so only this level is
         # reachable while you are inside it.
-        return sink_other_islands(entered, name)
+        return sink_other_islands(entered, name, masks=masks)
     return state
 
 
@@ -1295,4 +1338,4 @@ def check_level_exit(state: GameState, meta: dict, masks=None) -> GameState:
         exit_attachment=None,
     )
     # `SubworldLeave` calls `TryRaiseAll`: the surrounding islands come back up.
-    return raise_other_islands(left, name)
+    return raise_other_islands(left, name, masks=masks)
