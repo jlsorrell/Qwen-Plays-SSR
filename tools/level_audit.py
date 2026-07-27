@@ -260,22 +260,53 @@ def segment_to_dict(segment: Segment) -> dict[str, object]:
     }
 
 
+def format_event(event: StepTrace) -> str:
+    labels: list[str] = []
+    if not event.moved:
+        labels.append("refused")
+    if event.reason:
+        labels.append(event.reason)
+    if event.level_before != event.level_after:
+        labels.append(
+            f"level {event.level_before or '-'} -> {event.level_after or '-'}"
+        )
+    if event.loss:
+        labels.append(f"loss={event.loss}")
+    summary = "; ".join(labels) if labels else "changed"
+    changed = ", ".join(str(delta.entity_id) for delta in event.changes) or "-"
+    return (
+        f"global {event.global_move} "
+        f"{event.segment}:{event.segment_move} "
+        f"{event.input.name}: {summary}; entities={changed}"
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--json", type=Path, default=None)
+    ap.add_argument(
+        "--trace",
+        choices=("none", "failures", "changes"),
+        default="none",
+    )
+    ap.add_argument("--segment", default=None)
     args = ap.parse_args()
 
-    segs = audit(args.limit)
+    segs = audit(args.limit, args.trace, args.segment)
     with_level = [s for s in segs if s.under_test]
     ok = [s for s in with_level if s.status == "ok"]
     clean = [s for s in with_level if not s.resynced_before]
     clean_ok = [s for s in clean if s.status == "ok"]
 
-    print(f"{'segment':<10} {'level':<16} {'status':<16} {'entered':>8} {'done':>8}  run-up")
+    print(
+        f"{'segment':<10} {'level':<16} {'status':<16} "
+        f"{'at':>8} {'entered':>8} {'done':>8}  run-up"
+    )
     for s in with_level:
         print(
             f"{s.name:<10} {(s.level or ''):<16} {s.status:<16} "
+            f"{s.failure_at if s.failure_at is not None else '':>8} "
             f"{s.entered_at if s.entered_at is not None else '':>8} "
             f"{s.completed_at if s.completed_at is not None else '':>8}"
             f"  {'after-resync' if s.resynced_before else 'clean'}"
@@ -290,6 +321,13 @@ def main() -> None:
             reasons[s.status.split(":")[0]] = reasons.get(s.status.split(":")[0], 0) + 1
     if reasons:
         print("  failure kinds:", ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
+
+    for segment in segs:
+        if not segment.events:
+            continue
+        print(f"\ntrace {segment.name}:")
+        for event in segment.events:
+            print("  " + format_event(event))
 
     if args.json:
         args.json.write_text(
