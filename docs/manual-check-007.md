@@ -6,8 +6,21 @@ fork as a raised tile.*
 
 ## Starting point
 
-Complete **world 1**. A sausage appears at the plaque structure. Stand **4 tiles
-west and 1 tile south of it, facing north**, then play the keys below.
+**Do not navigate to a described spot — let the game place you.**
+
+Complete **world 1**, finishing with **The Anchorage**. The moment that level is
+solved you are returned to its entrance tile, facing **north**, and the world
+sausage has appeared at the plaque structure. That is the start position, and
+the first key below is the very next input.
+
+An earlier version of this document described the spot as "4 tiles west and 1
+south of the sausage, facing north". That is the same tile, but reaching it by
+hand risks arriving on the wrong facing — and since `A` turns when you are
+facing north but *moves* you when facing east or west, a wrong facing sends the
+first three keys somewhere else entirely.
+
+If you have already walked away from the entrance, the safest reset is to
+re-enter The Anchorage and leave it again by completing it.
 
 ```
 0....000010111..0000000
