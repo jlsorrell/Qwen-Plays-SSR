@@ -1919,3 +1919,38 @@ reason is a rule this simulator lacks, not a terrain difference.
 
 **The narrow question:** playing the sequence `A z A D D D D`, does the fourth
 `D` move the character, or does nothing happen?
+
+
+## 12.30 Sausage-only checkpoints hid a player divergence
+
+The owner re-ran the world-sausage sequence from a correctly established start.
+Checkpoints at keys **8, 16 and 20 all pass**; the one at key 63 fails, and
+**key 47 enters a level** in the real game.
+
+This simulator enters no level at key 47. At key 43 its player is at `(2,-20)`
+on the east edge of an island, and keys 45-47 press east into void:
+
+```
+(3,-20,-1)  VOID       <- destination
+(3,-20,-2)  VOID       <- and nothing beneath it
+```
+
+The nearest entrance of any uncompleted level is **11 tiles away**.
+
+### The checkpoints could not have caught this
+
+They track **only the sausage**, and in this model the sausage does not move
+between keys 20 and 63 — it sits at "7 east, 2 north" throughout. So the player
+could diverge anywhere in that stretch and every checkpoint would still pass.
+Keys 8/16/20 confirm the sausage; they say nothing about the player.
+
+**Design lesson: a checkpoint must track every piece of state the following
+inputs depend on.** These tracked the object of interest rather than the thing
+being controlled. Future manual checks must report the *player's* position and
+facing as well as the sausage's.
+
+### Where the divergence is
+
+Somewhere in keys **21-47**, in player movement, while the sausage sits still.
+That is a 27-move window, and the next check should place player checkpoints
+inside it — roughly every five keys — rather than sausage checkpoints.
