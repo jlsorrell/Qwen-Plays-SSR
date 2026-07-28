@@ -850,6 +850,11 @@ rechecks alone do not satisfy containment. Inject failures independently at
 every file write/fsync, replace, parent-directory fsync, manifest atomic-write
 sub-boundary, staging cleanup, and recovery movement. On any failure:
 
+On macOS, use descriptor-relative `renameatx_np` with `RENAME_EXCL` for
+required-absent destinations and `RENAME_SWAP` plus displaced-inode validation
+for active/manifest replacement. Ordinary rename after a leaf check does not
+satisfy the concurrent-substitution contract.
+
 1. restore active DLL and manifest bytes/modes;
 2. move newly created backup/provenance artifacts into an exclusive
    `.ssr-oracle-recovery/<timestamp>-<token>/compat/`;

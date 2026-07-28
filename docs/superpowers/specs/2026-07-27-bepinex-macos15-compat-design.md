@@ -274,6 +274,14 @@ after preflight cannot redirect a write outside the inspected game root.
 Supplied DLL and provenance inputs are likewise opened through a no-follow
 component chain and read from stable regular-file descriptors.
 
+On the supported macOS platform, absent destinations are installed with
+descriptor-relative `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`.
+Existing active/manifest files are replaced with
+`renameatx_np(RENAME_SWAP | RENAME_NOFOLLOW_ANY)`; the displaced inode is then
+validated against the preflight snapshot from the private staging directory.
+An unexpected displaced inode is atomically swapped back and the transaction
+fails, so a concurrent leaf substitution is neither overwritten nor adopted.
+
 The command stages same-filesystem temporary files, then atomically installs:
 
 - the official backup at
