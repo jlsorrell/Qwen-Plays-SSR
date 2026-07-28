@@ -776,6 +776,144 @@ def test_deploy_preloader_is_byte_identically_idempotent(
     assert _tree_snapshot(installed_official_game) == before
 
 
+def test_deploy_preloader_idempotence_rejects_concurrent_active_change(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+    active = installed_official_game / ACTIVE_PATH
+
+    def change_during_revalidation(boundary: str) -> None:
+        if boundary == "idempotent_revalidate":
+            active.write_bytes(b"concurrent change")
+
+    monkeypatch.setattr(
+        oracle_install,
+        "_deploy_preloader_checkpoint",
+        change_during_revalidation,
+    )
+
+    with pytest.raises(InstallError, match="changed during validation"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+
+@pytest.mark.parametrize("request_kind", ["preloader", "provenance"])
+def test_deploy_preloader_idempotence_revalidates_request_leaf(
+    request_kind: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+    target = preloader if request_kind == "preloader" else provenance
+    held = tmp_path / f"held-{request_kind}"
+
+    def change_during_revalidation(boundary: str) -> None:
+        if boundary == "idempotent_revalidate":
+            target.replace(held)
+            target.write_bytes(b"concurrent request")
+
+    monkeypatch.setattr(
+        oracle_install,
+        "_deploy_preloader_checkpoint",
+        change_during_revalidation,
+    )
+
+    with pytest.raises(InstallError, match="changed during validation"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+
+@pytest.mark.parametrize("directory_name", ["BepInEx", "core"])
+def test_deploy_preloader_idempotence_reanchors_directory_edges(
+    directory_name: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+    target = (
+        installed_official_game / "BepInEx"
+        if directory_name == "BepInEx"
+        else installed_official_game / "BepInEx/core"
+    )
+    held = tmp_path / f"held-{directory_name}"
+
+    def change_during_revalidation(boundary: str) -> None:
+        if boundary == "idempotent_revalidate":
+            target.replace(held)
+            target.mkdir()
+            (target / "unrelated").write_bytes(b"keep")
+
+    monkeypatch.setattr(
+        oracle_install,
+        "_deploy_preloader_checkpoint",
+        change_during_revalidation,
+    )
+
+    with pytest.raises(InstallError, match="directory entry changed"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert (target / "unrelated").read_bytes() == b"keep"
+
+
+def test_deploy_preloader_rejects_symlinked_request_parent(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+):
+    preloader, provenance = deploy_request
+    actual = tmp_path / "actual-request"
+    actual.mkdir()
+    copied = actual / preloader.name
+    copied.write_bytes(preloader.read_bytes())
+    linked = tmp_path / "linked-request"
+    linked.symlink_to(actual, target_is_directory=True)
+
+    with pytest.raises(InstallError, match="without following symlinks"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            linked / copied.name,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+
 @pytest.mark.parametrize(
     ("damage", "message"),
     [
@@ -845,7 +983,7 @@ def test_deploy_preloader_rejects_preflight_failures_without_mutation(
         raise AssertionError("preflight must finish before staging")
 
     monkeypatch.setattr(
-        oracle_install, "_stage_compat_payloads", observe_stage, raising=False
+        oracle_install, "_create_compat_staging", observe_stage
     )
 
     with pytest.raises(InstallError, match=message):
@@ -909,7 +1047,7 @@ def test_deploy_preloader_rejects_symlinked_request_files_before_staging(
         stage_called = True
         raise AssertionError("unsafe request must fail before staging")
 
-    monkeypatch.setattr(oracle_install, "_stage_compat_payloads", observe_stage)
+    monkeypatch.setattr(oracle_install, "_create_compat_staging", observe_stage)
 
     with pytest.raises(InstallError, match="safe regular file"):
         oracle_install.deploy_preloader(
@@ -943,7 +1081,7 @@ def test_deploy_preloader_rejects_an_unsafe_recovery_parent_before_staging(
         stage_called = True
         raise AssertionError("unsafe recovery must fail before staging")
 
-    monkeypatch.setattr(oracle_install, "_stage_compat_payloads", observe_stage)
+    monkeypatch.setattr(oracle_install, "_create_compat_staging", observe_stage)
 
     with pytest.raises(InstallError, match="recovery parent"):
         oracle_install.deploy_preloader(
@@ -967,11 +1105,13 @@ def test_deploy_preloader_rejects_provenance_changed_during_preflight(
     forged = json.loads(valid)
     forged["patch_sha256"] = "9" * 64
     provenance.write_bytes(canonical_json(forged))
+    diverted = provenance.with_name("diverted-provenance.json")
     original_load = oracle_install.load_provenance
     stage_called = False
 
     def swap_then_load(path: Path, observed_trust: CompatTrust):
-        path.write_bytes(valid)
+        provenance.replace(diverted)
+        provenance.write_bytes(valid)
         return original_load(path, observed_trust)
 
     def observe_stage(*args, **kwargs):
@@ -980,10 +1120,10 @@ def test_deploy_preloader_rejects_provenance_changed_during_preflight(
         raise AssertionError("changed provenance must fail before staging")
 
     monkeypatch.setattr(oracle_install, "load_provenance", swap_then_load)
-    monkeypatch.setattr(oracle_install, "_stage_compat_payloads", observe_stage)
+    monkeypatch.setattr(oracle_install, "_create_compat_staging", observe_stage)
     before = _tree_snapshot(installed_official_game)
 
-    with pytest.raises(InstallError, match="changed during preflight"):
+    with pytest.raises(InstallError, match="provenance is invalid"):
         oracle_install.deploy_preloader(
             installed_official_game,
             preloader,
@@ -1002,15 +1142,15 @@ def test_deploy_preloader_cleans_a_partially_written_staging_tree(
 ):
     preloader, provenance = deploy_request
     before = _tree_snapshot(installed_official_game)
-    original_fsync_directory = oracle_install._fsync_directory
+    original_checkpoint = oracle_install._deploy_preloader_checkpoint
 
-    def fail_staged_directory(path: Path) -> None:
-        if ".ssr-oracle-compat-staging-" in str(path):
+    def fail_staged_file(boundary: str) -> None:
+        if boundary == "stage_backup_fsync":
             raise InstallError("injected staging durability failure")
-        original_fsync_directory(path)
+        original_checkpoint(boundary)
 
     monkeypatch.setattr(
-        oracle_install, "_fsync_directory", fail_staged_directory
+        oracle_install, "_deploy_preloader_checkpoint", fail_staged_file
     )
 
     with pytest.raises(InstallError, match="staging durability"):
@@ -1027,6 +1167,183 @@ def test_deploy_preloader_cleans_a_partially_written_staging_tree(
     )
 
 
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "staging_root_mkdir",
+        "staging_root_child_fsync",
+        "staging_root_parent_fsync",
+        "staging_bepinex_mkdir",
+        "staging_bepinex_child_fsync",
+        "staging_bepinex_parent_fsync",
+        "staging_backup_dir_mkdir",
+        "staging_backup_dir_child_fsync",
+        "staging_backup_dir_parent_fsync",
+        "staging_compat_dir_mkdir",
+        "staging_compat_dir_child_fsync",
+        "staging_compat_dir_parent_fsync",
+        "staging_core_dir_mkdir",
+        "staging_core_dir_child_fsync",
+        "staging_core_dir_parent_fsync",
+        "stage_backup_write",
+        "stage_backup_fsync",
+        "stage_backup_parent_fsync",
+        "stage_provenance_write",
+        "stage_provenance_fsync",
+        "stage_provenance_parent_fsync",
+        "stage_active_write",
+        "stage_active_fsync",
+        "stage_active_parent_fsync",
+    ],
+)
+def test_deploy_preloader_stage_sub_boundaries_leave_game_exact(
+    boundary: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    before = _tree_snapshot(installed_official_game)
+    injected = False
+
+    def fail_boundary(observed: str) -> None:
+        nonlocal injected
+        if not injected and observed == boundary:
+            injected = True
+            raise InstallError(f"injected {boundary} failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_boundary
+    )
+
+    with pytest.raises(InstallError, match=f"injected {boundary}"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert injected
+    assert _tree_snapshot(installed_official_game) == before
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "live_backup_dir_mkdir",
+        "live_backup_dir_child_fsync",
+        "live_backup_dir_parent_fsync",
+        "live_compat_dir_mkdir",
+        "live_compat_dir_child_fsync",
+        "live_compat_dir_parent_fsync",
+    ],
+)
+def test_deploy_preloader_live_parent_sub_boundaries_leave_game_exact(
+    boundary: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    before = _tree_snapshot(installed_official_game)
+    injected = False
+
+    def fail_boundary(observed: str) -> None:
+        nonlocal injected
+        if not injected and observed == boundary:
+            injected = True
+            raise InstallError(f"injected {boundary} failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_boundary
+    )
+
+    with pytest.raises(InstallError, match=f"injected {boundary}"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert injected
+    assert _tree_snapshot(installed_official_game) == before
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "backup_post_rename_preopen",
+        "backup_replace",
+        "backup_staging_parent_fsync",
+        "backup_live_parent_fsync",
+        "provenance_post_rename_preopen",
+        "provenance_replace",
+        "provenance_staging_parent_fsync",
+        "provenance_live_parent_fsync",
+        "active_post_rename_preopen",
+        "active_replace",
+        "active_staging_parent_fsync",
+        "active_live_parent_fsync",
+        "manifest_temporary_write",
+        "manifest_temporary_fsync",
+        "manifest_post_rename_preopen",
+        "manifest_replace",
+        "manifest_parent_fsync",
+    ],
+)
+def test_deploy_preloader_publish_sub_boundaries_restore_exact_state(
+    boundary: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    active.chmod(0o640)
+    manifest_path.chmod(0o600)
+    active_before = (active.read_bytes(), _file_mode(active))
+    manifest_before = (manifest_path.read_bytes(), _file_mode(manifest_path))
+    injected = False
+
+    def fail_boundary(observed: str) -> None:
+        nonlocal injected
+        if not injected and observed == boundary:
+            injected = True
+            raise InstallError(f"injected {boundary} failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_boundary
+    )
+
+    with pytest.raises(InstallError, match=f"injected {boundary}"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert injected
+    assert (active.read_bytes(), _file_mode(active)) == active_before
+    assert (
+        manifest_path.read_bytes(),
+        _file_mode(manifest_path),
+    ) == manifest_before
+    assert not (installed_official_game / BACKUP_ROOT).exists()
+    assert not (installed_official_game / COMPAT_ROOT).exists()
+    assert not tuple(
+        installed_official_game.glob(".ssr-oracle-compat-staging-*")
+    )
+    assert not tuple(
+        installed_official_game.glob(
+            f".{oracle_install.MANIFEST_NAME}.*.tmp"
+        )
+    )
+
+
 def test_deploy_preloader_recovers_backup_when_post_replace_sync_fails(
     installed_official_game: Path,
     deploy_request: tuple[Path, Path],
@@ -1036,21 +1353,17 @@ def test_deploy_preloader_recovers_backup_when_post_replace_sync_fails(
     active = installed_official_game / ACTIVE_PATH
     manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
     before = (active.read_bytes(), manifest_path.read_bytes())
-    original_fsync_directory = oracle_install._fsync_directory
     failed = False
 
-    def fail_backup_sync(path: Path) -> None:
+    def fail_backup_sync(boundary: str) -> None:
         nonlocal failed
-        if (
-            not failed
-            and path == installed_official_game / BACKUP_ROOT
-            and (path / "BepInEx.Preloader.dll").is_file()
-        ):
+        if not failed and boundary == "backup_live_parent_fsync":
             failed = True
             raise InstallError("injected backup directory sync failure")
-        original_fsync_directory(path)
 
-    monkeypatch.setattr(oracle_install, "_fsync_directory", fail_backup_sync)
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_backup_sync
+    )
 
     with pytest.raises(InstallError, match="backup directory sync"):
         oracle_install.deploy_preloader(
@@ -1080,18 +1393,18 @@ def test_deploy_preloader_rolls_back_when_staging_cleanup_fails(
     active = installed_official_game / ACTIVE_PATH
     manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
     before = (active.read_bytes(), manifest_path.read_bytes())
-    original_cleanup = oracle_install._cleanup_compat_staging
+    original_cleanup = oracle_install._cleanup_compat_staging_fd
     calls = 0
 
-    def fail_once(staging: Path, staged_paths) -> None:
+    def fail_once(root_handle, staging_handle) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise InstallError("injected staging cleanup failure")
-        original_cleanup(staging, staged_paths)
+        original_cleanup(root_handle, staging_handle)
 
     monkeypatch.setattr(
-        oracle_install, "_cleanup_compat_staging", fail_once
+        oracle_install, "_cleanup_compat_staging_fd", fail_once
     )
 
     with pytest.raises(InstallError, match="staging cleanup failure"):
@@ -1110,6 +1423,246 @@ def test_deploy_preloader_rolls_back_when_staging_cleanup_fails(
     assert not (installed_official_game / COMPAT_ROOT).exists()
 
 
+@pytest.mark.parametrize(
+    "cleanup_boundary",
+    [
+        "staging_cleanup_unlink",
+        "staging_cleanup_parent_fsync",
+        "staging_cleanup_child_rmdir",
+        "staging_cleanup_bepinex_fsync",
+        "staging_cleanup_bepinex_rmdir",
+        "staging_cleanup_root_fsync",
+        "staging_cleanup_root_rmdir",
+        "staging_cleanup_game_root_fsync",
+    ],
+)
+def test_deploy_preloader_cleanup_boundary_failure_rolls_back_exactly(
+    cleanup_boundary: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    publication_failed = False
+    failed = False
+
+    def fail_cleanup(observed: str) -> None:
+        nonlocal publication_failed, failed
+        if not publication_failed and observed == "backup_replace":
+            publication_failed = True
+            raise InstallError("original publication failure")
+        if publication_failed and not failed and observed == cleanup_boundary:
+            failed = True
+            raise InstallError(f"injected {cleanup_boundary} failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_cleanup
+    )
+
+    with pytest.raises(
+        InstallError,
+        match=(
+            rf"original publication failure.*"
+            rf"injected {cleanup_boundary} failure"
+        ),
+    ):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert publication_failed and failed
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    recovery_parent = installed_official_game / ".ssr-oracle-recovery"
+    recovered_backup = tuple(
+        recovery_parent.glob(f"*/compat/{BACKUP_PATH}")
+    )
+    assert len(recovered_backup) == 1
+    assert recovered_backup[0].read_bytes() == OFFICIAL_BYTES
+    assert not tuple(
+        recovery_parent.glob(f"*/compat/{PROVENANCE_PATH}")
+    )
+    assert not (installed_official_game / BACKUP_ROOT).exists()
+    assert not (installed_official_game / COMPAT_ROOT).exists()
+    assert not tuple(
+        installed_official_game.glob(".ssr-oracle-compat-staging-*")
+    )
+
+
+def test_deploy_preloader_cleanup_preserves_substituted_staged_leaf(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    original_renameatx = oracle_install._renameatx
+    held = tmp_path / "held-staged-cleanup"
+    substituted = False
+
+    def substitute_inside_quarantine(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal substituted
+        if (
+            not substituted
+            and description == "quarantine staging_cleanup file"
+        ):
+            substituted = True
+            os.rename(source, held, src_dir_fd=source_parent.fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=source_parent.fd,
+            )
+            os.write(descriptor, b"unrelated staged leaf")
+            os.close(descriptor)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", substitute_inside_quarantine
+    )
+
+    with pytest.raises(InstallError, match="changed during quarantine"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert substituted
+    assert held.read_bytes() == OFFICIAL_BYTES
+    remaining = tuple(
+        installed_official_game.glob(
+            ".ssr-oracle-compat-staging-*/"
+            "BepInEx/core/BepInEx.Preloader.dll"
+        )
+    )
+    assert len(remaining) == 1
+    assert remaining[0].read_bytes() == b"unrelated staged leaf"
+
+
+@pytest.mark.parametrize(
+    "compensation_boundary",
+    [None, "staging core directory_race_restore_source_parent_fsync"],
+)
+def test_deploy_preloader_cleanup_preserves_substituted_directory(
+    compensation_boundary: str | None,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    original_renameatx = oracle_install._renameatx
+    held = tmp_path / "held-staging-core"
+    substituted = False
+
+    def substitute_directory_inside_quarantine(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal substituted
+        if (
+            not substituted
+            and description
+            == "quarantine staging core directory directory"
+        ):
+            substituted = True
+            os.rename(source, held, src_dir_fd=source_parent.fd)
+            os.mkdir(source, dir_fd=source_parent.fd)
+            substituted_fd = os.open(
+                source,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=source_parent.fd,
+            )
+            try:
+                marker = os.open(
+                    "unrelated",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=substituted_fd,
+                )
+                os.write(marker, b"keep")
+                os.close(marker)
+            finally:
+                os.close(substituted_fd)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    monkeypatch.setattr(
+        oracle_install,
+        "_renameatx",
+        substitute_directory_inside_quarantine,
+    )
+    if compensation_boundary is not None:
+        monkeypatch.setattr(
+            oracle_install,
+            "_deploy_preloader_checkpoint",
+            lambda boundary: (
+                (_ for _ in ()).throw(
+                    InstallError(
+                        f"injected {compensation_boundary} failure"
+                    )
+                )
+                if boundary == compensation_boundary
+                else None
+            ),
+        )
+
+    expected_error = (
+        rf"injected {compensation_boundary} failure"
+        if compensation_boundary is not None
+        else r"changed during quarantine"
+    )
+    with pytest.raises(InstallError, match=expected_error):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert substituted
+    assert held.is_dir()
+    remaining = tuple(
+        installed_official_game.glob(
+            ".ssr-oracle-compat-staging-*/BepInEx/core/unrelated"
+        )
+    )
+    assert len(remaining) == 1
+    assert remaining[0].read_bytes() == b"keep"
+
+
 def test_deploy_preloader_revalidates_live_parents_after_staging(
     installed_official_game: Path,
     deploy_request: tuple[Path, Path],
@@ -1122,20 +1675,23 @@ def test_deploy_preloader_revalidates_live_parents_after_staging(
     active = installed_official_game / ACTIVE_PATH
     manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
     before = (active.read_bytes(), manifest_path.read_bytes())
-    original_create = oracle_install._create_deploy_parents
+    original_create = oracle_install._create_live_compat_directories
 
-    def redirect_after_parent_creation(root: Path, targets: tuple[Path, ...]):
-        created = original_create(root, targets)
+    def redirect_after_parent_creation(bep_in_ex):
+        created = original_create(bep_in_ex)
         backup_root = installed_official_game / BACKUP_ROOT
-        backup_root.rmdir()
+        diverted = tmp_path / "diverted-live-backup"
+        backup_root.replace(diverted)
         backup_root.symlink_to(outside, target_is_directory=True)
         return created
 
     monkeypatch.setattr(
-        oracle_install, "_create_deploy_parents", redirect_after_parent_creation
+        oracle_install,
+        "_create_live_compat_directories",
+        redirect_after_parent_creation,
     )
 
-    with pytest.raises(InstallError, match="safe directory"):
+    with pytest.raises(InstallError, match="directory entry"):
         oracle_install.deploy_preloader(
             installed_official_game,
             preloader,
@@ -1145,6 +1701,303 @@ def test_deploy_preloader_revalidates_live_parents_after_staging(
 
     assert (active.read_bytes(), manifest_path.read_bytes()) == before
     assert not (outside / "BepInEx.Preloader.dll").exists()
+
+
+def test_deploy_preloader_publish_is_pinned_against_parent_swap_inside_replace(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    outside = tmp_path / "outside-replace"
+    outside.mkdir()
+    backup_root = installed_official_game / BACKUP_ROOT
+    diverted = tmp_path / "diverted-backup"
+    original_renameatx = oracle_install._renameatx
+    swapped = False
+    outside_write_observed = False
+
+    def swap_inside_replace(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal outside_write_observed, swapped
+        if (
+            not swapped
+            and source == "BepInEx.Preloader.dll"
+            and destination == "BepInEx.Preloader.dll"
+            and description.endswith("backup")
+            and backup_root.is_dir()
+        ):
+            swapped = True
+            backup_root.replace(diverted)
+            backup_root.symlink_to(outside, target_is_directory=True)
+        result = original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+        if swapped and (outside / "BepInEx.Preloader.dll").exists():
+            outside_write_observed = True
+        return result
+
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", swap_inside_replace
+    )
+
+    with pytest.raises(InstallError):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert swapped
+    assert not outside_write_observed
+    assert not (outside / "BepInEx.Preloader.dll").exists()
+
+
+def test_deploy_preloader_exclusive_publish_preserves_racing_leaf(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    original_renameatx = oracle_install._renameatx
+    raced = False
+
+    def race_backup_leaf(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal raced
+        if not raced and description.endswith("backup"):
+            raced = True
+            descriptor = os.open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=destination_parent.fd,
+            )
+            os.write(descriptor, b"unrelated")
+            os.close(descriptor)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", race_backup_leaf
+    )
+
+    with pytest.raises(InstallError):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert raced
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    assert (
+        installed_official_game / BACKUP_PATH
+    ).read_bytes() == b"unrelated"
+
+
+def test_deploy_preloader_directory_publish_preserves_racing_source(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    held = tmp_path / "held-live-backup-directory"
+    original_renameatx = oracle_install._renameatx
+    raced = False
+
+    def race_directory_source(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal raced
+        if (
+            not raced
+            and description
+            == "publish live backup directory directory"
+        ):
+            raced = True
+            os.rename(source, held, src_dir_fd=source_parent.fd)
+            os.mkdir(source, dir_fd=source_parent.fd)
+            raced_directory = os.open(
+                source,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=source_parent.fd,
+            )
+            try:
+                descriptor = os.open(
+                    "unrelated",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=raced_directory,
+                )
+                os.write(descriptor, b"keep")
+                os.close(descriptor)
+            finally:
+                os.close(raced_directory)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", race_directory_source
+    )
+
+    with pytest.raises(InstallError, match="entry changed"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert raced
+    assert held.is_dir()
+    assert (
+        installed_official_game / BACKUP_ROOT / "unrelated"
+    ).read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize(
+    ("raced_target", "compensation_boundary"),
+    [
+        ("active", None),
+        ("manifest", None),
+        ("active", "active_race_restore_source_parent_fsync"),
+        ("active", "active_race_restore_destination_parent_fsync"),
+        ("manifest", "manifest_race_restore_source_parent_fsync"),
+    ],
+)
+def test_deploy_preloader_swap_restores_racing_existing_leaf(
+    raced_target: str,
+    compensation_boundary: str | None,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    target = active if raced_target == "active" else manifest_path
+    original_payload = target.read_bytes()
+    held = tmp_path / f"held-{raced_target}"
+    unrelated = f"unrelated-{raced_target}".encode()
+    original_renameatx = oracle_install._renameatx
+    raced = False
+
+    def race_existing_leaf(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal raced
+        should_race = (
+            raced_target == "active"
+            and description == "publish compatibility artifact active"
+        ) or (
+            raced_target == "manifest"
+            and description == "atomically swap manifest"
+        )
+        if not raced and should_race:
+            raced = True
+            target.replace(held)
+            target.write_bytes(unrelated)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", race_existing_leaf
+    )
+    if compensation_boundary is not None:
+        monkeypatch.setattr(
+            oracle_install,
+            "_deploy_preloader_checkpoint",
+            lambda boundary: (
+                (_ for _ in ()).throw(
+                    InstallError(
+                        f"injected {compensation_boundary} failure"
+                    )
+                )
+                if boundary == compensation_boundary
+                else None
+            ),
+        )
+
+    expected_error = (
+        f"injected {compensation_boundary} failure"
+        if compensation_boundary is not None
+        else "changed"
+    )
+    with pytest.raises(InstallError, match=expected_error):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert raced
+    assert target.read_bytes() == unrelated
+    assert held.read_bytes() == original_payload
+    if raced_target == "manifest":
+        assert active.read_bytes() == OFFICIAL_BYTES
+    assert not tuple(
+        installed_official_game.glob(".ssr-oracle-compat-staging-*")
+    )
+    assert not tuple(
+        installed_official_game.glob(
+            f".{oracle_install.MANIFEST_NAME}.*.tmp"
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -1256,6 +2109,304 @@ def test_deploy_preloader_retries_an_exclusive_recovery_collision(
     ).read_bytes() == OFFICIAL_BYTES
 
 
+@pytest.mark.parametrize(
+    "recovery_boundary",
+    [
+        "recovery_parent_mkdir",
+        "recovery_parent_child_fsync",
+        "recovery_parent_parent_fsync",
+        "recovery_run_mkdir",
+        "recovery_run_child_fsync",
+        "recovery_run_parent_fsync",
+        "recovery_compat_mkdir",
+        "recovery_compat_child_fsync",
+        "recovery_compat_parent_fsync",
+        "recovery_bepinex_mkdir",
+        "recovery_bepinex_child_fsync",
+        "recovery_bepinex_parent_fsync",
+        "recovery_backup_dir_mkdir",
+        "recovery_backup_dir_child_fsync",
+        "recovery_backup_dir_parent_fsync",
+        "recovery_provenance_dir_mkdir",
+        "recovery_provenance_dir_child_fsync",
+        "recovery_provenance_dir_parent_fsync",
+    ],
+)
+def test_deploy_preloader_recovery_allocation_failure_cleans_empty_scaffolding(
+    recovery_boundary: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    primary_failed = False
+    recovery_failed = False
+
+    def fail_boundaries(observed: str) -> None:
+        nonlocal primary_failed, recovery_failed
+        if not primary_failed and observed == "active":
+            primary_failed = True
+            raise InstallError("original publication failure")
+        if (
+            primary_failed
+            and not recovery_failed
+            and observed == recovery_boundary
+        ):
+            recovery_failed = True
+            raise InstallError(f"injected {recovery_boundary} failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_boundaries
+    )
+
+    with pytest.raises(
+        InstallError,
+        match=(
+            rf"original publication failure.*"
+            rf"injected {recovery_boundary} failure"
+        ),
+    ):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert primary_failed and recovery_failed
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    recovery_parent = installed_official_game / ".ssr-oracle-recovery"
+    assert not recovery_parent.exists()
+    assert (installed_official_game / BACKUP_PATH).read_bytes() == OFFICIAL_BYTES
+    assert (
+        installed_official_game / PROVENANCE_PATH
+    ).read_bytes() == provenance.read_bytes()
+
+
+def test_deploy_preloader_recovery_uses_retained_parent_descriptor(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    recovery_parent = installed_official_game / ".ssr-oracle-recovery"
+    recovery_parent.mkdir()
+    outside = tmp_path / "outside-recovery"
+    outside.mkdir()
+    diverted = installed_official_game / ".diverted-recovery"
+    original_duplicate = oracle_install._duplicate_directory_handle
+    swapped = False
+
+    def swap_before_duplicate(handle, label):
+        nonlocal swapped
+        if not swapped and label == "recovery parent":
+            swapped = True
+            recovery_parent.replace(diverted)
+            recovery_parent.symlink_to(outside, target_is_directory=True)
+        return original_duplicate(handle, label)
+
+    def fail_after_active(boundary: str) -> None:
+        if boundary == "active":
+            raise InstallError("original publication failure")
+
+    monkeypatch.setattr(
+        oracle_install,
+        "_duplicate_directory_handle",
+        swap_before_duplicate,
+    )
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_after_active
+    )
+
+    with pytest.raises(InstallError, match="original publication failure"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert swapped
+    assert not tuple(outside.iterdir())
+    assert len(tuple(diverted.glob(f"*/compat/{BACKUP_PATH}"))) == 1
+    assert len(tuple(diverted.glob(f"*/compat/{PROVENANCE_PATH}"))) == 1
+
+
+@pytest.mark.parametrize(
+    "compensation_boundary",
+    [
+        None,
+        "recovery_backup_race_restore_source_parent_fsync",
+        "recovery_backup_race_restore_destination_parent_fsync",
+    ],
+)
+def test_deploy_preloader_recovery_move_preserves_substituted_source(
+    compensation_boundary: str | None,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    held = tmp_path / "held-recovery-backup"
+    original_renameatx = oracle_install._renameatx
+    substituted = False
+
+    def substitute_recovery_source(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal substituted
+        if (
+            not substituted
+            and description == "preserve compatibility backup"
+        ):
+            substituted = True
+            os.rename(source, held, src_dir_fd=source_parent.fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=source_parent.fd,
+            )
+            os.write(descriptor, b"unrelated recovery source")
+            os.close(descriptor)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    primary_failed = False
+
+    def fail_after_active(boundary: str) -> None:
+        nonlocal primary_failed
+        if boundary == "active":
+            primary_failed = True
+            raise InstallError("original publication failure")
+        if primary_failed and boundary == compensation_boundary:
+            raise InstallError(
+                f"injected {compensation_boundary} failure"
+            )
+
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", substitute_recovery_source
+    )
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_after_active
+    )
+
+    recovery_error = (
+        rf"injected {compensation_boundary} failure"
+        if compensation_boundary is not None
+        else r"changed during recovery move"
+    )
+    with pytest.raises(
+        InstallError,
+        match=rf"original publication failure.*{recovery_error}",
+    ):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert substituted
+    assert held.read_bytes() == OFFICIAL_BYTES
+    assert (
+        installed_official_game / BACKUP_PATH
+    ).read_bytes() == b"unrelated recovery source"
+    assert (
+        installed_official_game / ACTIVE_PATH
+    ).read_bytes() == OFFICIAL_BYTES
+
+
+@pytest.mark.parametrize(
+    "recovery_boundary",
+    [
+        "recovery_backup_post_rename_preopen",
+        "recovery_backup_move",
+        "recovery_backup_source_fsync",
+        "recovery_backup_destination_fsync",
+        "recovery_provenance_post_rename_preopen",
+        "recovery_provenance_move",
+        "recovery_provenance_source_fsync",
+        "recovery_provenance_destination_fsync",
+    ],
+)
+def test_deploy_preloader_recovery_move_failure_preserves_one_exact_copy(
+    recovery_boundary: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    primary_failed = False
+    recovery_failed = False
+
+    def fail_boundaries(observed: str) -> None:
+        nonlocal primary_failed, recovery_failed
+        if not primary_failed and observed == "active":
+            primary_failed = True
+            raise InstallError("original publication failure")
+        if (
+            primary_failed
+            and not recovery_failed
+            and observed == recovery_boundary
+        ):
+            recovery_failed = True
+            raise InstallError(f"injected {recovery_boundary} failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_boundaries
+    )
+
+    with pytest.raises(
+        InstallError,
+        match=(
+            rf"original publication failure.*"
+            rf"injected {recovery_boundary} failure"
+        ),
+    ):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert primary_failed and recovery_failed
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    recovery_parent = installed_official_game / ".ssr-oracle-recovery"
+    recovered_backup = tuple(
+        recovery_parent.glob(f"*/compat/{BACKUP_PATH}")
+    )
+    recovered_provenance = tuple(
+        recovery_parent.glob(f"*/compat/{PROVENANCE_PATH}")
+    )
+    assert len(recovered_backup) == 1
+    assert recovered_backup[0].read_bytes() == OFFICIAL_BYTES
+    assert len(recovered_provenance) == 1
+    assert recovered_provenance[0].read_bytes() == provenance.read_bytes()
+    assert not (installed_official_game / BACKUP_ROOT).exists()
+    assert not (installed_official_game / COMPAT_ROOT).exists()
+
+
 def test_deploy_preloader_surfaces_rollback_failure_with_original_error(
     installed_official_game: Path,
     deploy_request: tuple[Path, Path],
@@ -1274,7 +2425,7 @@ def test_deploy_preloader_surfaces_rollback_failure_with_original_error(
     )
     monkeypatch.setattr(
         oracle_install,
-        "_preserve_compat_recovery",
+        "_preserve_compat_recovery_fd",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(InstallError("recovery write failure"))
         ),
@@ -1353,3 +2504,244 @@ def test_cli_deploy_preloader_reports_one_error_line(
     assert captured.out == ""
     assert captured.err.startswith("error: ")
     assert captured.err.count("\n") == 1
+
+
+@pytest.mark.parametrize(
+    "loop_location", ["repository", "game", "input"]
+)
+def test_cli_deploy_preloader_normalizes_symlink_loop_errors(
+    loop_location: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    preloader, provenance = deploy_request
+    loop = tmp_path / f"{loop_location}-loop"
+    loop.symlink_to(loop.name)
+    game_root = installed_official_game
+    repository = Path("/unused")
+    if loop_location == "repository":
+        repository = loop
+    elif loop_location == "game":
+        game_root = loop
+    else:
+        preloader = loop / "reviewed-preloader.dll"
+
+    result = main(
+        [
+            "deploy-preloader",
+            "--game-root",
+            str(game_root),
+            "--preloader",
+            str(preloader),
+            "--provenance",
+            str(provenance),
+            "--repo-root",
+            str(repository),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert captured.out == ""
+    assert captured.err.startswith("error: ")
+    assert captured.err.count("\n") == 1
+
+
+def test_atomic_replace_composes_temporary_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    parent_path = tmp_path / "parent"
+    parent_path.mkdir()
+    target = parent_path / "target"
+    target.write_bytes(b"before")
+    handle = oracle_install._open_absolute_directory(
+        parent_path, "atomic test parent"
+    )
+    target_fd, target_snapshot = oracle_install._open_stable_child_file(
+        handle, "target", "atomic test target"
+    )
+    os.close(target_fd)
+    observed_primary = False
+
+    def fail_boundaries(boundary: str) -> None:
+        nonlocal observed_primary
+        if boundary == "atomic_test_temporary_fsync":
+            observed_primary = True
+            raise InstallError("original temporary failure")
+        if (
+            observed_primary
+            and boundary == "atomic_test_temporary_cleanup_unlink"
+        ):
+            raise InstallError("injected temporary cleanup failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_boundaries
+    )
+    try:
+        with pytest.raises(
+            InstallError,
+            match=(
+                r"original temporary failure.*"
+                r"injected temporary cleanup failure"
+            ),
+        ):
+            oracle_install._atomic_replace_at(
+                handle,
+                "target",
+                b"after",
+                0o644,
+                "atomic_test",
+                target_snapshot,
+            )
+    finally:
+        handle.close()
+
+    assert target.read_bytes() == b"before"
+    assert not tuple(parent_path.glob(".target.*.tmp"))
+
+
+def test_atomic_replace_preserves_preexisting_temporary_name_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    parent_path = tmp_path / "parent"
+    parent_path.mkdir()
+    target = parent_path / "target"
+    target.write_bytes(b"before")
+    collision = parent_path / ".target.fixed.tmp"
+    collision.write_bytes(b"unrelated")
+    monkeypatch.setattr(
+        oracle_install.secrets, "token_hex", lambda _: "fixed"
+    )
+    handle = oracle_install._open_absolute_directory(
+        parent_path, "atomic test parent"
+    )
+    target_fd, target_snapshot = oracle_install._open_stable_child_file(
+        handle, "target", "atomic test target"
+    )
+    os.close(target_fd)
+    try:
+        with pytest.raises(InstallError, match="cleanup refused"):
+            oracle_install._atomic_replace_at(
+                handle,
+                "target",
+                b"after",
+                0o644,
+                "atomic_test",
+                target_snapshot,
+            )
+    finally:
+        handle.close()
+
+    assert target.read_bytes() == b"before"
+    assert collision.read_bytes() == b"unrelated"
+
+
+@pytest.mark.parametrize(
+    "compensation_boundary",
+    [None, "atomic_test_temporary_cleanup_restore_source_parent_fsync"],
+)
+def test_atomic_replace_cleanup_preserves_substituted_temporary_leaf(
+    compensation_boundary: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    parent_path = tmp_path / "parent"
+    parent_path.mkdir()
+    target = parent_path / "target"
+    target.write_bytes(b"before")
+    held = tmp_path / "held-temporary"
+    handle = oracle_install._open_absolute_directory(
+        parent_path, "atomic test parent"
+    )
+    target_fd, target_snapshot = oracle_install._open_stable_child_file(
+        handle, "target", "atomic test target"
+    )
+    os.close(target_fd)
+    original_renameatx = oracle_install._renameatx
+    primary_failed = False
+    substituted = False
+
+    def fail_write(boundary: str) -> None:
+        nonlocal primary_failed
+        if boundary == "atomic_test_temporary_fsync":
+            primary_failed = True
+            raise InstallError("original temporary failure")
+        if primary_failed and boundary == compensation_boundary:
+            raise InstallError(
+                f"injected {compensation_boundary} failure"
+            )
+
+    def substitute_inside_quarantine(
+        source_parent,
+        source,
+        destination_parent,
+        destination,
+        flags,
+        description,
+    ):
+        nonlocal substituted
+        if (
+            primary_failed
+            and not substituted
+            and description
+            == "quarantine atomic_test_temporary_cleanup file"
+        ):
+            substituted = True
+            os.rename(source, held, src_dir_fd=source_parent.fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=source_parent.fd,
+            )
+            os.write(descriptor, b"unrelated temporary leaf")
+            os.close(descriptor)
+        return original_renameatx(
+            source_parent,
+            source,
+            destination_parent,
+            destination,
+            flags,
+            description,
+        )
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_write
+    )
+    monkeypatch.setattr(
+        oracle_install, "_renameatx", substitute_inside_quarantine
+    )
+    try:
+        compensation_error = (
+            rf"injected {compensation_boundary} failure"
+            if compensation_boundary is not None
+            else r"changed during quarantine"
+        )
+        with pytest.raises(
+            InstallError,
+            match=(
+                r"original temporary failure.*"
+                + compensation_error
+            ),
+        ):
+            oracle_install._atomic_replace_at(
+                handle,
+                "target",
+                b"after",
+                0o644,
+                "atomic_test",
+                target_snapshot,
+            )
+    finally:
+        handle.close()
+
+    assert substituted
+    assert target.read_bytes() == b"before"
+    assert held.read_bytes() == b"after"
+    temporary = tuple(parent_path.glob(".target.*.tmp"))
+    assert len(temporary) == 1
+    assert temporary[0].read_bytes() == b"unrelated temporary leaf"
