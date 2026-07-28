@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
@@ -17,6 +18,7 @@ from ssr_env.oracle_install import (
     PreloaderCompatibilityStatus,
     _status_to_dict,
     install_runtime,
+    main,
     status_install,
 )
 
@@ -104,6 +106,39 @@ def _provenance(trust: CompatTrust) -> BuildProvenance:
         official_preloader_sha256=sha256(OFFICIAL_BYTES).hexdigest(),
         patched_preloader_sha256=sha256(PATCHED_BYTES).hexdigest(),
     )
+
+
+def _write_deploy_request(
+    tmp_path: Path,
+    trust: CompatTrust,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path]:
+    official_hash = sha256(OFFICIAL_BYTES).hexdigest()
+    patched_hash = sha256(PATCHED_BYTES).hexdigest()
+    monkeypatch.setattr(
+        oracle_compat, "_OFFICIAL_PRELOADER_SHA256", official_hash
+    )
+    monkeypatch.setattr(
+        oracle_compat, "EXPECTED_PATCHED_PRELOADER_SHA256", patched_hash
+    )
+    monkeypatch.setattr(
+        oracle_install, "EXPECTED_PATCHED_PRELOADER_SHA256", patched_hash
+    )
+    monkeypatch.setattr(oracle_install, "load_trust", lambda _: trust)
+    preloader = tmp_path / "reviewed-preloader.dll"
+    preloader.write_bytes(PATCHED_BYTES)
+    provenance = tmp_path / "reviewed-provenance.json"
+    provenance.write_bytes(canonical_json(asdict(_provenance(trust))))
+    return preloader, provenance
+
+
+@pytest.fixture
+def deploy_request(
+    tmp_path: Path,
+    trust: CompatTrust,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path]:
+    return _write_deploy_request(tmp_path, trust, monkeypatch)
 
 
 def _write_patched_install(
@@ -651,3 +686,670 @@ def test_status_is_strictly_read_only(
     before = _tree_snapshot(installed_patched_game)
     status_install(installed_patched_game, repo_root=Path("/unused"))
     assert _tree_snapshot(installed_patched_game) == before
+
+
+def _file_mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def _manifest_compatibility_entries(
+    manifest: InstallManifest,
+) -> dict[str, ManifestEntry]:
+    return {
+        entry.relative_path: entry
+        for entry in manifest.entries
+        if entry.relative_path in {BACKUP_ROOT, COMPAT_ROOT}
+        or entry.relative_path.startswith(BACKUP_ROOT + "/")
+        or entry.relative_path.startswith(COMPAT_ROOT + "/")
+    }
+
+
+def test_deploy_preloader_publishes_reviewed_artifacts_and_manifest_last(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    active.chmod(0o640)
+    manifest_path.chmod(0o600)
+
+    manifest = oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+
+    backup = installed_official_game / BACKUP_PATH
+    deployed_provenance = installed_official_game / PROVENANCE_PATH
+    assert active.read_bytes() == PATCHED_BYTES
+    assert backup.read_bytes() == OFFICIAL_BYTES
+    assert deployed_provenance.read_bytes() == provenance.read_bytes()
+    assert _file_mode(active) == 0o640
+    assert _file_mode(backup) == 0o640
+    assert _file_mode(deployed_provenance) == 0o644
+    assert _file_mode(manifest_path) == 0o600
+    entries = {entry.relative_path: entry for entry in manifest.entries}
+    assert entries[ACTIVE_PATH].sha256 == sha256(PATCHED_BYTES).hexdigest()
+    assert _manifest_compatibility_entries(manifest) == {
+        BACKUP_ROOT: ManifestEntry(BACKUP_ROOT, "directory", None),
+        BACKUP_PATH: ManifestEntry(
+            BACKUP_PATH, "file", sha256(OFFICIAL_BYTES).hexdigest()
+        ),
+        COMPAT_ROOT: ManifestEntry(COMPAT_ROOT, "directory", None),
+        PROVENANCE_PATH: ManifestEntry(
+            PROVENANCE_PATH,
+            "file",
+            sha256(provenance.read_bytes()).hexdigest(),
+        ),
+    }
+    status = status_install(installed_official_game, repo_root=Path("/unused"))
+    assert status.healthy
+    assert status.preloader_compatibility.state == "patched"
+    assert not tuple(
+        installed_official_game.glob(".ssr-oracle-compat-staging-*")
+    )
+
+
+def test_deploy_preloader_is_byte_identically_idempotent(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+):
+    preloader, provenance = deploy_request
+    first = oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+    before = _tree_snapshot(installed_official_game)
+
+    second = oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+
+    assert second == first
+    assert _tree_snapshot(installed_official_game) == before
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("wrong_game", "unsupported Assembly-CSharp"),
+        ("wrong_archive", "runtime archive"),
+        ("unhealthy_manifest", "healthy official"),
+        ("changed_active", "healthy official"),
+        ("forged_provenance", "provenance"),
+        ("non_reviewed_dll", "reviewed patched"),
+        ("unmanaged_backup", "healthy official"),
+        ("symlink_compat_parent", "healthy official"),
+    ],
+)
+def test_deploy_preloader_rejects_preflight_failures_without_mutation(
+    damage: str,
+    message: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    if damage == "wrong_game":
+        (
+            installed_official_game
+            / "Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll"
+        ).write_bytes(b"wrong")
+    elif damage == "wrong_archive":
+        manifest = oracle_install._load_manifest(installed_official_game)
+        oracle_install._write_manifest(
+            installed_official_game,
+            InstallManifest(
+                manifest.schema_version,
+                manifest.game_assembly_sha256,
+                "9" * 64,
+                manifest.entries,
+            ),
+        )
+    elif damage == "unhealthy_manifest":
+        (installed_official_game / "BepInEx/core/BepInEx.dll").write_bytes(
+            b"changed"
+        )
+    elif damage == "changed_active":
+        (installed_official_game / ACTIVE_PATH).write_bytes(b"changed")
+    elif damage == "forged_provenance":
+        decoded = json.loads(provenance.read_bytes())
+        decoded["patch_sha256"] = "9" * 64
+        provenance.write_bytes(canonical_json(decoded))
+    elif damage == "non_reviewed_dll":
+        preloader.write_bytes(b"different patched build")
+    elif damage == "unmanaged_backup":
+        reserved = installed_official_game / BACKUP_ROOT
+        reserved.mkdir()
+        (reserved / "user-file").write_bytes(b"keep")
+    else:
+        outside = tmp_path / "outside-compat"
+        outside.mkdir()
+        (installed_official_game / COMPAT_ROOT).symlink_to(
+            outside, target_is_directory=True
+        )
+    before = _tree_snapshot(installed_official_game)
+    stage_called = False
+
+    def observe_stage(*args, **kwargs):
+        nonlocal stage_called
+        stage_called = True
+        raise AssertionError("preflight must finish before staging")
+
+    monkeypatch.setattr(
+        oracle_install, "_stage_compat_payloads", observe_stage, raising=False
+    )
+
+    with pytest.raises(InstallError, match=message):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert not stage_called
+    assert _tree_snapshot(installed_official_game) == before
+
+
+def test_deploy_preloader_refuses_a_different_build_over_a_patched_install(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+):
+    preloader, provenance = deploy_request
+    oracle_install.deploy_preloader(
+        installed_official_game,
+        preloader,
+        provenance,
+        repo_root=Path("/unused"),
+    )
+    different = preloader.with_name("different.dll")
+    different.write_bytes(b"different patched build")
+    before = _tree_snapshot(installed_official_game)
+
+    with pytest.raises(InstallError, match="different patched build"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            different,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert _tree_snapshot(installed_official_game) == before
+
+
+@pytest.mark.parametrize("source_name", ["preloader", "provenance"])
+def test_deploy_preloader_rejects_symlinked_request_files_before_staging(
+    source_name: str,
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    source = preloader if source_name == "preloader" else provenance
+    payload = source.read_bytes()
+    source.unlink()
+    outside = tmp_path / f"outside-{source_name}"
+    outside.write_bytes(payload)
+    source.symlink_to(outside)
+    before = _tree_snapshot(installed_official_game)
+    stage_called = False
+
+    def observe_stage(*args, **kwargs):
+        nonlocal stage_called
+        stage_called = True
+        raise AssertionError("unsafe request must fail before staging")
+
+    monkeypatch.setattr(oracle_install, "_stage_compat_payloads", observe_stage)
+
+    with pytest.raises(InstallError, match="safe regular file"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert not stage_called
+    assert _tree_snapshot(installed_official_game) == before
+
+
+def test_deploy_preloader_rejects_an_unsafe_recovery_parent_before_staging(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    outside = tmp_path / "outside-recovery"
+    outside.mkdir()
+    (installed_official_game / ".ssr-oracle-recovery").symlink_to(
+        outside, target_is_directory=True
+    )
+    before = _tree_snapshot(installed_official_game)
+    stage_called = False
+
+    def observe_stage(*args, **kwargs):
+        nonlocal stage_called
+        stage_called = True
+        raise AssertionError("unsafe recovery must fail before staging")
+
+    monkeypatch.setattr(oracle_install, "_stage_compat_payloads", observe_stage)
+
+    with pytest.raises(InstallError, match="recovery parent"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert not stage_called
+    assert _tree_snapshot(installed_official_game) == before
+
+
+def test_deploy_preloader_rejects_provenance_changed_during_preflight(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    valid = provenance.read_bytes()
+    forged = json.loads(valid)
+    forged["patch_sha256"] = "9" * 64
+    provenance.write_bytes(canonical_json(forged))
+    original_load = oracle_install.load_provenance
+    stage_called = False
+
+    def swap_then_load(path: Path, observed_trust: CompatTrust):
+        path.write_bytes(valid)
+        return original_load(path, observed_trust)
+
+    def observe_stage(*args, **kwargs):
+        nonlocal stage_called
+        stage_called = True
+        raise AssertionError("changed provenance must fail before staging")
+
+    monkeypatch.setattr(oracle_install, "load_provenance", swap_then_load)
+    monkeypatch.setattr(oracle_install, "_stage_compat_payloads", observe_stage)
+    before = _tree_snapshot(installed_official_game)
+
+    with pytest.raises(InstallError, match="changed during preflight"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert not stage_called
+    assert _tree_snapshot(installed_official_game) == before
+
+
+def test_deploy_preloader_cleans_a_partially_written_staging_tree(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    before = _tree_snapshot(installed_official_game)
+    original_fsync_directory = oracle_install._fsync_directory
+
+    def fail_staged_directory(path: Path) -> None:
+        if ".ssr-oracle-compat-staging-" in str(path):
+            raise InstallError("injected staging durability failure")
+        original_fsync_directory(path)
+
+    monkeypatch.setattr(
+        oracle_install, "_fsync_directory", fail_staged_directory
+    )
+
+    with pytest.raises(InstallError, match="staging durability"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert _tree_snapshot(installed_official_game) == before
+    assert not tuple(
+        installed_official_game.glob(".ssr-oracle-compat-staging-*")
+    )
+
+
+def test_deploy_preloader_recovers_backup_when_post_replace_sync_fails(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    original_fsync_directory = oracle_install._fsync_directory
+    failed = False
+
+    def fail_backup_sync(path: Path) -> None:
+        nonlocal failed
+        if (
+            not failed
+            and path == installed_official_game / BACKUP_ROOT
+            and (path / "BepInEx.Preloader.dll").is_file()
+        ):
+            failed = True
+            raise InstallError("injected backup directory sync failure")
+        original_fsync_directory(path)
+
+    monkeypatch.setattr(oracle_install, "_fsync_directory", fail_backup_sync)
+
+    with pytest.raises(InstallError, match="backup directory sync"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    recovered = tuple(
+        (
+            installed_official_game / ".ssr-oracle-recovery"
+        ).glob(f"*/compat/{BACKUP_PATH}")
+    )
+    assert len(recovered) == 1
+    assert recovered[0].read_bytes() == OFFICIAL_BYTES
+    assert not (installed_official_game / BACKUP_ROOT).exists()
+
+
+def test_deploy_preloader_rolls_back_when_staging_cleanup_fails(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    original_cleanup = oracle_install._cleanup_compat_staging
+    calls = 0
+
+    def fail_once(staging: Path, staged_paths) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise InstallError("injected staging cleanup failure")
+        original_cleanup(staging, staged_paths)
+
+    monkeypatch.setattr(
+        oracle_install, "_cleanup_compat_staging", fail_once
+    )
+
+    with pytest.raises(InstallError, match="staging cleanup failure"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    recovery = installed_official_game / ".ssr-oracle-recovery"
+    assert len(tuple(recovery.glob(f"*/compat/{BACKUP_PATH}"))) == 1
+    assert len(tuple(recovery.glob(f"*/compat/{PROVENANCE_PATH}"))) == 1
+    assert not (installed_official_game / BACKUP_ROOT).exists()
+    assert not (installed_official_game / COMPAT_ROOT).exists()
+
+
+def test_deploy_preloader_revalidates_live_parents_after_staging(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    outside = tmp_path / "outside-backup"
+    outside.mkdir()
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    before = (active.read_bytes(), manifest_path.read_bytes())
+    original_create = oracle_install._create_deploy_parents
+
+    def redirect_after_parent_creation(root: Path, targets: tuple[Path, ...]):
+        created = original_create(root, targets)
+        backup_root = installed_official_game / BACKUP_ROOT
+        backup_root.rmdir()
+        backup_root.symlink_to(outside, target_is_directory=True)
+        return created
+
+    monkeypatch.setattr(
+        oracle_install, "_create_deploy_parents", redirect_after_parent_creation
+    )
+
+    with pytest.raises(InstallError, match="safe directory"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert (active.read_bytes(), manifest_path.read_bytes()) == before
+    assert not (outside / "BepInEx.Preloader.dll").exists()
+
+
+@pytest.mark.parametrize(
+    ("boundary", "recovered"),
+    [
+        ("backup", {BACKUP_PATH}),
+        ("provenance", {BACKUP_PATH, PROVENANCE_PATH}),
+        ("active", {BACKUP_PATH, PROVENANCE_PATH}),
+        ("manifest", {BACKUP_PATH, PROVENANCE_PATH}),
+    ],
+)
+def test_deploy_preloader_failure_boundaries_restore_exact_state_and_recover(
+    boundary: str,
+    recovered: set[str],
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    active = installed_official_game / ACTIVE_PATH
+    manifest_path = installed_official_game / oracle_install.MANIFEST_NAME
+    active.chmod(0o640)
+    manifest_path.chmod(0o600)
+    active_before = active.read_bytes()
+    manifest_before = manifest_path.read_bytes()
+    active_mode = _file_mode(active)
+    manifest_mode = _file_mode(manifest_path)
+
+    def fail_at(observed: str) -> None:
+        if observed == boundary:
+            raise InstallError(f"injected {boundary} publication failure")
+
+    monkeypatch.setattr(
+        oracle_install, "_deploy_preloader_checkpoint", fail_at, raising=False
+    )
+
+    with pytest.raises(InstallError, match=f"injected {boundary}"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert active.read_bytes() == active_before
+    assert manifest_path.read_bytes() == manifest_before
+    assert _file_mode(active) == active_mode
+    assert _file_mode(manifest_path) == manifest_mode
+    assert not (installed_official_game / BACKUP_ROOT).exists()
+    assert not (installed_official_game / COMPAT_ROOT).exists()
+    recoveries = tuple(
+        (installed_official_game / ".ssr-oracle-recovery").glob("*")
+    )
+    assert len(recoveries) == 1
+    compat = recoveries[0] / "compat"
+    observed = {
+        path.relative_to(compat).as_posix()
+        for path in compat.rglob("*")
+        if path.is_file()
+    }
+    assert observed == recovered
+    if BACKUP_PATH in recovered:
+        backup = compat / BACKUP_PATH
+        assert backup.read_bytes() == OFFICIAL_BYTES
+        assert _file_mode(backup) == active_mode
+    if PROVENANCE_PATH in recovered:
+        deployed_provenance = compat / PROVENANCE_PATH
+        assert deployed_provenance.read_bytes() == provenance.read_bytes()
+        assert _file_mode(deployed_provenance) == 0o644
+
+
+def test_deploy_preloader_retries_an_exclusive_recovery_collision(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    recovery_parent = installed_official_game / ".ssr-oracle-recovery"
+    recovery_parent.mkdir()
+    collision = recovery_parent / "collision"
+    collision.mkdir()
+    (collision / "keep").write_bytes(b"user")
+    names = iter(("collision", "fresh"))
+    monkeypatch.setattr(
+        oracle_install, "_compat_recovery_name", lambda: next(names), raising=False
+    )
+    monkeypatch.setattr(
+        oracle_install,
+        "_deploy_preloader_checkpoint",
+        lambda boundary: (
+            (_ for _ in ()).throw(InstallError("injected failure"))
+            if boundary == "backup"
+            else None
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(InstallError, match="injected failure"):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+    assert (collision / "keep").read_bytes() == b"user"
+    assert (
+        recovery_parent / "fresh/compat" / BACKUP_PATH
+    ).read_bytes() == OFFICIAL_BYTES
+
+
+def test_deploy_preloader_surfaces_rollback_failure_with_original_error(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    preloader, provenance = deploy_request
+    monkeypatch.setattr(
+        oracle_install,
+        "_deploy_preloader_checkpoint",
+        lambda boundary: (
+            (_ for _ in ()).throw(InstallError("original publication failure"))
+            if boundary == "backup"
+            else None
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        oracle_install,
+        "_preserve_compat_recovery",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(InstallError("recovery write failure"))
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(
+        InstallError,
+        match=r"original publication failure.*rollback failed.*recovery write failure",
+    ):
+        oracle_install.deploy_preloader(
+            installed_official_game,
+            preloader,
+            provenance,
+            repo_root=Path("/unused"),
+        )
+
+
+def test_cli_deploy_preloader_prints_canonical_manifest(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+):
+    preloader, provenance = deploy_request
+
+    result = main(
+        [
+            "deploy-preloader",
+            "--game-root",
+            str(installed_official_game),
+            "--preloader",
+            str(preloader),
+            "--provenance",
+            str(provenance),
+            "--repo-root",
+            "/unused",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.err == ""
+    assert captured.out == (
+        json.dumps(
+            oracle_install._manifest_to_dict(
+                oracle_install._load_manifest(installed_official_game)
+            ),
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def test_cli_deploy_preloader_reports_one_error_line(
+    installed_official_game: Path,
+    deploy_request: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+):
+    preloader, provenance = deploy_request
+    preloader.write_bytes(b"unreviewed")
+
+    result = main(
+        [
+            "deploy-preloader",
+            "--game-root",
+            str(installed_official_game),
+            "--preloader",
+            str(preloader),
+            "--provenance",
+            str(provenance),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert captured.out == ""
+    assert captured.err.startswith("error: ")
+    assert captured.err.count("\n") == 1
