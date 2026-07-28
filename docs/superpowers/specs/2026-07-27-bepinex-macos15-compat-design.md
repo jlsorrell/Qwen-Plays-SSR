@@ -348,6 +348,17 @@ provenance, or live compatibility directories until the complete run,
 `compat`, and `cleanup` graph has been opened with
 `O_DIRECTORY | O_NOFOLLOW`, identity-pinned, and parent-fsynced.
 
+There is exactly one retryable destination collision: before any live-state
+mutation, publishing the top-level random recovery-run name below the pinned
+`.ssr-oracle-recovery` parent with
+`renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)` may return `EEXIST`. The
+command abandons that candidate name and retries with a fresh independent
+128-bit random suffix. No child of the selected run may already exist. Once a
+run name has been published, every destination collision during allocation,
+forward mutation, cleanup preservation, or rollback is a hard failure that
+preserves both distinguishable objects. Errors other than `EEXIST` from the
+top-level run-name publication are never retried.
+
 The forward transaction then uses this exact order:
 
 1. move the backup and provenance to their required-absent recovery
@@ -385,17 +396,30 @@ validated swap. Each rollback source is checked against its retained snapshot.
 Any source substitution, destination collision, unexpected displaced inode, or
 fsync failure is a hard rollback failure: preserve all distinguishable copies
 and report their recovery location rather than overwrite, delete, or silently
-adopt one.
+adopt one. The sole top-level pre-mutation run-name `EEXIST` retry described
+above is not a rollback collision and is the only exception.
 
 Failure injection covers every forward and rollback write, file fsync,
 directory fsync, exclusive move, swap, displaced-inode validation, swap-back,
 recovery allocation, and cleanup-preservation boundary. Race tests substitute
 each mutable parent, source leaf, destination leaf, active/manifest leaf, and
-empty live directory before its descriptor-relative operation. A static audit
-also proves that no restore-reachable path invokes terminal deletion. An
-external crash may leave the deliberately fail-closed `invalid` state with all
-copies preserved; status reports stable recovery guidance and no command claims
-success.
+empty live directory before its descriptor-relative operation.
+
+The restore transaction is implemented only by direct calls among
+module-level local functions. Transaction mutation does not use class or
+instance methods, local callable aliases, callbacks, `functools.partial`,
+`getattr`/`globals` lookup, or other dynamic dispatch. A conservative AST audit
+starts at `restore_preloader`, traverses every directly called module-level
+local helper, rejects any local function reference that is not the direct
+callee of a call, and fails closed on an unresolved or indirect call edge in
+transaction logic. It rejects terminal deletion calls in the complete
+reachable graph. Independently, runtime tests replace the `os`, `pathlib`, and
+`shutil` terminal-deletion primitives with raising spies while exercising
+restore success and every forward failure, rollback failure, fsync failure,
+destination collision, and substitution case; all spies must record zero
+calls. An external crash may leave the deliberately fail-closed `invalid` state
+with all copies preserved; status reports stable recovery guidance and no
+command claims success.
 
 The command verifies the restored DLL hash, mode, manifest health, absence of
 live compatibility entries, and retained recovery contents before reporting

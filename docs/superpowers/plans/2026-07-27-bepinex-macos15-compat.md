@@ -907,10 +907,15 @@ git commit -m "feat: deploy patched BepInEx preloader"
 - [ ] **Step 1: Write failing restore precondition, race, and success tests**
 
 Cover official-state refusal, changed active/backup/provenance, trust mismatch,
-reserved symlinks, recovery-name collision retry, partial recovery-allocation
-failure, and success. Before the first live mutation, assert that the complete
-exclusive recovery run has descriptor-pinned `compat` and `cleanup` subtrees
-and that each creation and parent fsync completed.
+reserved symlinks, partial recovery-allocation failure, and success. The only
+retry test injects `EEXIST` at descriptor-relative `RENAME_EXCL` publication of
+the top-level random run name before live mutation, asserts that the abandoned
+name is not reused, and requires a fresh 128-bit-random candidate. Assert that
+non-`EEXIST` publication errors, collisions in any child of the selected run,
+and every collision after the run is selected hard-fail without a retry.
+Before the first live mutation, assert that the complete exclusive recovery run
+has descriptor-pinned `compat` and `cleanup` subtrees and that each creation
+and parent fsync completed.
 
 For backup, provenance, active, manifest, and both live compatibility
 directories, inject parent replacement, source substitution, and destination
@@ -923,7 +928,8 @@ original name or below the reported recovery run.
 The happy path asserts exact official active bytes and mode, a healthy official
 manifest, absent live compatibility entries, the original backup/provenance
 files under `compat/`, both exact empty former live directories under
-`cleanup/`, and no terminal deletion calls.
+`cleanup/`, and no terminal deletion calls. Request the raising-spy fixture
+defined in Step 8.
 
 - [ ] **Step 2: Write failing forward and rollback boundary tests**
 
@@ -939,8 +945,10 @@ patched-manifest-last swap and displaced validation, preservation of every
 temporary/displaced object, and every associated parent-directory fsync. Each
 failure must return to byte/mode-identical patched state or raise a hard
 rollback error with every distinguishable copy preserved. Destination
-collisions must always be hard failures and must never overwrite either
-object.
+collisions must always be hard failures and must never overwrite either object.
+The only exception is the Step 1 pre-mutation top-level run-name `EEXIST`,
+which selects a fresh random name before any transaction state exists.
+Request the Step 8 raising-spy fixture in every scenario.
 
 - [ ] **Step 3: Verify RED**
 
@@ -963,9 +971,13 @@ compatibility state:
   cleanup/
 ```
 
-Recovery-name allocation retries only an `EEXIST` collision. Preserve partial
-scaffolding on every other allocation/open/fsync failure; do not begin live
-mutation unless the complete graph is pinned and durable.
+Publish the random top-level run name with descriptor-relative
+`RENAME_EXCL | RENAME_NOFOLLOW_ANY`. Retry only `EEXIST` from that exact
+pre-live-mutation operation and generate a fresh independent 128-bit-random
+candidate. After one run name is accepted, a collision in `compat`, `cleanup`,
+or any other child is evidence of interference and hard-fails. Preserve
+partial scaffolding on every non-retryable allocation/open/fsync failure; do
+not begin live mutation unless the complete graph is pinned and durable.
 
 - [ ] **Step 5: Implement the descriptor-relative forward state machine**
 
@@ -1009,7 +1021,8 @@ parents after each move or swap. A source substitution, destination collision,
 unexpected displaced inode, preservation failure, or fsync failure is a hard
 rollback failure. Preserve all distinguishable copies in the retained recovery
 run and report both the original and rollback errors; never overwrite or
-delete a collision.
+delete a collision. No rollback collision is retryable; the sole collision
+retry belongs to top-level recovery-run publication before live mutation.
 
 - [ ] **Step 7: Add CLI and repeat behavior**
 
@@ -1024,39 +1037,270 @@ official state exits 2 with `preloader compatibility is not patched`.
 
 - [ ] **Step 8: Audit deletion reachability, test, and commit**
 
-```bash
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python - <<'PY'
+Constrain restore transaction code to direct calls between module-level local
+functions. Do not put transaction mutation in class/instance methods; do not
+use local callable aliases, callbacks, lambdas, `functools.partial`,
+`getattr`, `globals`, `locals`, `eval`, `exec`, or dynamic lookup. Passive
+data-class construction and explicitly listed value/descriptor-lifecycle
+methods are permitted, but filesystem mutation remains in direct module-level
+helpers.
+
+Add this conservative call-graph test to
+`tests/test_oracle_install_compat.py`:
+
+```python
 import ast
 from pathlib import Path
 
-tree = ast.parse(Path("src/ssr_env/oracle_install.py").read_text())
-functions = {
-    node.name: node
-    for node in tree.body
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-}
-pending = ["restore_preloader"]
-reachable = set()
-terminal = {"unlink", "rmdir", "remove", "rmtree"}
-violations = []
-while pending:
-    name = pending.pop()
-    if name in reachable:
-        continue
-    reachable.add(name)
-    node = functions[name]
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Call):
+def test_restore_transaction_static_graph_has_no_terminal_deletion(
+    restore_no_terminal_deletion: None,
+) -> None:
+    tree = ast.parse(
+        Path("src/ssr_env/oracle_install.py").read_text(encoding="utf-8")
+    )
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    class_nodes = {
+        node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
+    }
+    passive_classes = {
+        name
+        for name, node in class_nodes.items()
+        if (
+            any(
+                isinstance(decorator, ast.Name)
+                and decorator.id == "dataclass"
+                for decorator in node.decorator_list
+            )
+            and not any(
+                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and child.name == "__init__"
+                for child in node.body
+            )
+        )
+        or name.endswith(("Error", "Exception"))
+    }
+    imported_modules: set[str] = set()
+    imported_callables: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            imported_modules.update(
+                alias.asname or alias.name.split(".", 1)[0]
+                for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                local_name = alias.asname or alias.name
+                imported_callables[local_name] = (
+                    f"{node.module}.{alias.name}"
+                )
+
+    terminal = {"unlink", "remove", "rmdir", "removedirs", "rmtree"}
+    forbidden_dynamic = {
+        "eval", "exec", "getattr", "globals", "locals", "__import__",
+        "attrgetter", "methodcaller", "partial",
+    }
+    safe_builtins = {
+        "bool", "bytes", "bytearray", "dict", "enumerate", "frozenset",
+        "int", "isinstance", "len", "list", "max", "min", "OSError",
+        "range", "reversed", "RuntimeError", "set", "sorted", "str",
+        "tuple", "ValueError", "zip",
+    }
+    safe_value_methods = {
+        "append", "close", "decode", "encode", "endswith", "get",
+        "hexdigest", "items", "keys", "read_bytes", "resolve",
+        "startswith", "values",
+    }
+
+    pending = ["restore_preloader"]
+    reachable: set[str] = set()
+    violations: list[tuple[str, int, str]] = []
+    while pending:
+        function_name = pending.pop()
+        if function_name in reachable:
             continue
-        if isinstance(child.func, ast.Name):
-            if child.func.id in functions:
-                pending.append(child.func.id)
-            if child.func.id in terminal:
-                violations.append((name, child.func.id, child.lineno))
-        elif child.func.attr in terminal:
-            violations.append((name, child.func.attr, child.lineno))
-assert not violations, violations
-PY
+        function = functions.get(function_name)
+        assert function is not None, f"unresolved local edge: {function_name}"
+        reachable.add(function_name)
+        parents = {
+            id(child): parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(function):
+            if (
+                isinstance(node, (ast.Lambda, ast.ClassDef))
+                or (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node is not function
+                )
+            ):
+                violations.append(
+                    (function_name, node.lineno, "dynamic callable definition")
+                )
+            if isinstance(node, ast.Name) and node.id in functions:
+                parent = parents.get(id(node))
+                if not (isinstance(parent, ast.Call) and parent.func is node):
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            f"indirect local function reference: {node.id}",
+                        )
+                    )
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func
+            if isinstance(callee, ast.Name):
+                name = callee.id
+                if name in functions:
+                    pending.append(name)
+                elif name in terminal or name in forbidden_dynamic:
+                    violations.append((function_name, node.lineno, name))
+                elif (
+                    name not in imported_callables
+                    and name not in passive_classes
+                    and name not in safe_builtins
+                ):
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            f"unresolved bare callable: {name}",
+                        )
+                    )
+                elif (
+                    name in imported_callables
+                    and imported_callables[name].rsplit(".", 1)[-1]
+                    in terminal | forbidden_dynamic
+                ):
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            imported_callables[name],
+                        )
+                    )
+            elif isinstance(callee, ast.Attribute):
+                if callee.attr in terminal | forbidden_dynamic:
+                    violations.append(
+                        (function_name, node.lineno, callee.attr)
+                    )
+                    continue
+                base = callee.value
+                while isinstance(base, ast.Attribute):
+                    base = base.value
+                if isinstance(base, ast.Name) and base.id in imported_modules:
+                    pass
+                elif callee.attr not in safe_value_methods:
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            f"unresolved object dispatch: {callee.attr}",
+                        )
+                    )
+            else:
+                violations.append(
+                    (function_name, node.lineno, "indirect call expression")
+                )
+    assert not violations, violations
+```
+
+This test traverses every permitted module-local helper reachable from
+`restore_preloader`, rejects any local function reference that is not a direct
+callee, fails closed on unresolved bare/indirect call edges, and rejects
+terminal deletion throughout the graph. Do not expand `safe_value_methods` to
+admit filesystem mutation; add a direct module-level helper instead.
+
+Also add a raising runtime spy and use it around restore success and every
+forward failure, rollback failure, fsync failure, destination collision, and
+post-verification substitution scenario from Steps 1 and 2:
+
+```python
+from collections.abc import Iterator
+from contextlib import contextmanager
+import os
+import pathlib
+import shutil
+
+@contextmanager
+def _terminal_deletion_spies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[list[str]]:
+    calls: list[str] = []
+
+    def forbidden(name: str):
+        def spy(*args: object, **kwargs: object) -> None:
+            calls.append(name)
+            raise AssertionError(f"terminal deletion called: {name}")
+        return spy
+
+    targets = (
+        (os, "unlink"),
+        (os, "remove"),
+        (os, "rmdir"),
+        (os, "removedirs"),
+        (pathlib.Path, "unlink"),
+        (pathlib.Path, "rmdir"),
+        (shutil, "rmtree"),
+    )
+    with monkeypatch.context() as patch:
+        for owner, name in targets:
+            patch.setattr(owner, name, forbidden(f"{owner.__name__}.{name}"))
+        try:
+            yield calls
+        finally:
+            assert calls == []
+
+@pytest.fixture
+def restore_no_terminal_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    with _terminal_deletion_spies(monkeypatch):
+        yield
+
+def test_restore_tests_cannot_bypass_terminal_deletion_spies(
+    restore_no_terminal_deletion: None,
+) -> None:
+    tree = ast.parse(
+        Path("tests/test_oracle_install_compat.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    missing_fixture = []
+    for node in tree.body:
+        if (
+            not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            or not node.name.startswith("test_restore_")
+        ):
+            continue
+        parameter_names = {
+            argument.arg
+            for argument in (
+                node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+            )
+        }
+        if "restore_no_terminal_deletion" not in parameter_names:
+            missing_fixture.append(node.name)
+    assert not missing_fixture, missing_fixture
+```
+
+Name every Task 7 test `test_restore_*` and request the
+`restore_no_terminal_deletion` fixture. The test-file AST meta-test fails if a
+new restore test omits the fixture, including CLI tests that reach restore
+through `main` rather than a direct Python call.
+
+Run the static audit, the runtime-spy scenario matrix, and regressions:
+
+```bash
+UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest \
+  tests/test_oracle_install_compat.py \
+  -k 'restore and (static_graph or terminal_deletion or failure or race or success)' \
+  -q
 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest \
   tests/test_oracle_install_compat.py tests/test_oracle_install.py -q
 git add src/ssr_env/oracle_install.py tests/test_oracle_install_compat.py
