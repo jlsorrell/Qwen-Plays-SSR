@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+import uuid
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -67,6 +69,24 @@ class BuildProvenance:
     build_target: str
     official_preloader_sha256: str
     patched_preloader_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class AssemblyMetadata:
+    name: str
+    version: str
+    metadata_version: str
+    target_framework: str
+    references: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BuildResult:
+    dll: Path
+    provenance: Path
+    patched_sha256: str
+    metadata: AssemblyMetadata
+    provenance_data: BuildProvenance
 
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -637,3 +657,512 @@ def load_provenance(path: Path, trust: CompatTrust) -> BuildProvenance:
         if "provenance" in str(exc):
             raise
         raise CompatError(f"provenance is invalid: {exc}") from exc
+
+
+_ASSEMBLY_METADATA_KEYS = {
+    "assembly_name",
+    "assembly_version",
+    "metadata_version",
+    "references",
+    "target_framework",
+}
+_EXPECTED_BUILD_PROPERTIES = {
+    "Configuration": "Release",
+    "ContinuousIntegrationBuild": "true",
+    "Deterministic": "true",
+    "PathMap": "{source_root}=/_/src",
+}
+_BUILD_TIMEOUT_SECONDS = 300
+
+
+def inspect_assembly(path: Path, inspector: Path) -> AssemblyMetadata:
+    """Inspect a managed PE through the non-loading metadata executable."""
+    assembly = Path(path).resolve(strict=True)
+    executable = Path(inspector).resolve(strict=True)
+    environment = os.environ.copy()
+    local_runtime = (
+        Path(__file__).resolve().parents[2]
+        / "data/oracle/compat/dotnet-8.0.419"
+    )
+    if local_runtime.is_dir():
+        environment["DOTNET_ROOT"] = str(local_runtime)
+    try:
+        result = subprocess.run(
+            [str(executable), str(assembly)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=_BUILD_TIMEOUT_SECONDS,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CompatError("assembly inspection timed out") from exc
+    except OSError as exc:
+        raise CompatError("assembly inspector cannot be executed") from exc
+    if result.returncode != 0:
+        raise CompatError("assembly metadata is invalid")
+    try:
+        decoded = json.loads(result.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CompatError("assembly inspector emitted invalid JSON") from exc
+    if result.stdout != canonical_json(decoded):
+        raise CompatError("assembly inspector JSON is not canonical")
+    values = _exact_mapping(decoded, _ASSEMBLY_METADATA_KEYS, "assembly metadata")
+    references = values["references"]
+    if not isinstance(references, dict):
+        raise CompatError("assembly metadata references must be an object")
+    pairs: list[tuple[str, str]] = []
+    for name, version in sorted(references.items()):
+        pairs.append(
+            (
+                _string(name, "assembly reference name"),
+                _string(version, "assembly reference version"),
+            )
+        )
+    return AssemblyMetadata(
+        name=_string(values["assembly_name"], "assembly name"),
+        version=_string(values["assembly_version"], "assembly version"),
+        metadata_version=_string(values["metadata_version"], "metadata version"),
+        target_framework=_string(values["target_framework"], "target framework"),
+        references=tuple(pairs),
+    )
+
+
+def _load_package_pins(path: Path) -> tuple[PackagePin, ...]:
+    decoded = _decode_canonical(path, "dependencies")
+    values = _exact_mapping(
+        decoded, {"packages", "schema_version"}, "dependencies"
+    )
+    if _integer(values["schema_version"], "dependencies schema_version") != 1:
+        raise CompatError("dependencies schema_version must be 1")
+    records = values["packages"]
+    if not isinstance(records, list) or len(records) != 10:
+        raise CompatError("dependencies must contain exactly ten packages")
+    pins: list[PackagePin] = []
+    seen: set[str] = set()
+    for record in records:
+        item = _exact_mapping(
+            record,
+            {
+                "content_hash",
+                "filename",
+                "package_id",
+                "sha256",
+                "source_index",
+                "version",
+            },
+            "dependency",
+        )
+        filename = _relative_path(item["filename"], "package filename")
+        if "/" in filename or not filename.endswith(".nupkg") or filename in seen:
+            raise CompatError("dependency package filename is invalid or duplicate")
+        seen.add(filename)
+        pins.append(
+            PackagePin(
+                package_id=_string(item["package_id"], "package id"),
+                version=_string(item["version"], "package version"),
+                source_index=_string(item["source_index"], "package source"),
+                filename=filename,
+                sha256=_match(item["sha256"], _LOWER_SHA256, "package hash"),
+                content_hash=_string(item["content_hash"], "package content hash"),
+            )
+        )
+    return tuple(pins)
+
+
+def _validate_feed(feed_dir: Path, pins: tuple[PackagePin, ...]) -> Path:
+    feed = Path(feed_dir)
+    if feed.is_symlink():
+        raise CompatError("local package feed must not be symlinked")
+    try:
+        root = feed.resolve(strict=True)
+    except OSError as exc:
+        raise CompatError("local package feed cannot be resolved") from exc
+    if not root.is_dir():
+        raise CompatError("local package feed must be a directory")
+    observed = {
+        item.name for item in root.iterdir() if item.is_file() and item.suffix == ".nupkg"
+    }
+    expected = {pin.filename for pin in pins}
+    if observed != expected:
+        raise CompatError("local package feed must contain exactly ten locked packages")
+    for pin in pins:
+        package = root / pin.filename
+        if package.is_symlink() or _sha256(package.read_bytes()) != pin.sha256:
+            raise CompatError(f"local package hash mismatch: {pin.filename}")
+    return root
+
+
+def _execute_build_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=_BUILD_TIMEOUT_SECONDS,
+    )
+
+
+def _log_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _run_build_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    log_path: Path,
+) -> subprocess.CompletedProcess[str]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = _execute_build_command(command, cwd=cwd, env=env)
+    except subprocess.TimeoutExpired as exc:
+        log_path.write_text(
+            "$ " + " ".join(command) + "\n"
+            + _log_text(exc.stdout or exc.output)
+            + _log_text(exc.stderr),
+            encoding="utf-8",
+        )
+        raise CompatError("BepInEx build timed out") from exc
+    except OSError as exc:
+        log_path.write_text(
+            "$ " + " ".join(command) + f"\nprocess error: {exc}\n",
+            encoding="utf-8",
+        )
+        raise CompatError("BepInEx build process could not start") from exc
+    log_path.write_text(
+        "$ " + " ".join(command) + "\n"
+        + _log_text(result.stdout)
+        + _log_text(result.stderr),
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        raise CompatError("BepInEx build failed")
+    return result
+
+
+def _nuget_config(feed: Path) -> bytes:
+    source = html.escape(str(feed), quote=True)
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<configuration>\n"
+        "  <packageSources>\n"
+        "    <clear />\n"
+        f'    <add key="locked-local-feed" value="{source}" />\n'
+        "  </packageSources>\n"
+        "</configuration>\n"
+    ).encode("utf-8")
+
+
+def _copy_lock_files(repo_root: Path, prepared: Path) -> None:
+    prefix = "oracle/compat/nuget-lock/"
+    for relative in _NUGET_LOCK_RELATIVES:
+        if not relative.startswith(prefix):
+            raise CompatError("NuGet lock path is invalid")
+        destination = prepared / relative.removeprefix(prefix)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source_bytes = _require_head_blob(repo_root, relative)
+        destination.write_bytes(source_bytes)
+        if destination.read_bytes() != source_bytes:
+            raise CompatError("NuGet lock copy is not byte-identical")
+
+
+def _build_environment(root: Path, packages: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DOTNET_CLI_HOME": str(root / "dotnet-home"),
+            "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+            "DOTNET_NOLOGO": "1",
+            "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
+            "NUGET_PACKAGES": str(packages),
+        }
+    )
+    return environment
+
+
+def _build_inspector(
+    sdk: Path,
+    feed: Path,
+    repo_root: Path,
+    work: Path,
+) -> Path:
+    root = work / "inspector"
+    packages = root / "packages"
+    output = root / "publish"
+    root.mkdir(parents=True)
+    config = root / "NuGet.config"
+    config.write_bytes(_nuget_config(feed))
+    project = repo_root / "oracle/compat/inspector/SsrOracle.CompatInspector.csproj"
+    environment = _build_environment(root, packages)
+    intermediate = root / "obj"
+    build_output = root / "bin"
+    isolated_properties = [
+        f"-p:BaseIntermediateOutputPath={intermediate}/",
+        f"-p:MSBuildProjectExtensionsPath={intermediate}/",
+        f"-p:BaseOutputPath={build_output}/",
+    ]
+    _run_build_command(
+        [
+            str(sdk),
+            "restore",
+            str(project),
+            "--no-cache",
+            "--packages",
+            str(packages),
+            "--configfile",
+            str(config),
+            *isolated_properties,
+        ],
+        cwd=root,
+        env=environment,
+        log_path=root / "restore.log",
+    )
+    _run_build_command(
+        [
+            str(sdk),
+            "publish",
+            str(project),
+            "--configuration",
+            "Release",
+            "--no-restore",
+            "--disable-build-servers",
+            "--output",
+            str(output),
+            *isolated_properties,
+        ],
+        cwd=root,
+        env=environment,
+        log_path=root / "publish.log",
+    )
+    return output / "SsrOracle.CompatInspector"
+
+
+def _build_once(
+    source: SourceCheckout,
+    trust: CompatTrust,
+    toolchain: ToolchainLock,
+    sdk: Path,
+    feed: Path,
+    repo_root: Path,
+    root: Path,
+) -> Path:
+    prepared = prepare_source(source, root / "source", trust)
+    _copy_lock_files(repo_root, prepared)
+    packages = root / "packages"
+    publish = root / "publish"
+    config = root / "NuGet.config"
+    config.write_bytes(_nuget_config(feed))
+    environment = _build_environment(root, packages)
+    project = prepared / toolchain.project
+    _run_build_command(
+        [
+            str(sdk),
+            "restore",
+            str(project),
+            "--locked-mode",
+            "--no-cache",
+            "--packages",
+            str(packages),
+            "--configfile",
+            str(config),
+            "-p:RestoreBuildInParallel=false",
+        ],
+        cwd=prepared,
+        env=environment,
+        log_path=root / "restore.log",
+    )
+    properties = dict(toolchain.build_properties)
+    path_map = properties["PathMap"].replace("{source_root}", str(prepared))
+    _run_build_command(
+        [
+            str(sdk),
+            "publish",
+            str(project),
+            "--configuration",
+            properties["Configuration"],
+            "--framework",
+            toolchain.framework,
+            "--no-restore",
+            "--disable-build-servers",
+            "--output",
+            str(publish),
+            f"-p:Deterministic={properties['Deterministic']}",
+            f"-p:ContinuousIntegrationBuild={properties['ContinuousIntegrationBuild']}",
+            f"-p:PathMap={path_map}",
+            "-p:BuildInParallel=false",
+        ],
+        cwd=prepared,
+        env=environment,
+        log_path=root / "publish.log",
+    )
+    candidates = list(publish.rglob("BepInEx.Preloader.dll"))
+    if len(candidates) != 1 or candidates[0].parent != publish:
+        raise CompatError("build did not produce exactly one preloader DLL")
+    return candidates[0]
+
+
+def _validate_legacy_metadata(
+    metadata: AssemblyMetadata,
+    toolchain: ToolchainLock,
+) -> None:
+    expected = (
+        "BepInEx.Preloader",
+        "5.4.23.5",
+        ".NETFramework,Version=v3.5",
+    )
+    actual = (metadata.name, metadata.version, metadata.target_framework)
+    references = dict(metadata.references)
+    if (
+        actual != expected
+        or toolchain.framework != "net35"
+        or metadata.metadata_version != "v2.0.50727"
+        or references.get("mscorlib") != "2.0.0.0"
+    ):
+        raise CompatError("built preloader does not have exact legacy metadata")
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_durable(path: Path, data: bytes) -> None:
+    with path.open("xb") as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def _publish_result(
+    output_dir: Path,
+    work: Path,
+    dll_bytes: bytes,
+    provenance: BuildProvenance,
+) -> tuple[Path, Path]:
+    digest = provenance.patched_preloader_sha256
+    result = output_dir / digest
+    dll_name = "BepInEx.Preloader.dll"
+    provenance_name = "provenance.json"
+    provenance_bytes = canonical_json(asdict(provenance))
+    if result.exists():
+        if (
+            (result / dll_name).read_bytes() != dll_bytes
+            or (result / provenance_name).read_bytes() != provenance_bytes
+        ):
+            raise CompatError("refusing different existing build bytes")
+    else:
+        staging = work / "publish-result"
+        staging.mkdir()
+        _write_durable(staging / dll_name, dll_bytes)
+        _write_durable(staging / provenance_name, provenance_bytes)
+        _fsync_directory(staging)
+        os.replace(staging, result)
+        _fsync_directory(output_dir)
+
+    current_bytes = canonical_json(
+        {
+            "dll": f"{digest}/{dll_name}",
+            "patched_sha256": digest,
+            "provenance": f"{digest}/{provenance_name}",
+        }
+    )
+    current_temp = output_dir / f".current.{uuid.uuid4().hex}.json"
+    _write_durable(current_temp, current_bytes)
+    os.replace(current_temp, output_dir / "current.json")
+    _fsync_directory(output_dir)
+    return result / dll_name, result / provenance_name
+
+
+def build_compat_preloader(
+    source: Path,
+    sdk: Path,
+    feed_dir: Path,
+    output_dir: Path,
+    repo_root: Path,
+) -> BuildResult:
+    """Build, compare, inspect, and atomically publish the patched preloader."""
+    repository = Path(repo_root).resolve(strict=True)
+    expected_repository = Path(__file__).resolve().parents[2]
+    if repository != expected_repository:
+        raise CompatError("compatibility repository root is invalid")
+    trust = load_trust(repository)
+    toolchain = load_toolchain(repository / "oracle/compat/toolchain.json")
+    if (
+        toolchain.source_commit != _SOURCE_COMMIT
+        or toolchain.harmony_submodule_commit != _HARMONY_SUBMODULE_COMMIT
+        or dict(toolchain.build_properties) != _EXPECTED_BUILD_PROPERTIES
+        or toolchain.framework != "net35"
+    ):
+        raise CompatError("toolchain does not describe the exact build")
+    pins = _load_package_pins(repository / "oracle/compat/dependencies.json")
+    feed = _validate_feed(feed_dir, pins)
+    checkout = validate_source_checkout(source, trust)
+
+    sdk_path = Path(sdk).resolve(strict=True)
+    output = Path(output_dir).resolve(strict=False)
+    output.mkdir(parents=True, exist_ok=True)
+    work = output / ".work" / uuid.uuid4().hex
+    work.mkdir(parents=True)
+    environment = _build_environment(work / "sdk-check", work / "sdk-packages")
+    version_result = _run_build_command(
+        [str(sdk_path), "--version"],
+        cwd=work,
+        env=environment,
+        log_path=work / "sdk-version.log",
+    )
+    if _log_text(version_result.stdout).strip() != toolchain.dotnet_sdk_version:
+        raise CompatError("SDK version does not match toolchain")
+
+    inspector = _build_inspector(sdk_path, feed, repository, work)
+    first = _build_once(
+        checkout, trust, toolchain, sdk_path, feed, repository, work / "build-a"
+    )
+    second = _build_once(
+        checkout, trust, toolchain, sdk_path, feed, repository, work / "build-b"
+    )
+    first_bytes = first.read_bytes()
+    second_bytes = second.read_bytes()
+    if first_bytes != second_bytes:
+        raise CompatError("two fresh builds are not byte-identical")
+
+    metadata = inspect_assembly(first, inspector)
+    _validate_legacy_metadata(metadata, toolchain)
+    patched_hash = _sha256(first_bytes)
+    provenance = BuildProvenance(
+        schema_version=1,
+        source_commit=toolchain.source_commit,
+        patch_sha256=trust.patch_sha256,
+        toolchain_lock_sha256=trust.toolchain_sha256,
+        dotnet_sdk_version=toolchain.dotnet_sdk_version,
+        dependency_lock_sha256=trust.dependencies_sha256,
+        build_target=toolchain.project,
+        official_preloader_sha256=toolchain.official_preloader_sha256,
+        patched_preloader_sha256=patched_hash,
+    )
+    dll, provenance_path = _publish_result(
+        output, work, first_bytes, provenance
+    )
+    return BuildResult(
+        dll=dll,
+        provenance=provenance_path,
+        patched_sha256=patched_hash,
+        metadata=metadata,
+        provenance_data=provenance,
+    )

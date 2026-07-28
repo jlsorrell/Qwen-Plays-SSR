@@ -3,16 +3,23 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
 
 from ssr_env.oracle_compat import (
+    AssemblyMetadata,
+    BuildProvenance,
+    BuildResult,
     CompatError,
     SourceCheckout,
+    build_compat_preloader,
     canonical_json,
+    inspect_assembly,
     load_provenance,
     load_trust,
     parse_trust_data,
@@ -152,6 +159,208 @@ def recursive_source_checkout(
     checkout = tmp_path / "source"
     shutil.copytree(pinned_recursive_checkout, checkout, symlinks=True)
     return checkout
+
+
+@pytest.fixture(scope="module")
+def built_inspector(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = Path(__file__).resolve().parents[1]
+    sdk = root / "data/oracle/compat/dotnet-8.0.419/dotnet"
+    project = root / "oracle/compat/inspector/SsrOracle.CompatInspector.csproj"
+    build_root = tmp_path_factory.mktemp("inspector")
+    output = build_root / "publish"
+    environment = os.environ.copy()
+    environment["DOTNET_CLI_HOME"] = str(build_root / "dotnet-home")
+    environment["NUGET_PACKAGES"] = str(build_root / "packages")
+    environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"
+    result = subprocess.run(
+        [
+            str(sdk),
+            "publish",
+            str(project),
+            "--configuration",
+            "Release",
+            "--output",
+            str(output),
+            "--disable-build-servers",
+            f"-p:BaseIntermediateOutputPath={build_root / 'obj'}/",
+            f"-p:MSBuildProjectExtensionsPath={build_root / 'obj'}/",
+            f"-p:BaseOutputPath={build_root / 'bin'}/",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=300,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return output / "SsrOracle.CompatInspector"
+
+
+@pytest.fixture(scope="module")
+def official_preloader(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    root = Path(__file__).resolve().parents[1]
+    sdk = root / "data/oracle/compat/dotnet-8.0.419/dotnet"
+    feed = root / "data/oracle/compat/fetch-acceptance"
+    project_root = tmp_path_factory.mktemp("official-preloader")
+    (project_root / "NuGet.config").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<configuration><packageSources><clear />"
+        f'<add key="local" value="{feed}" />'
+        "</packageSources></configuration>\n"
+    )
+    (project_root / "Official.csproj").write_text(
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>BepInEx.Preloader</AssemblyName>
+    <AssemblyVersion>5.4.23.5</AssemblyVersion>
+    <TargetFramework>net35</TargetFramework>
+  </PropertyGroup>
+</Project>
+"""
+    )
+    (project_root / "Marker.cs").write_text(
+        """namespace BepInEx.Preloader
+{
+    public sealed class Marker
+    {
+        public static int Count()
+        {
+            return System.Linq.Enumerable.Count(
+                System.Linq.Enumerable.Empty<int>());
+        }
+    }
+}
+"""
+    )
+    environment = os.environ.copy()
+    environment["DOTNET_CLI_HOME"] = str(project_root / "dotnet-home")
+    environment["NUGET_PACKAGES"] = str(project_root / "packages")
+    environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"
+    result = subprocess.run(
+        [
+            str(sdk),
+            "build",
+            str(project_root / "Official.csproj"),
+            "--configuration",
+            "Release",
+            "--configfile",
+            str(project_root / "NuGet.config"),
+            "--disable-build-servers",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=300,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return project_root / "bin/Release/net35/BepInEx.Preloader.dll"
+
+
+@pytest.fixture(scope="module")
+def net35_without_system_core(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    root = Path(__file__).resolve().parents[1]
+    sdk = root / "data/oracle/compat/dotnet-8.0.419/dotnet"
+    feed = root / "data/oracle/compat/fetch-acceptance"
+    project_root = tmp_path_factory.mktemp("net35-without-system-core")
+    (project_root / "NuGet.config").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<configuration><packageSources><clear />"
+        f'<add key="local" value="{feed}" />'
+        "</packageSources></configuration>\n"
+    )
+    (project_root / "Missing.csproj").write_text(
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+  </PropertyGroup>
+</Project>
+"""
+    )
+    (project_root / "Marker.cs").write_text(
+        "public sealed class Marker { public static int Value() { return 1; } }\n"
+    )
+    environment = os.environ.copy()
+    environment["DOTNET_CLI_HOME"] = str(project_root / "dotnet-home")
+    environment["NUGET_PACKAGES"] = str(project_root / "packages")
+    environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"
+    result = subprocess.run(
+        [
+            str(sdk),
+            "build",
+            str(project_root / "Missing.csproj"),
+            "--configuration",
+            "Release",
+            "--configfile",
+            str(project_root / "NuGet.config"),
+            "--disable-build-servers",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=300,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return project_root / "bin/Release/net35/Missing.dll"
+
+
+def _legacy_metadata() -> AssemblyMetadata:
+    return AssemblyMetadata(
+        name="BepInEx.Preloader",
+        version="5.4.23.5",
+        metadata_version="v2.0.50727",
+        target_framework=".NETFramework,Version=v3.5",
+        references=(("mscorlib", "2.0.0.0"),),
+    )
+
+
+def _fake_build_process(monkeypatch, outputs: list[bytes | BaseException]):
+    state = {"publish": 0, "commands": []}
+
+    def execute(command, *, cwd, env):
+        state["commands"].append(command)
+        if command[-1:] == ["--version"]:
+            return subprocess.CompletedProcess(command, 0, "8.0.419\n", "")
+        if "publish" in command and any(
+            item.endswith("BepInEx.Preloader.csproj") for item in command
+        ):
+            item = outputs[state["publish"]]
+            state["publish"] += 1
+            if isinstance(item, BaseException):
+                raise item
+            output = Path(command[command.index("--output") + 1])
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "BepInEx.Preloader.dll").write_bytes(item)
+        return subprocess.CompletedProcess(command, 0, "ok\n", "")
+
+    monkeypatch.setattr(
+        "ssr_env.oracle_compat._execute_build_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        "ssr_env.oracle_compat.inspect_assembly",
+        lambda path, inspector: _legacy_metadata(),
+    )
+    return state
+
+
+def _build_with_fake_process(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+    outputs: list[bytes | BaseException],
+):
+    root = Path(__file__).resolve().parents[1]
+    _fake_build_process(monkeypatch, outputs)
+    return build_compat_preloader(
+        source=pinned_recursive_checkout,
+        sdk=root / "data/oracle/compat/dotnet-8.0.419/dotnet",
+        feed_dir=root / "data/oracle/compat/fetch-acceptance",
+        output_dir=tmp_path / "builds",
+        repo_root=root,
+    )
 
 
 @pytest.fixture
@@ -504,3 +713,218 @@ def test_source_checkout_is_an_immutable_resolved_record(
     assert source.root == pinned_recursive_checkout.resolve()
     with pytest.raises(AttributeError):
         source.source_commit = "0" * 40
+
+
+def test_inspector_reports_identity_version_clr_and_references(
+    official_preloader: Path,
+    built_inspector: Path,
+):
+    metadata = inspect_assembly(official_preloader, built_inspector)
+    assert metadata.name == "BepInEx.Preloader"
+    assert metadata.version == "5.4.23.5"
+    assert metadata.target_framework == ".NETFramework,Version=v3.5"
+    assert metadata.metadata_version == "v2.0.50727"
+    assert dict(metadata.references)["mscorlib"] == "2.0.0.0"
+
+
+def test_inspector_rejects_missing_net35_reference_signal(
+    net35_without_system_core: Path,
+    built_inspector: Path,
+):
+    with pytest.raises(CompatError, match="metadata is invalid"):
+        inspect_assembly(net35_without_system_core, built_inspector)
+
+
+def test_inspector_rejects_nonexact_clr_metadata_signal(
+    official_preloader: Path,
+    built_inspector: Path,
+    tmp_path: Path,
+):
+    data = official_preloader.read_bytes()
+    assert data.count(b"v2.0.50727") == 1
+    changed = tmp_path / "wrong-clr.dll"
+    changed.write_bytes(data.replace(b"v2.0.50727", b"v2.0.50728"))
+    with pytest.raises(CompatError, match="metadata is invalid"):
+        inspect_assembly(changed, built_inspector)
+
+
+def test_build_rejects_nonidentical_second_output(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+):
+    with pytest.raises(CompatError, match="byte-identical"):
+        _build_with_fake_process(
+            monkeypatch,
+            pinned_recursive_checkout,
+            tmp_path,
+            [b"first", b"second"],
+        )
+    assert not (tmp_path / "builds/current.json").exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"metadata_version": "v2.0.50728"},
+        {"references": (("mscorlib", "2.0.0.1"), ("System.Core", "3.5.0.0"))},
+        {"target_framework": ".NETFramework,Version=v3.0"},
+    ],
+)
+def test_build_rejects_wrong_metadata(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+    change,
+):
+    _fake_build_process(monkeypatch, [b"same", b"same"])
+    monkeypatch.setattr(
+        "ssr_env.oracle_compat.inspect_assembly",
+        lambda path, inspector: replace(_legacy_metadata(), **change),
+    )
+    root = Path(__file__).resolve().parents[1]
+    with pytest.raises(CompatError, match="legacy metadata"):
+        build_compat_preloader(
+            source=pinned_recursive_checkout,
+            sdk=root / "data/oracle/compat/dotnet-8.0.419/dotnet",
+            feed_dir=root / "data/oracle/compat/fetch-acceptance",
+            output_dir=tmp_path / "builds",
+            repo_root=root,
+        )
+    assert not (tmp_path / "builds/current.json").exists()
+
+
+def test_build_timeout_preserves_log(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+):
+    timeout = subprocess.TimeoutExpired(
+        cmd=["dotnet", "publish"],
+        timeout=300,
+        output=b"restore completed\npublish still running\n",
+        stderr=b"last diagnostic\n",
+    )
+    with pytest.raises(CompatError, match="BepInEx build timed out"):
+        _build_with_fake_process(
+            monkeypatch,
+            pinned_recursive_checkout,
+            tmp_path,
+            [timeout],
+        )
+    logs = list((tmp_path / "builds/.work").rglob("*.log"))
+    assert logs
+    assert b"publish still running" in b"".join(path.read_bytes() for path in logs)
+    assert b"last diagnostic" in b"".join(path.read_bytes() for path in logs)
+    assert not (tmp_path / "builds/current.json").exists()
+
+
+def test_build_publishes_only_after_all_checks(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+):
+    result = _build_with_fake_process(
+        monkeypatch,
+        pinned_recursive_checkout,
+        tmp_path,
+        [b"same deterministic preloader", b"same deterministic preloader"],
+    )
+    assert result.dll.parent.name == result.patched_sha256
+    assert result.dll.read_bytes() == b"same deterministic preloader"
+    assert result.provenance.read_bytes() == canonical_json(
+        asdict(result.provenance_data)
+    )
+    current = json.loads((tmp_path / "builds/current.json").read_bytes())
+    assert current == {
+        "dll": f"{result.patched_sha256}/BepInEx.Preloader.dll",
+        "patched_sha256": result.patched_sha256,
+        "provenance": f"{result.patched_sha256}/provenance.json",
+    }
+
+
+def test_build_restore_uses_locked_mode_without_unsupported_framework_switch(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+):
+    state = _fake_build_process(monkeypatch, [b"same", b"same"])
+    root = Path(__file__).resolve().parents[1]
+    build_compat_preloader(
+        source=pinned_recursive_checkout,
+        sdk=root / "data/oracle/compat/dotnet-8.0.419/dotnet",
+        feed_dir=root / "data/oracle/compat/fetch-acceptance",
+        output_dir=tmp_path / "builds",
+        repo_root=root,
+    )
+    restores = [
+        command
+        for command in state["commands"]
+        if "restore" in command
+        and any(item.endswith("BepInEx.Preloader.csproj") for item in command)
+    ]
+    assert len(restores) == 2
+    assert all("--locked-mode" in command for command in restores)
+    assert all("--framework" not in command for command in restores)
+    assert all(
+        "-p:RestoreBuildInParallel=false" in command for command in restores
+    )
+    publishes = [
+        command
+        for command in state["commands"]
+        if "publish" in command
+        and any(item.endswith("BepInEx.Preloader.csproj") for item in command)
+    ]
+    assert len(publishes) == 2
+    assert all("-p:BuildInParallel=false" in command for command in publishes)
+
+
+def test_build_cli_routes_exact_paths(compat_cli, monkeypatch, tmp_path, capsys):
+    digest = "a" * 64
+    metadata = _legacy_metadata()
+    provenance_data = BuildProvenance(
+        schema_version=1,
+        source_commit="b" * 40,
+        patch_sha256="c" * 64,
+        toolchain_lock_sha256="d" * 64,
+        dotnet_sdk_version="8.0.419",
+        dependency_lock_sha256="e" * 64,
+        build_target="BepInEx.Preloader/BepInEx.Preloader.csproj",
+        official_preloader_sha256="f" * 64,
+        patched_preloader_sha256=digest,
+    )
+    expected = BuildResult(
+        dll=tmp_path / digest / "BepInEx.Preloader.dll",
+        provenance=tmp_path / digest / "provenance.json",
+        patched_sha256=digest,
+        metadata=metadata,
+        provenance_data=provenance_data,
+    )
+    observed = {}
+
+    def fake_build(**arguments):
+        observed.update(arguments)
+        return expected
+
+    monkeypatch.setattr(compat_cli, "build_compat_preloader", fake_build)
+    assert compat_cli.main(
+        [
+            "build",
+            "--source",
+            "source",
+            "--sdk",
+            "sdk",
+            "--feed-dir",
+            "feed",
+            "--output-dir",
+            "output",
+        ]
+    ) == 0
+    assert observed == {
+        "source": Path("source"),
+        "sdk": Path("sdk"),
+        "feed_dir": Path("feed"),
+        "output_dir": Path("output"),
+        "repo_root": compat_cli._repo_root(),
+    }
+    assert json.loads(capsys.readouterr().out)["patched_sha256"] == digest

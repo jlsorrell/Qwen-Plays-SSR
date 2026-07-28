@@ -16,7 +16,9 @@ from pathlib import Path
 
 from ssr_env.oracle_compat import (
     CompatError,
+    build_compat_preloader,
     canonical_json,
+    inspect_assembly,
     load_toolchain,
     nuget_lock_tree_sha256,
 )
@@ -223,12 +225,50 @@ def main(argv: list[str] | None = None) -> int:
     for command in ("fetch-packages", "lock"):
         subparser = commands.add_parser(command)
         subparser.add_argument("--feed-dir", type=Path, required=True)
+    inspect_parser = commands.add_parser("inspect")
+    inspect_parser.add_argument("--assembly", type=Path, required=True)
+    inspect_parser.add_argument("--inspector", type=Path, required=True)
+    build_parser = commands.add_parser("build")
+    build_parser.add_argument("--source", type=Path, required=True)
+    build_parser.add_argument("--sdk", type=Path, required=True)
+    build_parser.add_argument("--feed-dir", type=Path, required=True)
+    build_parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "fetch-packages":
             fetch_packages(_repo_root(), args.feed_dir)
-        else:
+        elif args.command == "lock":
             lock_packages(_repo_root(), args.feed_dir)
+        elif args.command == "inspect":
+            metadata = inspect_assembly(args.assembly, args.inspector)
+            sys.stdout.write(
+                canonical_json(
+                    {
+                        "assembly_name": metadata.name,
+                        "assembly_version": metadata.version,
+                        "metadata_version": metadata.metadata_version,
+                        "references": dict(metadata.references),
+                        "target_framework": metadata.target_framework,
+                    }
+                ).decode("utf-8")
+            )
+        else:
+            result = build_compat_preloader(
+                source=args.source,
+                sdk=args.sdk,
+                feed_dir=args.feed_dir,
+                output_dir=args.output_dir,
+                repo_root=_repo_root(),
+            )
+            sys.stdout.write(
+                canonical_json(
+                    {
+                        "dll": str(result.dll),
+                        "patched_sha256": result.patched_sha256,
+                        "provenance": str(result.provenance),
+                    }
+                ).decode("utf-8")
+            )
     except CompatError as exc:
         parser.exit(1, f"error: {exc}\n")
     return 0
