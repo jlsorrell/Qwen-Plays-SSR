@@ -443,3 +443,18 @@ external SHA-256:      5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42
 The scope expansion to `oracle/compat/toolchain.json` and
 `oracle/compat/trust.json` was explicitly authorized after the environment-only
 isolation proved ineffective.
+
+Post-commit verification of `f448b95` passed:
+
+```text
+65 passed in 30.94s
+```
+
+Fresh committed-lock builds then ran once below the controller worktree at
+`data/oracle/compat/builds-round1b-inrepo` and once externally at
+`/private/tmp/ssr-task4-round1b-external`. All four internal `build-a` and
+`build-b` DLLs were byte-identical at `5a777c72...4816`. The two canonical
+provenance files were also byte-identical and recorded toolchain lock
+`cebe2e9b...c13d8`. The game assembly remained
+`886660b5...1c564`, `git diff --check` passed, and the ignored in-repository
+acceptance output introduced no stageable generated file.
