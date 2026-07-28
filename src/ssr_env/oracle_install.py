@@ -66,6 +66,11 @@ EXPECTED_OFFICIAL_PRELOADER_SHA256 = (
 _PRELOADER_BACKUP_ROOT = "BepInEx/.ssr-oracle-backup"
 _PRELOADER_COMPAT_ROOT = "BepInEx/.ssr-oracle-compat"
 _HASH_LENGTH = 64
+_RESTORE_SOURCE_COMMIT = "57f1fb859bd4d0264cd2a59074d0e96c6a492a33"
+_RESTORE_DOTNET_SDK_VERSION = "8.0.419"
+_RESTORE_BUILD_TARGET = (
+    "BepInEx.Preloader/BepInEx.Preloader.csproj@framework=net35"
+)
 
 
 class InstallError(RuntimeError):
@@ -184,6 +189,16 @@ class _CompatRecovery:
     backup: _DirectoryHandle
     provenance: _DirectoryHandle
     cleanup: _DirectoryHandle
+    backup_moved: bool = False
+    provenance_moved: bool = False
+    active_swapped: bool = False
+    active_preserved: bool = False
+    active_preserved_name: str = ""
+    manifest_swapped: bool = False
+    backup_directory_moved: bool = False
+    compat_directory_moved: bool = False
+    manifest_preserved: bool = False
+    manifest_preserved_name: str = ""
 
 
 def _sha256_file(path: Path) -> str:
@@ -1555,8 +1570,2360 @@ def _deploy_preloader_checkpoint(boundary: str) -> None:
 
 
 def _compat_recovery_name() -> str:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    observed = datetime.now(UTC)
+    timestamp = f"{observed:%Y%m%dT%H%M%SZ}"
     return f"{timestamp}-{secrets.token_hex(16)}"
+
+
+def _restore_preloader_checkpoint(boundary: str) -> None:
+    del boundary
+
+
+def _restore_open_child_directory(
+    parent: _DirectoryHandle,
+    name: str,
+    description: str,
+) -> _DirectoryHandle:
+    try:
+        descriptor = os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent.fd)
+    except OSError as exc:
+        raise InstallError(
+            f"cannot open {description} without following symlinks: {exc}"
+        ) from exc
+    try:
+        observed = os.fstat(descriptor)
+    except OSError as exc:
+        os.close(descriptor)
+        raise InstallError(f"cannot inspect {description}: {exc}") from exc
+    if not stat.S_ISDIR(observed.st_mode):
+        os.close(descriptor)
+        raise InstallError(f"{description} is not a directory")
+    return _DirectoryHandle(
+        descriptor,
+        observed.st_dev,
+        observed.st_ino,
+        description,
+    )
+
+
+def _restore_open_absolute_directory(
+    path: Path,
+    description: str,
+) -> _DirectoryHandle:
+    parts = Path(path).parts
+    if not parts or parts[0] != "/":
+        raise InstallError(f"{description} must be an absolute path")
+    descriptor = -1
+    current: _DirectoryHandle | None = None
+    try:
+        descriptor = os.open("/", _DIRECTORY_OPEN_FLAGS)
+        observed = os.fstat(descriptor)
+        current = _DirectoryHandle(
+            descriptor,
+            observed.st_dev,
+            observed.st_ino,
+            f"{description} filesystem root",
+        )
+        descriptor = -1
+        for part in parts[1:]:
+            if part in {"", ".", ".."}:
+                raise InstallError(f"{description} has an unsafe component")
+            following = _restore_open_child_directory(
+                current, part, description
+            )
+            os.close(current.fd)
+            current = following
+        return current
+    except Exception:
+        if current is not None:
+            os.close(current.fd)
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+
+
+def _restore_verify_named_directory(
+    parent: _DirectoryHandle,
+    name: str,
+    child: _DirectoryHandle,
+) -> None:
+    parent_observed = os.fstat(parent.fd)
+    child_observed = os.fstat(child.fd)
+    named = os.stat(name, dir_fd=parent.fd, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(parent_observed.st_mode)
+        or parent_observed.st_dev != parent.device
+        or parent_observed.st_ino != parent.inode
+        or not stat.S_ISDIR(child_observed.st_mode)
+        or child_observed.st_dev != child.device
+        or child_observed.st_ino != child.inode
+        or not stat.S_ISDIR(named.st_mode)
+        or named.st_dev != child.device
+        or named.st_ino != child.inode
+    ):
+        raise InstallError(f"{child.label} identity changed")
+
+
+def _restore_verify_absolute_directory(
+    path: Path,
+    expected: _DirectoryHandle,
+) -> None:
+    observed = _restore_open_absolute_directory(
+        path, f"revalidate {expected.label}"
+    )
+    try:
+        if (
+            observed.device != expected.device
+            or observed.inode != expected.inode
+        ):
+            raise InstallError(f"{expected.label} pathname detached")
+    finally:
+        os.close(observed.fd)
+
+
+def _restore_read_stable_file(
+    parent: _DirectoryHandle,
+    name: str,
+    description: str,
+) -> tuple[int, _StableFileSnapshot]:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=parent.fd,
+        )
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise InstallError(f"{description} is not a safe regular file")
+        payload = b""
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            payload += chunk
+        after = os.fstat(descriptor)
+        named = os.stat(name, dir_fd=parent.fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_size != after.st_size
+            or before.st_mode & 0o7777 != after.st_mode & 0o7777
+            or after.st_dev != named.st_dev
+            or after.st_ino != named.st_ino
+            or after.st_size != named.st_size
+            or after.st_mode & 0o7777 != named.st_mode & 0o7777
+            or len(payload) != after.st_size
+        ):
+            raise InstallError(f"{description} changed while being read")
+        return (
+            descriptor,
+            _StableFileSnapshot(
+                payload,
+                after.st_mode & 0o7777,
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+            ),
+        )
+    except OSError as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise InstallError(
+            f"{description} is not a safe regular file: {exc}"
+        ) from exc
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+
+
+def _restore_revalidate_stable_file(
+    parent: _DirectoryHandle,
+    name: str,
+    descriptor: int,
+    expected: _StableFileSnapshot,
+    description: str,
+) -> None:
+    retained = os.fstat(descriptor)
+    named = os.stat(name, dir_fd=parent.fd, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(retained.st_mode)
+        or not stat.S_ISREG(named.st_mode)
+        or retained.st_dev != expected.device
+        or retained.st_ino != expected.inode
+        or retained.st_size != expected.size
+        or retained.st_mode & 0o7777 != expected.mode
+        or named.st_dev != expected.device
+        or named.st_ino != expected.inode
+        or named.st_size != expected.size
+        or named.st_mode & 0o7777 != expected.mode
+    ):
+        raise InstallError(f"{description} changed after validation")
+    reopened, observed = _restore_read_stable_file(parent, name, description)
+    try:
+        if observed != expected:
+            raise InstallError(f"{description} payload changed after validation")
+    finally:
+        os.close(reopened)
+
+
+def _restore_directory_has_only(
+    directory: _DirectoryHandle,
+    expected_name: str,
+) -> bool:
+    count = 0
+    matched = False
+    with os.scandir(directory.fd) as entries:
+        for entry in entries:
+            count += 1
+            if entry.name == expected_name:
+                matched = True
+    return count == 1 and matched
+
+
+def _restore_is_lower_sha256(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    for character in value:
+        if character not in "0123456789abcdef":
+            return False
+    return True
+
+
+def _restore_safe_manifest_path(relative_path: str) -> tuple[str, ...]:
+    if (
+        not relative_path
+        or relative_path[0] == "/"
+        or "\x00" in relative_path
+        or "\\" in relative_path
+    ):
+        raise InstallError("install manifest contains an unsafe path")
+    parts = Path(relative_path).parts
+    if not parts or parts[0] not in ALLOWED_TOP_LEVEL:
+        raise InstallError("install manifest contains an unapproved path")
+    for part in parts:
+        if part in {"", ".", ".."}:
+            raise InstallError("install manifest contains an unsafe path")
+    canonical = ""
+    for part in parts:
+        canonical = part if not canonical else canonical + "/" + part
+    if canonical != relative_path:
+        raise InstallError("install manifest contains a noncanonical path")
+    if parts[0] != "BepInEx" and len(parts) != 1:
+        raise InstallError("install manifest contains an unapproved path")
+    return parts
+
+
+def _restore_revalidate_preflight_sources(
+    managed: _DirectoryHandle,
+    assembly_descriptor: int,
+    assembly: _StableFileSnapshot,
+    root: _DirectoryHandle,
+    manifest_descriptor: int,
+    manifest_snapshot: _StableFileSnapshot,
+    core: _DirectoryHandle,
+    active_descriptor: int,
+    active: _StableFileSnapshot,
+    bep_in_ex: _DirectoryHandle,
+    backup_directory: _DirectoryHandle,
+    backup_descriptor: int,
+    backup: _StableFileSnapshot,
+    compat_directory: _DirectoryHandle,
+    provenance_descriptor: int,
+    provenance: _StableFileSnapshot,
+) -> None:
+    _restore_revalidate_stable_file(
+        managed,
+        "Assembly-CSharp.dll",
+        assembly_descriptor,
+        assembly,
+        "game assembly",
+    )
+    _restore_revalidate_stable_file(
+        root,
+        MANIFEST_NAME,
+        manifest_descriptor,
+        manifest_snapshot,
+        "install manifest",
+    )
+    _restore_revalidate_stable_file(
+        core,
+        "BepInEx.Preloader.dll",
+        active_descriptor,
+        active,
+        "active preloader",
+    )
+    _restore_revalidate_stable_file(
+        backup_directory,
+        "BepInEx.Preloader.dll",
+        backup_descriptor,
+        backup,
+        "official preloader backup",
+    )
+    _restore_revalidate_stable_file(
+        compat_directory,
+        "preloader-provenance.json",
+        provenance_descriptor,
+        provenance,
+        "preloader provenance",
+    )
+    _restore_verify_named_directory(
+        bep_in_ex, ".ssr-oracle-backup", backup_directory
+    )
+    _restore_verify_named_directory(
+        bep_in_ex, ".ssr-oracle-compat", compat_directory
+    )
+    if not _restore_directory_has_only(
+        backup_directory, "BepInEx.Preloader.dll"
+    ) or not _restore_directory_has_only(
+        compat_directory, "preloader-provenance.json"
+    ):
+        raise InstallError("compatibility directories changed after validation")
+
+
+def _restore_manifest_and_snapshots(
+    game_root: Path,
+    repo_root: Path | None,
+) -> tuple[
+    Path,
+    InstallManifest,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    int,
+    _StableFileSnapshot,
+    int,
+    _StableFileSnapshot,
+    int,
+    _StableFileSnapshot,
+    int,
+    _StableFileSnapshot,
+    int,
+    _StableFileSnapshot,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    _DirectoryHandle,
+    _DirectoryHandle,
+]:
+    game_path = Path(game_root)
+    root_descriptor = -1
+    assembly_descriptor = -1
+    manifest_descriptor = -1
+    active_descriptor = -1
+    backup_descriptor = -1
+    provenance_descriptor = -1
+    root: _DirectoryHandle | None = None
+    bep_in_ex: _DirectoryHandle | None = None
+    core: _DirectoryHandle | None = None
+    backup_directory: _DirectoryHandle | None = None
+    compat_directory: _DirectoryHandle | None = None
+    app: _DirectoryHandle | None = None
+    contents: _DirectoryHandle | None = None
+    resources: _DirectoryHandle | None = None
+    data: _DirectoryHandle | None = None
+    managed: _DirectoryHandle | None = None
+    try:
+        root = _restore_open_absolute_directory(
+            game_path,
+            "game root",
+        )
+
+        app = _restore_open_child_directory(root, "Sausage.app", "game app")
+        contents = _restore_open_child_directory(app, "Contents", "app Contents")
+        resources = _restore_open_child_directory(
+            contents, "Resources", "app Resources"
+        )
+        data = _restore_open_child_directory(resources, "Data", "game Data")
+        managed = _restore_open_child_directory(
+            data, "Managed", "game Managed"
+        )
+        assembly_descriptor, assembly = _restore_read_stable_file(
+            managed, "Assembly-CSharp.dll", "game assembly"
+        )
+        assembly_hash = sha256(assembly.payload).hexdigest()
+        if assembly_hash != EXPECTED_ASSEMBLY_SHA256:
+            raise InstallError("unsupported game assembly")
+
+        manifest_descriptor, manifest_snapshot = _restore_read_stable_file(
+            root, MANIFEST_NAME, "install manifest"
+        )
+        try:
+            decoded = json.loads(manifest_snapshot.payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise InstallError(f"cannot parse install manifest: {exc}") from exc
+        if (
+            not isinstance(decoded, dict)
+            or set(decoded)
+            != {
+                "schema_version",
+                "game_assembly_sha256",
+                "runtime_archive_sha256",
+                "entries",
+            }
+            or not isinstance(decoded["schema_version"], int)
+            or isinstance(decoded["schema_version"], bool)
+            or decoded["schema_version"] != 1
+            or decoded["game_assembly_sha256"] != assembly_hash
+            or decoded["runtime_archive_sha256"]
+            != EXPECTED_RUNTIME_ARCHIVE_SHA256
+            or not isinstance(decoded["entries"], list)
+        ):
+            raise InstallError("install manifest does not match the game")
+
+        entries: tuple[ManifestEntry, ...] = ()
+        seen_paths: tuple[str, ...] = ()
+        directory_paths: tuple[str, ...] = ()
+        active_entry_hash: str | None = None
+        backup_entry_hash: str | None = None
+        provenance_entry_hash: str | None = None
+        backup_root_count = 0
+        compat_root_count = 0
+        for raw_entry in decoded["entries"]:
+            if (
+                not isinstance(raw_entry, dict)
+                or set(raw_entry) != {"relative_path", "kind", "sha256"}
+                or not isinstance(raw_entry["relative_path"], str)
+                or not isinstance(raw_entry["kind"], str)
+            ):
+                raise InstallError("malformed install manifest entry")
+            relative_path = raw_entry["relative_path"]
+            kind = raw_entry["kind"]
+            entry_hash = raw_entry["sha256"]
+            parts = _restore_safe_manifest_path(relative_path)
+            if relative_path in seen_paths:
+                raise InstallError("install manifest contains a duplicate path")
+            seen_paths += (relative_path,)
+            if kind not in {"file", "directory"}:
+                raise InstallError("malformed install manifest entry kind")
+            if kind == "file" and not _restore_is_lower_sha256(entry_hash):
+                raise InstallError("malformed install manifest file hash")
+            if kind == "directory" and entry_hash is not None:
+                raise InstallError("malformed install manifest directory hash")
+            if relative_path == "BepInEx" and kind != "directory":
+                raise InstallError("BepInEx manifest root is not a directory")
+            if parts[0] != "BepInEx" and kind != "file":
+                raise InstallError("top-level runtime entry is not a file")
+            if kind == "directory":
+                directory_paths += (relative_path,)
+            entries += (
+                ManifestEntry(
+                    relative_path,
+                    kind,
+                    entry_hash if isinstance(entry_hash, str) else None,
+                ),
+            )
+            if relative_path == PRELOADER_RELATIVE_PATH and kind == "file":
+                active_entry_hash = entry_hash
+            if (
+                relative_path == PRELOADER_BACKUP_RELATIVE_PATH
+                and kind == "file"
+            ):
+                backup_entry_hash = entry_hash
+            if (
+                relative_path == PRELOADER_PROVENANCE_RELATIVE_PATH
+                and kind == "file"
+            ):
+                provenance_entry_hash = entry_hash
+            if (
+                relative_path == _PRELOADER_BACKUP_ROOT
+                or relative_path[: len(_PRELOADER_BACKUP_ROOT) + 1]
+                == _PRELOADER_BACKUP_ROOT + "/"
+            ):
+                backup_root_count += 1
+            if (
+                relative_path == _PRELOADER_COMPAT_ROOT
+                or relative_path[: len(_PRELOADER_COMPAT_ROOT) + 1]
+                == _PRELOADER_COMPAT_ROOT + "/"
+            ):
+                compat_root_count += 1
+
+        for entry in entries:
+            parts = _restore_safe_manifest_path(entry.relative_path)
+            prefix = ""
+            index = 0
+            for part in parts:
+                prefix = part if not prefix else prefix + "/" + part
+                index += 1
+                if index < len(parts) and prefix not in directory_paths:
+                    raise InstallError(
+                        "install manifest path lacks a directory parent"
+                    )
+        for required_file in REQUIRED_ARCHIVE_FILES:
+            found_required_file = False
+            for entry in entries:
+                if (
+                    entry.relative_path == required_file
+                    and entry.kind == "file"
+                ):
+                    found_required_file = True
+            if not found_required_file:
+                raise InstallError(
+                    "install manifest lacks required runtime file ownership"
+                )
+        for required_directory in REQUIRED_RUNTIME_DIRECTORIES:
+            found_required_directory = False
+            for entry in entries:
+                if (
+                    entry.relative_path == required_directory
+                    and entry.kind == "directory"
+                ):
+                    found_required_directory = True
+            if not found_required_directory:
+                raise InstallError(
+                    "install manifest lacks required runtime directory ownership"
+                )
+
+        manifest = InstallManifest(
+            1,
+            decoded["game_assembly_sha256"],
+            decoded["runtime_archive_sha256"],
+            entries,
+        )
+        bep_in_ex = _restore_open_child_directory(
+            root, "BepInEx", "live BepInEx"
+        )
+        core = _restore_open_child_directory(
+            bep_in_ex, "core", "live preloader parent"
+        )
+        active_descriptor, active = _restore_read_stable_file(
+            core, "BepInEx.Preloader.dll", "active preloader"
+        )
+        active_hash = sha256(active.payload).hexdigest()
+        if (
+            active_hash == EXPECTED_OFFICIAL_PRELOADER_SHA256
+            and backup_root_count == 0
+            and compat_root_count == 0
+        ):
+            raise InstallError("preloader compatibility is not patched")
+        if (
+            active_hash != EXPECTED_PATCHED_PRELOADER_SHA256
+            or active_entry_hash != active_hash
+            or backup_root_count != 2
+            or compat_root_count != 2
+        ):
+            raise InstallError("preloader compatibility state is invalid")
+
+        backup_directory = _restore_open_child_directory(
+            bep_in_ex,
+            ".ssr-oracle-backup",
+            "live compatibility backup directory",
+        )
+        compat_directory = _restore_open_child_directory(
+            bep_in_ex,
+            ".ssr-oracle-compat",
+            "live compatibility provenance directory",
+        )
+        if not _restore_directory_has_only(
+            backup_directory, "BepInEx.Preloader.dll"
+        ) or not _restore_directory_has_only(
+            compat_directory, "preloader-provenance.json"
+        ):
+            raise InstallError("compatibility directories are not exactly owned")
+        backup_descriptor, backup = _restore_read_stable_file(
+            backup_directory,
+            "BepInEx.Preloader.dll",
+            "official preloader backup",
+        )
+        provenance_descriptor, provenance = _restore_read_stable_file(
+            compat_directory,
+            "preloader-provenance.json",
+            "preloader provenance",
+        )
+        backup_hash = sha256(backup.payload).hexdigest()
+        provenance_hash = sha256(provenance.payload).hexdigest()
+        if (
+            backup_hash != EXPECTED_OFFICIAL_PRELOADER_SHA256
+            or backup_entry_hash != backup_hash
+            or provenance_entry_hash != provenance_hash
+        ):
+            raise InstallError("compatibility snapshots do not match manifest")
+        try:
+            provenance_data = json.loads(provenance.payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise InstallError(f"cannot parse preloader provenance: {exc}") from exc
+        if not isinstance(provenance_data, dict):
+            raise InstallError("preloader provenance is malformed")
+        try:
+            trust = load_trust(
+                Path(repo_root)
+                if repo_root is not None
+                else Path(__file__).parents[2]
+            )
+        except (CompatError, OSError) as exc:
+            raise InstallError(f"compatibility trust is invalid: {exc}") from exc
+        if (
+            set(provenance_data)
+            != {
+                "schema_version",
+                "source_commit",
+                "patch_sha256",
+                "toolchain_lock_sha256",
+                "dotnet_sdk_version",
+                "dependency_lock_sha256",
+                "build_target",
+                "official_preloader_sha256",
+                "patched_preloader_sha256",
+            }
+            or provenance_data["schema_version"] != 1
+            or provenance_data["patch_sha256"] != trust.patch_sha256
+            or provenance_data["toolchain_lock_sha256"]
+            != trust.toolchain_sha256
+            or provenance_data["dependency_lock_sha256"]
+            != trust.dependencies_sha256
+            or provenance_data["source_commit"] != _RESTORE_SOURCE_COMMIT
+            or provenance_data["dotnet_sdk_version"]
+            != _RESTORE_DOTNET_SDK_VERSION
+            or provenance_data["build_target"] != _RESTORE_BUILD_TARGET
+            or provenance_data["official_preloader_sha256"] != backup_hash
+            or provenance_data["patched_preloader_sha256"] != active_hash
+        ):
+            raise InstallError("preloader provenance does not match trust")
+
+        recovery_kind = "absent"
+        try:
+            recovery_observed = os.stat(
+                ".ssr-oracle-recovery",
+                dir_fd=root.fd,
+                follow_symlinks=False,
+            )
+            if stat.S_ISDIR(recovery_observed.st_mode):
+                recovery_kind = "directory"
+            elif stat.S_ISLNK(recovery_observed.st_mode):
+                recovery_kind = "symlink"
+            else:
+                recovery_kind = "other"
+        except FileNotFoundError:
+            recovery_kind = "absent"
+        except OSError as exc:
+            raise InstallError(f"cannot inspect recovery parent: {exc}") from exc
+        if recovery_kind not in {"absent", "directory"}:
+            raise InstallError("recovery parent is not a safe directory")
+
+        _restore_preloader_checkpoint("restore_before_preflight_revalidation")
+        _restore_revalidate_preflight_sources(
+            managed,
+            assembly_descriptor,
+            assembly,
+            root,
+            manifest_descriptor,
+            manifest_snapshot,
+            core,
+            active_descriptor,
+            active,
+            bep_in_ex,
+            backup_directory,
+            backup_descriptor,
+            backup,
+            compat_directory,
+            provenance_descriptor,
+            provenance,
+        )
+        _restore_preloader_checkpoint("restore_after_preflight_revalidation")
+        _restore_revalidate_preflight_sources(
+            managed,
+            assembly_descriptor,
+            assembly,
+            root,
+            manifest_descriptor,
+            manifest_snapshot,
+            core,
+            active_descriptor,
+            active,
+            bep_in_ex,
+            backup_directory,
+            backup_descriptor,
+            backup,
+            compat_directory,
+            provenance_descriptor,
+            provenance,
+        )
+        return (
+            game_path,
+            manifest,
+            root,
+            bep_in_ex,
+            core,
+            backup_directory,
+            compat_directory,
+            manifest_descriptor,
+            manifest_snapshot,
+            active_descriptor,
+            active,
+            backup_descriptor,
+            backup,
+            provenance_descriptor,
+            provenance,
+            assembly_descriptor,
+            assembly,
+            managed,
+            data,
+            resources,
+            contents,
+            app,
+        )
+    except Exception:
+        if provenance_descriptor >= 0:
+            os.close(provenance_descriptor)
+        if backup_descriptor >= 0:
+            os.close(backup_descriptor)
+        if active_descriptor >= 0:
+            os.close(active_descriptor)
+        if manifest_descriptor >= 0:
+            os.close(manifest_descriptor)
+        if assembly_descriptor >= 0:
+            os.close(assembly_descriptor)
+        if managed is not None:
+            os.close(managed.fd)
+        if data is not None:
+            os.close(data.fd)
+        if resources is not None:
+            os.close(resources.fd)
+        if contents is not None:
+            os.close(contents.fd)
+        if app is not None:
+            os.close(app.fd)
+        if compat_directory is not None:
+            os.close(compat_directory.fd)
+        if backup_directory is not None:
+            os.close(backup_directory.fd)
+        if core is not None:
+            os.close(core.fd)
+        if bep_in_ex is not None:
+            os.close(bep_in_ex.fd)
+        if root is not None:
+            os.close(root.fd)
+        if root_descriptor >= 0:
+            os.close(root_descriptor)
+        raise
+
+
+def _restore_checkpoint_fsync(
+    handle: _DirectoryHandle,
+    before: str,
+    after: str,
+    legacy: str,
+) -> None:
+    _restore_preloader_checkpoint(before)
+    os.fsync(handle.fd)
+    _restore_preloader_checkpoint(after)
+    if legacy:
+        _restore_preloader_checkpoint(legacy)
+
+
+def _restore_create_published_child(
+    parent: _DirectoryHandle,
+    name: str,
+    description: str,
+    create_prefix: str,
+    legacy_prefix: str,
+    standalone_fsync: bool,
+) -> _DirectoryHandle:
+    child: _DirectoryHandle | None = None
+    temporary = f".ssr-oracle-recovery-dir-{secrets.token_hex(16)}"
+    try:
+        _restore_preloader_checkpoint(
+            f"restore_before_{create_prefix}_create"
+        )
+        os.mkdir(name, 0o700, dir_fd=parent.fd)
+        _restore_preloader_checkpoint(
+            f"restore_after_{create_prefix}_create"
+        )
+        _restore_preloader_checkpoint(f"restore_before_{create_prefix}_open")
+        child = _restore_open_child_directory(parent, name, description)
+        _restore_preloader_checkpoint(f"restore_after_{create_prefix}_open")
+        _renameatx(
+            parent,
+            name,
+            parent,
+            temporary,
+            _RENAME_EXCL,
+            f"stage {description} directory",
+        )
+        _renameatx(
+            parent,
+            temporary,
+            parent,
+            name,
+            _RENAME_EXCL,
+            f"publish {description} directory",
+        )
+        _restore_verify_named_directory(parent, name, child)
+        _restore_preloader_checkpoint(f"{legacy_prefix}_mkdir")
+        if standalone_fsync:
+            _restore_checkpoint_fsync(
+                child,
+                f"restore_before_{create_prefix}_fsync",
+                f"restore_after_{create_prefix}_fsync",
+                "",
+            )
+        _restore_checkpoint_fsync(
+            child,
+            f"restore_before_{create_prefix}_child_fsync",
+            f"restore_after_{create_prefix}_child_fsync",
+            f"{legacy_prefix}_child_fsync",
+        )
+        _restore_checkpoint_fsync(
+            parent,
+            f"restore_before_{create_prefix}_parent_fsync",
+            f"restore_after_{create_prefix}_parent_fsync",
+            f"{legacy_prefix}_parent_fsync",
+        )
+        return child
+    except Exception:
+        if child is not None:
+            os.close(child.fd)
+        raise
+
+
+def _restore_allocate_recovery(
+    root: _DirectoryHandle,
+) -> _CompatRecovery:
+    parent: _DirectoryHandle | None = None
+    run: _DirectoryHandle | None = None
+    compat: _DirectoryHandle | None = None
+    bep_in_ex: _DirectoryHandle | None = None
+    backup: _DirectoryHandle | None = None
+    provenance: _DirectoryHandle | None = None
+    cleanup: _DirectoryHandle | None = None
+    parent_created = False
+    run_name = ""
+    try:
+        try:
+            observed = os.stat(
+                ".ssr-oracle-recovery",
+                dir_fd=root.fd,
+                follow_symlinks=False,
+            )
+            parent_exists = stat.S_ISDIR(observed.st_mode)
+        except FileNotFoundError:
+            parent_exists = False
+        if not parent_exists:
+            _restore_preloader_checkpoint(
+                "restore_before_recovery_parent_create"
+            )
+            os.mkdir(".ssr-oracle-recovery", 0o700, dir_fd=root.fd)
+            _restore_preloader_checkpoint(
+                "restore_after_recovery_parent_create"
+            )
+            _restore_preloader_checkpoint("recovery_parent_mkdir")
+            parent_created = True
+        _restore_preloader_checkpoint(
+            "restore_before_recovery_parent_open"
+        )
+        parent = _restore_open_child_directory(
+            root, ".ssr-oracle-recovery", "recovery parent"
+        )
+        _restore_preloader_checkpoint("restore_after_recovery_parent_open")
+        _restore_checkpoint_fsync(
+            root,
+            "restore_before_recovery_parent_fsync",
+            "restore_after_recovery_parent_fsync",
+            "",
+        )
+        _restore_checkpoint_fsync(
+            parent,
+            "restore_before_recovery_parent_child_fsync",
+            "restore_after_recovery_parent_child_fsync",
+            "recovery_parent_child_fsync",
+        )
+        _restore_checkpoint_fsync(
+            root,
+            "restore_before_recovery_parent_parent_fsync",
+            "restore_after_recovery_parent_parent_fsync",
+            "recovery_parent_parent_fsync",
+        )
+
+        temporary = f".ssr-oracle-recovery-run-{secrets.token_hex(16)}"
+        os.mkdir(temporary, 0o700, dir_fd=parent.fd)
+        for _ in range(128):
+            run_name = _compat_recovery_name()
+            _restore_preloader_checkpoint(
+                "restore_before_recovery_run_publish"
+            )
+            try:
+                _renameatx(
+                    parent,
+                    temporary,
+                    parent,
+                    run_name,
+                    _RENAME_EXCL,
+                    "publish compatibility recovery run directory",
+                )
+            except _RenameAtError as exc:
+                if exc.error_number == errno.EEXIST:
+                    continue
+                raise
+            _restore_preloader_checkpoint(
+                "restore_after_recovery_run_publish"
+            )
+            break
+        else:
+            raise InstallError(
+                "cannot allocate an exclusive compatibility recovery run"
+            )
+        _restore_preloader_checkpoint("recovery_run_mkdir")
+        _restore_preloader_checkpoint("restore_before_recovery_run_open")
+        run = _restore_open_child_directory(
+            parent, run_name, "compatibility recovery run"
+        )
+        _restore_preloader_checkpoint("restore_after_recovery_run_open")
+        _restore_checkpoint_fsync(
+            run,
+            "restore_before_recovery_run_fsync",
+            "restore_after_recovery_run_fsync",
+            "",
+        )
+        _restore_checkpoint_fsync(
+            run,
+            "restore_before_recovery_run_child_fsync",
+            "restore_after_recovery_run_child_fsync",
+            "recovery_run_child_fsync",
+        )
+        _restore_checkpoint_fsync(
+            parent,
+            "restore_before_recovery_run_parent_fsync",
+            "restore_after_recovery_run_parent_fsync",
+            "recovery_run_parent_fsync",
+        )
+
+        compat = _restore_create_published_child(
+            run,
+            "compat",
+            "compatibility recovery",
+            "recovery_compat",
+            "recovery_compat",
+            True,
+        )
+        bep_in_ex = _restore_create_published_child(
+            compat,
+            "BepInEx",
+            "recovery BepInEx",
+            "recovery_bepinex",
+            "recovery_bepinex",
+            False,
+        )
+        backup = _restore_create_published_child(
+            bep_in_ex,
+            ".ssr-oracle-backup",
+            "recovery backup directory",
+            "recovery_backup",
+            "recovery_backup_dir",
+            False,
+        )
+        provenance = _restore_create_published_child(
+            bep_in_ex,
+            ".ssr-oracle-compat",
+            "recovery provenance directory",
+            "recovery_provenance",
+            "recovery_provenance_dir",
+            False,
+        )
+        cleanup = _restore_create_published_child(
+            run,
+            "cleanup",
+            "recovery cleanup directory",
+            "recovery_cleanup",
+            "recovery_cleanup_dir",
+            True,
+        )
+        recovery = _CompatRecovery(
+            parent,
+            parent_created,
+            run_name,
+            run,
+            compat,
+            bep_in_ex,
+            backup,
+            provenance,
+            cleanup,
+            False,
+            False,
+            False,
+            False,
+            "",
+            False,
+            False,
+            False,
+            False,
+            "",
+        )
+        _restore_preloader_checkpoint("restore_recovery_graph_pinned")
+        return recovery
+    except Exception as exc:
+        if cleanup is not None:
+            os.close(cleanup.fd)
+        if provenance is not None:
+            os.close(provenance.fd)
+        if backup is not None:
+            os.close(backup.fd)
+        if bep_in_ex is not None:
+            os.close(bep_in_ex.fd)
+        if compat is not None:
+            os.close(compat.fd)
+        if run is not None:
+            os.close(run.fd)
+        if parent is not None:
+            os.close(parent.fd)
+        raise InstallError(
+            f"restore_preloader recovery allocation failed: {exc}"
+        ) from exc
+
+
+def _restore_close_recovery(recovery: _CompatRecovery) -> None:
+    os.close(recovery.cleanup.fd)
+    os.close(recovery.provenance.fd)
+    os.close(recovery.backup.fd)
+    os.close(recovery.bep_in_ex.fd)
+    os.close(recovery.compat.fd)
+    os.close(recovery.run.fd)
+    os.close(recovery.parent.fd)
+
+
+def _restore_close_preflight(
+    preflight: tuple[
+        Path,
+        InstallManifest,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+    ],
+) -> None:
+    os.close(preflight[15])
+    os.close(preflight[13])
+    os.close(preflight[11])
+    os.close(preflight[9])
+    os.close(preflight[7])
+    os.close(preflight[17].fd)
+    os.close(preflight[18].fd)
+    os.close(preflight[19].fd)
+    os.close(preflight[20].fd)
+    os.close(preflight[21].fd)
+    os.close(preflight[6].fd)
+    os.close(preflight[5].fd)
+    os.close(preflight[4].fd)
+    os.close(preflight[3].fd)
+    os.close(preflight[2].fd)
+
+
+def _restore_official_manifest(
+    patched: InstallManifest,
+) -> tuple[InstallManifest, bytes]:
+    ordered: tuple[ManifestEntry, ...] = ()
+    for entry in patched.entries:
+        relative_path = entry.relative_path
+        if (
+            relative_path == _PRELOADER_BACKUP_ROOT
+            or relative_path[: len(_PRELOADER_BACKUP_ROOT) + 1]
+            == _PRELOADER_BACKUP_ROOT + "/"
+            or relative_path == _PRELOADER_COMPAT_ROOT
+            or relative_path[: len(_PRELOADER_COMPAT_ROOT) + 1]
+            == _PRELOADER_COMPAT_ROOT + "/"
+        ):
+            continue
+        candidate = (
+            ManifestEntry(
+                PRELOADER_RELATIVE_PATH,
+                "file",
+                EXPECTED_OFFICIAL_PRELOADER_SHA256,
+            )
+            if relative_path == PRELOADER_RELATIVE_PATH
+            else entry
+        )
+        inserted = False
+        rebuilt: tuple[ManifestEntry, ...] = ()
+        for observed in ordered:
+            if (
+                not inserted
+                and candidate.relative_path < observed.relative_path
+            ):
+                rebuilt += (candidate,)
+                inserted = True
+            rebuilt += (observed,)
+        if not inserted:
+            rebuilt += (candidate,)
+        ordered = rebuilt
+    official = InstallManifest(
+        patched.schema_version,
+        patched.game_assembly_sha256,
+        patched.runtime_archive_sha256,
+        ordered,
+    )
+    raw_entries: tuple[dict[str, object], ...] = ()
+    for entry in ordered:
+        raw_entries += (
+            {
+                "relative_path": entry.relative_path,
+                "kind": entry.kind,
+                "sha256": entry.sha256,
+            },
+        )
+    encoded = json.dumps(
+        {
+            "schema_version": official.schema_version,
+            "game_assembly_sha256": official.game_assembly_sha256,
+            "runtime_archive_sha256": official.runtime_archive_sha256,
+            "entries": raw_entries,
+        },
+        sort_keys=True,
+        indent=2,
+    )
+    return official, bytes(encoded + "\n", "utf-8")
+
+
+def _restore_stage_file(
+    parent: _DirectoryHandle,
+    name: str,
+    payload: bytes,
+    mode: int,
+    prefix: str,
+) -> _StableFileSnapshot:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            mode,
+            dir_fd=parent.fd,
+        )
+        _restore_preloader_checkpoint(f"restore_before_{prefix}_write")
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise InstallError(f"cannot write {prefix}")
+            offset += written
+        _restore_preloader_checkpoint(f"restore_after_{prefix}_write")
+        _restore_preloader_checkpoint(f"restore_before_{prefix}_chmod")
+        os.fchmod(descriptor, mode)
+        _restore_preloader_checkpoint(f"restore_after_{prefix}_chmod")
+        _restore_preloader_checkpoint(f"restore_before_{prefix}_file_fsync")
+        os.fsync(descriptor)
+        _restore_preloader_checkpoint(f"restore_after_{prefix}_file_fsync")
+        observed = os.fstat(descriptor)
+        return _StableFileSnapshot(
+            payload,
+            observed.st_mode & 0o7777,
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_size,
+        )
+    except OSError as exc:
+        raise InstallError(f"cannot stage {prefix}: {exc}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _restore_sync_rename_parents(
+    source_parent: _DirectoryHandle,
+    destination_parent: _DirectoryHandle,
+    prefix: str,
+) -> None:
+    _restore_checkpoint_fsync(
+        source_parent,
+        f"restore_before_{prefix}_source_parent_fsync",
+        f"restore_after_{prefix}_source_parent_fsync",
+        "",
+    )
+    _restore_checkpoint_fsync(
+        destination_parent,
+        f"restore_before_{prefix}_destination_parent_fsync",
+        f"restore_after_{prefix}_destination_parent_fsync",
+        "",
+    )
+
+
+def _restore_sync_rollback_parents(
+    source_parent: _DirectoryHandle,
+    destination_parent: _DirectoryHandle,
+    prefix: str,
+) -> None:
+    _restore_checkpoint_fsync(
+        source_parent,
+        f"restore_rollback_before_{prefix}_source_parent_fsync",
+        f"restore_rollback_after_{prefix}_source_parent_fsync",
+        "",
+    )
+    _restore_checkpoint_fsync(
+        destination_parent,
+        f"restore_rollback_before_{prefix}_destination_parent_fsync",
+        f"restore_rollback_after_{prefix}_destination_parent_fsync",
+        "",
+    )
+
+
+def _restore_move_live_file(
+    source_parent: _DirectoryHandle,
+    source_parent_parent: _DirectoryHandle,
+    source_parent_name: str,
+    source_name: str,
+    source_descriptor: int,
+    expected: _StableFileSnapshot,
+    destination_parent: _DirectoryHandle,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_verify_named_directory(
+        source_parent_parent, source_parent_name, source_parent
+    )
+    _restore_revalidate_stable_file(
+        source_parent,
+        source_name,
+        source_descriptor,
+        expected,
+        prefix,
+    )
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_parent_replacement"
+    )
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_source_substitution"
+    )
+    _restore_preloader_checkpoint(f"restore_before_{prefix}_move")
+    _renameatx(
+        source_parent,
+        source_name,
+        destination_parent,
+        source_name,
+        _RENAME_EXCL,
+        f"move restore {prefix} to recovery",
+    )
+    if prefix == "backup":
+        recovery.backup_moved = True
+    else:
+        recovery.provenance_moved = True
+    _restore_preloader_checkpoint(f"restore_after_{prefix}_move")
+    _restore_preloader_checkpoint(f"restore_before_{prefix}_reopen")
+    reopened, observed = _restore_read_stable_file(
+        destination_parent, source_name, f"recovered {prefix}"
+    )
+    _restore_preloader_checkpoint(f"restore_after_{prefix}_reopen")
+    try:
+        _restore_preloader_checkpoint(
+            f"restore_before_{prefix}_snapshot_validation"
+        )
+        _restore_revalidate_stable_file(
+            destination_parent,
+            source_name,
+            reopened,
+            observed,
+            f"recovered {prefix}",
+        )
+        if observed != expected:
+            _renameatx(
+                destination_parent,
+                source_name,
+                source_parent,
+                source_name,
+                _RENAME_EXCL,
+                f"restore unexpected recovered {prefix}",
+            )
+            _restore_sync_rename_parents(
+                destination_parent,
+                source_parent,
+                f"{prefix}_mismatch_restore",
+            )
+            if prefix == "backup":
+                recovery.backup_moved = False
+            else:
+                recovery.provenance_moved = False
+            raise InstallError(f"{prefix} source changed during move")
+        _restore_preloader_checkpoint(
+            f"restore_after_{prefix}_snapshot_validation"
+        )
+    finally:
+        os.close(reopened)
+    _restore_sync_rename_parents(
+        source_parent, destination_parent, prefix
+    )
+
+
+def _restore_validated_swap(
+    parent: _DirectoryHandle,
+    cleanup: _DirectoryHandle,
+    live_name: str,
+    staging_name: str,
+    retained_live_descriptor: int,
+    expected_live: _StableFileSnapshot,
+    expected_staging: _StableFileSnapshot,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_revalidate_stable_file(
+        parent,
+        live_name,
+        retained_live_descriptor,
+        expected_live,
+        prefix,
+    )
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_parent_replacement"
+    )
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_source_substitution"
+    )
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_live_leaf_substitution"
+    )
+    _restore_preloader_checkpoint(f"restore_before_{prefix}_swap")
+    _renameatx(
+        parent,
+        staging_name,
+        parent,
+        live_name,
+        _RENAME_SWAP,
+        f"swap official restore {prefix}",
+    )
+    if prefix == "active":
+        recovery.active_swapped = True
+    else:
+        recovery.manifest_swapped = True
+    _restore_preloader_checkpoint(f"restore_after_{prefix}_swap")
+    displaced = -1
+    try:
+        _restore_preloader_checkpoint(
+            f"restore_before_{prefix}_displaced_validation"
+        )
+        displaced, observed = _restore_read_stable_file(
+            parent, staging_name, f"displaced {prefix}"
+        )
+        _restore_revalidate_stable_file(
+            parent,
+            staging_name,
+            displaced,
+            observed,
+            f"displaced {prefix}",
+        )
+        live_descriptor, live_observed = _restore_read_stable_file(
+            parent, live_name, f"official {prefix}"
+        )
+        os.close(live_descriptor)
+        if observed != expected_live or live_observed != expected_staging:
+            _restore_preloader_checkpoint(
+                f"restore_before_{prefix}_swap_back"
+            )
+            _renameatx(
+                parent,
+                staging_name,
+                parent,
+                live_name,
+                _RENAME_SWAP,
+                f"swap back changed restore {prefix}",
+            )
+            if prefix == "active":
+                recovery.active_swapped = False
+            else:
+                recovery.manifest_swapped = False
+            _restore_preloader_checkpoint(
+                f"restore_after_{prefix}_swap_back"
+            )
+            _restore_preserve_expected_if_present(
+                parent,
+                staging_name,
+                expected_staging,
+                cleanup,
+                f"{prefix}_mismatch_preservation",
+                recovery,
+            )
+            raise InstallError(f"displaced {prefix} changed")
+        _restore_preloader_checkpoint(
+            f"restore_after_{prefix}_displaced_validation"
+        )
+    finally:
+        if displaced >= 0:
+            os.close(displaced)
+    _restore_checkpoint_fsync(
+        parent,
+        f"restore_before_{prefix}_staging_parent_fsync",
+        f"restore_after_{prefix}_staging_parent_fsync",
+        "",
+    )
+    _restore_checkpoint_fsync(
+        parent,
+        f"restore_before_{prefix}_live_parent_fsync",
+        f"restore_after_{prefix}_live_parent_fsync",
+        "",
+    )
+
+
+def _restore_move_live_directory(
+    bep_in_ex: _DirectoryHandle,
+    source_name: str,
+    source: _DirectoryHandle,
+    cleanup: _DirectoryHandle,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_verify_named_directory(bep_in_ex, source_name, source)
+    if not _restore_directory_has_only_empty(source):
+        raise InstallError(f"{prefix} is not empty before recovery")
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_parent_replacement"
+    )
+    _restore_preloader_checkpoint(
+        f"restore_before_{prefix}_source_substitution"
+    )
+    _restore_preloader_checkpoint(f"restore_before_{prefix}_move")
+    _renameatx(
+        bep_in_ex,
+        source_name,
+        cleanup,
+        source_name,
+        _RENAME_EXCL,
+        f"move restore {prefix} to cleanup",
+    )
+    if prefix == "backup_directory":
+        recovery.backup_directory_moved = True
+    else:
+        recovery.compat_directory_moved = True
+    _restore_preloader_checkpoint(f"restore_after_{prefix}_move")
+    _restore_preloader_checkpoint(f"restore_before_{prefix}_reopen")
+    reopened = _restore_open_child_directory(
+        cleanup, source_name, f"recovered {prefix}"
+    )
+    _restore_preloader_checkpoint(f"restore_after_{prefix}_reopen")
+    try:
+        _restore_preloader_checkpoint(
+            f"restore_before_{prefix}_validation"
+        )
+        _restore_verify_named_directory(cleanup, source_name, reopened)
+        if (
+            reopened.device != source.device
+            or reopened.inode != source.inode
+            or not _restore_directory_has_only_empty(reopened)
+        ):
+            _restore_require_absent(
+                bep_in_ex, source_name, f"{prefix} mismatch restore"
+            )
+            _renameatx(
+                cleanup,
+                source_name,
+                bep_in_ex,
+                source_name,
+                _RENAME_EXCL,
+                f"restore unexpected recovered {prefix}",
+            )
+            if prefix == "backup_directory":
+                recovery.backup_directory_moved = False
+            else:
+                recovery.compat_directory_moved = False
+            _restore_verify_named_directory(
+                bep_in_ex, source_name, reopened
+            )
+            _restore_sync_rename_parents(
+                cleanup, bep_in_ex, f"{prefix}_mismatch_restore"
+            )
+            raise InstallError(f"{prefix} changed during recovery")
+        _restore_preloader_checkpoint(
+            f"restore_after_{prefix}_validation"
+        )
+    finally:
+        os.close(reopened.fd)
+    _restore_sync_rename_parents(bep_in_ex, cleanup, prefix)
+
+
+def _restore_directory_has_only_empty(directory: _DirectoryHandle) -> bool:
+    count = 0
+    with os.scandir(directory.fd) as entries:
+        for _ in entries:
+            count += 1
+    return count == 0
+
+
+def _restore_preserve_file(
+    source_parent: _DirectoryHandle,
+    source_name: str,
+    cleanup: _DirectoryHandle,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> str:
+    destination = f"file-{secrets.token_hex(16)}"
+    if prefix == "cleanup_preservation":
+        recovery.active_preserved_name = destination
+    elif prefix == "displaced_preservation":
+        recovery.manifest_preserved_name = destination
+    _restore_preloader_checkpoint(f"restore_before_{prefix}_move")
+    _renameatx(
+        source_parent,
+        source_name,
+        cleanup,
+        destination,
+        _RENAME_EXCL,
+        f"preserve restore {prefix}",
+    )
+    if prefix == "cleanup_preservation":
+        recovery.active_preserved = True
+    elif prefix == "displaced_preservation":
+        recovery.manifest_preserved = True
+    _restore_preloader_checkpoint(f"restore_after_{prefix}_move")
+    _restore_sync_rename_parents(source_parent, cleanup, prefix)
+    return destination
+
+
+def _restore_require_absent(
+    parent: _DirectoryHandle,
+    name: str,
+    description: str,
+) -> None:
+    try:
+        os.stat(name, dir_fd=parent.fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise InstallError(f"{description} rollback destination is not absent")
+
+
+def _restore_rollback_directory(
+    bep_in_ex: _DirectoryHandle,
+    name: str,
+    source: _DirectoryHandle,
+    cleanup: _DirectoryHandle,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_verify_named_directory(cleanup, name, source)
+    _restore_verify_named_directory(recovery.run, "cleanup", cleanup)
+    if not _restore_directory_has_only_empty(source):
+        raise InstallError(f"rollback {prefix} source is not empty")
+    _restore_require_absent(bep_in_ex, name, prefix)
+    _restore_preloader_checkpoint(f"restore_rollback_before_{prefix}_restore")
+    _renameatx(
+        cleanup,
+        name,
+        bep_in_ex,
+        name,
+        _RENAME_EXCL,
+        f"rollback restore {prefix}",
+    )
+    if prefix == "backup_directory":
+        recovery.backup_directory_moved = False
+    else:
+        recovery.compat_directory_moved = False
+    _restore_preloader_checkpoint(f"restore_rollback_after_{prefix}_restore")
+    _restore_preloader_checkpoint(
+        f"restore_rollback_before_{prefix}_validation"
+    )
+    _restore_verify_named_directory(bep_in_ex, name, source)
+    if not _restore_directory_has_only_empty(source):
+        raise InstallError(f"rollback {prefix} destination is not empty")
+    _restore_preloader_checkpoint(
+        f"restore_rollback_after_{prefix}_validation"
+    )
+    _restore_sync_rollback_parents(cleanup, bep_in_ex, prefix)
+
+
+def _restore_rollback_moved_file(
+    source_parent: _DirectoryHandle,
+    destination_parent: _DirectoryHandle,
+    destination_parent_parent: _DirectoryHandle,
+    destination_parent_name: str,
+    name: str,
+    retained_descriptor: int,
+    expected: _StableFileSnapshot,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_verify_named_directory(
+        destination_parent_parent,
+        destination_parent_name,
+        destination_parent,
+    )
+    _restore_revalidate_stable_file(
+        source_parent,
+        name,
+        retained_descriptor,
+        expected,
+        f"rollback {prefix}",
+    )
+    _restore_require_absent(destination_parent, name, prefix)
+    _restore_preloader_checkpoint(f"restore_rollback_before_{prefix}_restore")
+    _renameatx(
+        source_parent,
+        name,
+        destination_parent,
+        name,
+        _RENAME_EXCL,
+        f"rollback restore {prefix}",
+    )
+    if prefix == "backup":
+        recovery.backup_moved = False
+    else:
+        recovery.provenance_moved = False
+    _restore_preloader_checkpoint(f"restore_rollback_after_{prefix}_restore")
+    _restore_preloader_checkpoint(
+        f"restore_rollback_before_{prefix}_snapshot_validation"
+    )
+    _restore_revalidate_stable_file(
+        destination_parent,
+        name,
+        retained_descriptor,
+        expected,
+        f"restored rollback {prefix}",
+    )
+    _restore_preloader_checkpoint(
+        f"restore_rollback_after_{prefix}_snapshot_validation"
+    )
+    _restore_sync_rollback_parents(
+        source_parent, destination_parent, prefix
+    )
+
+
+def _restore_rollback_swap(
+    live_parent: _DirectoryHandle,
+    source_parent: _DirectoryHandle,
+    source_name: str,
+    live_name: str,
+    retained_patched_descriptor: int,
+    patched: _StableFileSnapshot,
+    official: _StableFileSnapshot,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_revalidate_stable_file(
+        source_parent,
+        source_name,
+        retained_patched_descriptor,
+        patched,
+        f"rollback patched {prefix}",
+    )
+    official_descriptor, official_observed = _restore_read_stable_file(
+        live_parent, live_name, f"rollback official {prefix}"
+    )
+    try:
+        if official_observed != official:
+            raise InstallError(f"rollback official {prefix} changed")
+    finally:
+        os.close(official_descriptor)
+    _restore_preloader_checkpoint(f"restore_rollback_before_{prefix}_swap")
+    _renameatx(
+        source_parent,
+        source_name,
+        live_parent,
+        live_name,
+        _RENAME_SWAP,
+        f"rollback swap patched {prefix}",
+    )
+    if prefix == "active":
+        recovery.active_swapped = False
+    else:
+        recovery.manifest_swapped = False
+    _restore_preloader_checkpoint(f"restore_rollback_after_{prefix}_swap")
+    displaced_descriptor = -1
+    try:
+        _restore_preloader_checkpoint(
+            f"restore_rollback_before_{prefix}_displaced_validation"
+        )
+        displaced_descriptor, displaced = _restore_read_stable_file(
+            source_parent,
+            source_name,
+            f"rollback displaced official {prefix}",
+        )
+        if displaced != official:
+            _restore_preloader_checkpoint(
+                f"restore_rollback_before_{prefix}_swap_back"
+            )
+            _renameatx(
+                source_parent,
+                source_name,
+                live_parent,
+                live_name,
+                _RENAME_SWAP,
+                f"rollback swap back changed {prefix}",
+            )
+            if prefix == "active":
+                recovery.active_swapped = True
+            else:
+                recovery.manifest_swapped = True
+            _restore_preloader_checkpoint(
+                f"restore_rollback_after_{prefix}_swap_back"
+            )
+            raise InstallError(f"rollback displaced official {prefix} changed")
+        _restore_preloader_checkpoint(
+            f"restore_rollback_after_{prefix}_displaced_validation"
+        )
+    finally:
+        if displaced_descriptor >= 0:
+            os.close(displaced_descriptor)
+    _restore_checkpoint_fsync(
+        source_parent,
+        f"restore_rollback_before_{prefix}_staging_parent_fsync",
+        f"restore_rollback_after_{prefix}_staging_parent_fsync",
+        "",
+    )
+    _restore_checkpoint_fsync(
+        live_parent,
+        f"restore_rollback_before_{prefix}_live_parent_fsync",
+        f"restore_rollback_after_{prefix}_live_parent_fsync",
+        "",
+    )
+
+
+def _restore_preserve_if_present(
+    source_parent: _DirectoryHandle,
+    source_name: str,
+    cleanup: _DirectoryHandle,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    try:
+        observed = os.stat(
+            source_name,
+            dir_fd=source_parent.fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(observed.st_mode):
+        raise InstallError(f"rollback {prefix} artifact changed type")
+    _restore_preserve_file(
+        source_parent, source_name, cleanup, prefix, recovery
+    )
+
+
+def _restore_restage_active_for_rollback(
+    core: _DirectoryHandle,
+    cleanup: _DirectoryHandle,
+    staging_name: str,
+    retained_descriptor: int,
+    expected: _StableFileSnapshot,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_verify_named_directory(recovery.run, "cleanup", cleanup)
+    _restore_revalidate_stable_file(
+        cleanup,
+        recovery.active_preserved_name,
+        retained_descriptor,
+        expected,
+        "rollback active restaging source",
+    )
+    _restore_require_absent(core, staging_name, "rollback active restaging")
+    _renameatx(
+        cleanup,
+        recovery.active_preserved_name,
+        core,
+        staging_name,
+        _RENAME_EXCL,
+        "restage patched active for rollback",
+    )
+    recovery.active_preserved = False
+    _restore_sync_rename_parents(
+        cleanup, core, "active_rollback_restaging"
+    )
+
+
+def _restore_rollback_preserve_if_present(
+    source_parent: _DirectoryHandle,
+    source_name: str,
+    cleanup: _DirectoryHandle,
+    prefix: str,
+    expected: _StableFileSnapshot | None,
+) -> None:
+    if expected is None:
+        return
+    try:
+        descriptor, observed = _restore_read_stable_file(
+            source_parent, source_name, f"rollback preserve {prefix}"
+        )
+    except InstallError:
+        return
+    try:
+        if observed != expected:
+            return
+    finally:
+        os.close(descriptor)
+    destination = f"file-{secrets.token_hex(16)}"
+    _restore_preloader_checkpoint(
+        f"restore_rollback_before_{prefix}"
+    )
+    _renameatx(
+        source_parent,
+        source_name,
+        cleanup,
+        destination,
+        _RENAME_EXCL,
+        f"rollback preserve {prefix}",
+    )
+    _restore_preloader_checkpoint(
+        f"restore_rollback_after_{prefix}"
+    )
+
+
+def _restore_preserve_expected_if_present(
+    source_parent: _DirectoryHandle,
+    source_name: str,
+    expected: _StableFileSnapshot,
+    cleanup: _DirectoryHandle,
+    prefix: str,
+    recovery: _CompatRecovery,
+) -> None:
+    try:
+        descriptor, observed = _restore_read_stable_file(
+            source_parent, source_name, f"contain {prefix}"
+        )
+    except InstallError:
+        return
+    try:
+        if observed != expected:
+            return
+    finally:
+        os.close(descriptor)
+    _restore_preserve_file(
+        source_parent, source_name, cleanup, prefix, recovery
+    )
+
+
+def _restore_contain_after_rollback_failure(
+    preflight: tuple[
+        Path,
+        InstallManifest,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+    ],
+    recovery: _CompatRecovery,
+    active_staging_name: str,
+    manifest_staging_name: str,
+    active_staging: _StableFileSnapshot | None,
+    manifest_staging: _StableFileSnapshot | None,
+) -> None:
+    if active_staging is not None and recovery.active_swapped:
+        _restore_preserve_expected_if_present(
+            preflight[4],
+            "BepInEx.Preloader.dll",
+            active_staging,
+            recovery.cleanup,
+            "active_failure_containment",
+            recovery,
+        )
+    if manifest_staging is not None and recovery.manifest_swapped:
+        _restore_preserve_expected_if_present(
+            preflight[2],
+            MANIFEST_NAME,
+            manifest_staging,
+            recovery.cleanup,
+            "manifest_failure_containment",
+            recovery,
+        )
+    manifest_source_expected = (
+        preflight[8] if recovery.manifest_swapped else manifest_staging
+    )
+    if manifest_source_expected is not None:
+        _restore_preserve_expected_if_present(
+            preflight[2],
+            manifest_staging_name,
+            manifest_source_expected,
+            recovery.cleanup,
+            "manifest_source_failure_containment",
+            recovery,
+        )
+    if active_staging is not None and not recovery.active_preserved:
+        _restore_preserve_expected_if_present(
+            preflight[4],
+            active_staging_name,
+            (
+                preflight[10]
+                if recovery.active_swapped
+                else active_staging
+            ),
+            recovery.cleanup,
+            "active_source_failure_containment",
+            recovery,
+        )
+    os.fsync(recovery.cleanup.fd)
+    os.fsync(recovery.run.fd)
+
+
+def _restore_verify_patched_rollback(
+    preflight: tuple[
+        Path,
+        InstallManifest,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+    ],
+) -> None:
+    _restore_revalidate_preflight_sources(
+        preflight[17],
+        preflight[15],
+        preflight[16],
+        preflight[2],
+        preflight[7],
+        preflight[8],
+        preflight[4],
+        preflight[9],
+        preflight[10],
+        preflight[3],
+        preflight[5],
+        preflight[11],
+        preflight[12],
+        preflight[6],
+        preflight[13],
+        preflight[14],
+    )
+
+
+def _restore_rollback(
+    preflight: tuple[
+        Path,
+        InstallManifest,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        int,
+        _StableFileSnapshot,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+        _DirectoryHandle,
+    ],
+    recovery: _CompatRecovery,
+    active_staging_name: str,
+    manifest_staging_name: str,
+    active_staging: _StableFileSnapshot | None,
+    manifest_staging: _StableFileSnapshot | None,
+) -> None:
+    if recovery.backup_directory_moved:
+        _restore_rollback_directory(
+            preflight[3],
+            ".ssr-oracle-backup",
+            preflight[5],
+            recovery.cleanup,
+            "backup_directory",
+            recovery,
+        )
+    if recovery.compat_directory_moved:
+        _restore_rollback_directory(
+            preflight[3],
+            ".ssr-oracle-compat",
+            preflight[6],
+            recovery.cleanup,
+            "compat_directory",
+            recovery,
+        )
+    if recovery.active_swapped:
+        if recovery.active_preserved:
+            _restore_restage_active_for_rollback(
+                preflight[4],
+                recovery.cleanup,
+                active_staging_name,
+                preflight[9],
+                preflight[10],
+                recovery,
+            )
+        active_source = (
+            recovery.cleanup if recovery.active_preserved else preflight[4]
+        )
+        active_source_name = (
+            recovery.active_preserved_name
+            if recovery.active_preserved
+            else active_staging_name
+        )
+        if active_staging is None:
+            raise InstallError("rollback active staging snapshot is unavailable")
+        _restore_rollback_swap(
+            preflight[4],
+            active_source,
+            active_source_name,
+            "BepInEx.Preloader.dll",
+            preflight[9],
+            preflight[10],
+            active_staging,
+            "active",
+            recovery,
+        )
+    if recovery.backup_moved:
+        _restore_rollback_moved_file(
+            recovery.backup,
+            preflight[5],
+            preflight[3],
+            ".ssr-oracle-backup",
+            "BepInEx.Preloader.dll",
+            preflight[11],
+            preflight[12],
+            "backup",
+            recovery,
+        )
+    if recovery.provenance_moved:
+        _restore_rollback_moved_file(
+            recovery.provenance,
+            preflight[6],
+            preflight[3],
+            ".ssr-oracle-compat",
+            "preloader-provenance.json",
+            preflight[13],
+            preflight[14],
+            "provenance",
+            recovery,
+        )
+    if recovery.manifest_swapped:
+        manifest_source = (
+            recovery.cleanup if recovery.manifest_preserved else preflight[2]
+        )
+        manifest_source_name = (
+            recovery.manifest_preserved_name
+            if recovery.manifest_preserved
+            else manifest_staging_name
+        )
+        if manifest_staging is None:
+            raise InstallError("rollback manifest staging snapshot is unavailable")
+        _restore_rollback_swap(
+            preflight[2],
+            manifest_source,
+            manifest_source_name,
+            MANIFEST_NAME,
+            preflight[7],
+            preflight[8],
+            manifest_staging,
+            "manifest",
+            recovery,
+        )
+    _restore_rollback_preserve_if_present(
+        preflight[4],
+        active_staging_name,
+        recovery.cleanup,
+        "temporary_preservation",
+        active_staging,
+    )
+    _restore_rollback_preserve_if_present(
+        preflight[2],
+        manifest_staging_name,
+        recovery.cleanup,
+        "displaced_preservation",
+        manifest_staging,
+    )
+    _restore_sync_rollback_parents(
+        preflight[2], recovery.cleanup, "cleanup_preservation"
+    )
+    _restore_checkpoint_fsync(
+        recovery.run,
+        "restore_rollback_before_recovery_directory_fsync",
+        "restore_rollback_after_recovery_directory_fsync",
+        "",
+    )
+    _restore_verify_patched_rollback(preflight)
+
+
+def _restore_final_verify(
+    root: _DirectoryHandle,
+    bep_in_ex: _DirectoryHandle,
+    core: _DirectoryHandle,
+    official_manifest: InstallManifest,
+    manifest_payload: bytes,
+    official_payload: bytes,
+    official_mode: int,
+    recovery: _CompatRecovery,
+) -> None:
+    _restore_preloader_checkpoint(
+        "restore_before_final_status_verification"
+    )
+    active_fd, active = _restore_read_stable_file(
+        core, "BepInEx.Preloader.dll", "final official preloader"
+    )
+    manifest_fd = -1
+    try:
+        manifest_fd, manifest = _restore_read_stable_file(
+            root, MANIFEST_NAME, "final official manifest"
+        )
+        if (
+            active.payload != official_payload
+            or active.mode != official_mode
+            or sha256(active.payload).hexdigest()
+            != EXPECTED_OFFICIAL_PRELOADER_SHA256
+            or manifest.payload != manifest_payload
+        ):
+            raise InstallError("final official restore verification failed")
+        for name in (".ssr-oracle-backup", ".ssr-oracle-compat"):
+            try:
+                os.stat(name, dir_fd=bep_in_ex.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise InstallError("live compatibility directory remains")
+        if (
+            not _restore_directory_has_only(
+                recovery.backup, "BepInEx.Preloader.dll"
+            )
+            or not _restore_directory_has_only(
+                recovery.provenance, "preloader-provenance.json"
+            )
+        ):
+            raise InstallError("recovery compatibility evidence is incomplete")
+        if official_manifest.schema_version != 1:
+            raise InstallError("final official manifest is invalid")
+    finally:
+        if manifest_fd >= 0:
+            os.close(manifest_fd)
+        os.close(active_fd)
+    _restore_preloader_checkpoint(
+        "restore_after_final_status_verification"
+    )
+
+
+def restore_preloader(
+    game_root: Path,
+    repo_root: Path | None = None,
+) -> tuple[InstallManifest, Path]:
+    """Restore the official preloader while retaining exact audit evidence."""
+    preflight = _restore_manifest_and_snapshots(game_root, repo_root)
+    recovery: _CompatRecovery | None = None
+    active_staging_name = (
+        f".ssr-oracle-restore-active-{secrets.token_hex(16)}"
+    )
+    manifest_staging_name = (
+        f".ssr-oracle-restore-manifest-{secrets.token_hex(16)}"
+    )
+    active_staging: _StableFileSnapshot | None = None
+    manifest_staging: _StableFileSnapshot | None = None
+    try:
+        official_manifest, manifest_payload = _restore_official_manifest(
+            preflight[1]
+        )
+        recovery = _restore_allocate_recovery(preflight[2])
+        _restore_preloader_checkpoint("restore_before_first_live_mutation")
+        active_staging = _restore_stage_file(
+            preflight[4],
+            active_staging_name,
+            preflight[12].payload,
+            preflight[12].mode,
+            "official_active",
+        )
+        manifest_staging = _restore_stage_file(
+            preflight[2],
+            manifest_staging_name,
+            manifest_payload,
+            preflight[8].mode,
+            "official_manifest",
+        )
+        _restore_move_live_file(
+            preflight[5],
+            preflight[3],
+            ".ssr-oracle-backup",
+            "BepInEx.Preloader.dll",
+            preflight[11],
+            preflight[12],
+            recovery.backup,
+            "backup",
+            recovery,
+        )
+        _restore_move_live_file(
+            preflight[6],
+            preflight[3],
+            ".ssr-oracle-compat",
+            "preloader-provenance.json",
+            preflight[13],
+            preflight[14],
+            recovery.provenance,
+            "provenance",
+            recovery,
+        )
+        _restore_validated_swap(
+            preflight[4],
+            recovery.cleanup,
+            "BepInEx.Preloader.dll",
+            active_staging_name,
+            preflight[9],
+            preflight[10],
+            active_staging,
+            "active",
+            recovery,
+        )
+        _restore_verify_named_directory(
+            preflight[3], "core", preflight[4]
+        )
+        _restore_verify_named_directory(
+            preflight[2], "BepInEx", preflight[3]
+        )
+        active_preserved_name = _restore_preserve_file(
+            preflight[4],
+            active_staging_name,
+            recovery.cleanup,
+            "cleanup_preservation",
+            recovery,
+        )
+        _restore_preloader_checkpoint("restore_after_active_verification")
+        _restore_validated_swap(
+            preflight[2],
+            recovery.cleanup,
+            MANIFEST_NAME,
+            manifest_staging_name,
+            preflight[7],
+            preflight[8],
+            manifest_staging,
+            "manifest",
+            recovery,
+        )
+        _restore_verify_absolute_directory(preflight[0], preflight[2])
+        _restore_preloader_checkpoint("restore_after_manifest_verification")
+        _restore_preloader_checkpoint(
+            "restore_after_backup_directory_verification"
+        )
+        _restore_move_live_directory(
+            preflight[3],
+            ".ssr-oracle-backup",
+            preflight[5],
+            recovery.cleanup,
+            "backup_directory",
+            recovery,
+        )
+        _restore_verify_named_directory(
+            preflight[2], "BepInEx", preflight[3]
+        )
+        _restore_preloader_checkpoint(
+            "restore_after_compat_directory_verification"
+        )
+        _restore_move_live_directory(
+            preflight[3],
+            ".ssr-oracle-compat",
+            preflight[6],
+            recovery.cleanup,
+            "compat_directory",
+            recovery,
+        )
+        _restore_verify_named_directory(
+            preflight[2], "BepInEx", preflight[3]
+        )
+        _restore_preserve_file(
+            preflight[2],
+            manifest_staging_name,
+            recovery.cleanup,
+            "displaced_preservation",
+            recovery,
+        )
+        _restore_checkpoint_fsync(
+            recovery.run,
+            "restore_before_recovery_directory_fsync",
+            "restore_after_recovery_directory_fsync",
+            "",
+        )
+        _restore_final_verify(
+            preflight[2],
+            preflight[3],
+            preflight[4],
+            official_manifest,
+            manifest_payload,
+            preflight[12].payload,
+            preflight[12].mode,
+            recovery,
+        )
+        return (
+            official_manifest,
+            preflight[0]
+            / ".ssr-oracle-recovery"
+            / recovery.run_name,
+        )
+    except InstallError as exc:
+        if recovery is None:
+            raise
+        recovery_path = (
+            preflight[0]
+            / ".ssr-oracle-recovery"
+            / recovery.run_name
+        )
+        try:
+            _restore_rollback(
+                preflight,
+                recovery,
+                active_staging_name,
+                manifest_staging_name,
+                active_staging,
+                manifest_staging,
+            )
+        except InstallError as rollback_error:
+            containment_error: InstallError | None = None
+            try:
+                _restore_contain_after_rollback_failure(
+                    preflight,
+                    recovery,
+                    active_staging_name,
+                    manifest_staging_name,
+                    active_staging,
+                    manifest_staging,
+                )
+            except InstallError as observed_containment_error:
+                containment_error = observed_containment_error
+            containment_detail = (
+                ""
+                if containment_error is None
+                else f"; containment failed: {containment_error}"
+            )
+            raise InstallError(
+                f"{exc}; rollback failed: {rollback_error}; "
+                f"recovery retained at {recovery_path}{containment_detail}"
+            ) from rollback_error
+        raise InstallError(
+            f"{exc}; rollback succeeded; recovery retained at {recovery_path}"
+        ) from exc
+    finally:
+        if recovery is not None:
+            _restore_close_recovery(recovery)
+        _restore_close_preflight(preflight)
 
 
 def _updated_preloader_manifest(
@@ -3515,6 +5882,7 @@ def build_parser() -> argparse.ArgumentParser:
         "install",
         "deploy",
         "deploy-preloader",
+        "restore-preloader",
         "status",
         "recover",
     ):
@@ -3528,6 +5896,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "deploy-preloader":
             command.add_argument("--preloader", type=Path, required=True)
             command.add_argument("--provenance", type=Path, required=True)
+            command.add_argument("--repo-root", type=Path)
+        if name == "restore-preloader":
             command.add_argument("--repo-root", type=Path)
     return parser
 
@@ -3562,6 +5932,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
             exit_code = 0
+        elif args.command == "restore-preloader":
+            manifest, recovery = restore_preloader(
+                args.game_root,
+                repo_root=args.repo_root,
+            )
+            output = {
+                "manifest": _manifest_to_dict(manifest),
+                "recovery": str(recovery),
+            }
+            exit_code = 0
         elif args.command == "status":
             status = status_install(args.game_root)
             output = _status_to_dict(status)
@@ -3570,7 +5950,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             output = {"recovery": str(recover_install(args.game_root))}
             exit_code = 0
     except InstallError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if args.command == "restore-preloader":
+            print(str(exc), file=sys.stderr)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(output, sort_keys=True))
     return exit_code
