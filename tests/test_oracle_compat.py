@@ -354,6 +354,18 @@ def test_validate_source_checkout_requires_exact_harmony_submodule(
         )
 
 
+def test_validate_source_checkout_rejects_decorated_submodule_status(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+):
+    harmony = recursive_source_checkout / "submodules/BepInEx.Harmony"
+    subprocess.run(["git", "checkout", "-qb", "local"], cwd=harmony, check=True)
+    with pytest.raises(CompatError, match="submodule commit"):
+        validate_source_checkout(
+            recursive_source_checkout, load_trust(committed_compat_repo)
+        )
+
+
 def test_prepare_source_rejects_already_patched_source(
     recursive_source_checkout: Path,
     committed_compat_repo: Path,
@@ -412,6 +424,46 @@ def test_prepare_source_rejects_symlinked_patch_target(
     platform.rename(original)
     platform.symlink_to(original)
     with pytest.raises(CompatError, match="patch target"):
+        prepare_source(source, tmp_path / "prepared", trust)
+
+
+def test_prepare_source_revalidates_non_target_tracked_file(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    (recursive_source_checkout / "README.md").write_text("changed after validation\n")
+    with pytest.raises(CompatError, match="clean checkout"):
+        prepare_source(source, tmp_path / "prepared", trust)
+
+
+def test_prepare_source_rejects_forged_checkout_identity(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    forged = SourceCheckout(
+        root=recursive_source_checkout.resolve(),
+        source_commit="0" * 40,
+        harmony_submodule_commit="1" * 40,
+    )
+    with pytest.raises(CompatError, match="source commit"):
+        prepare_source(forged, tmp_path / "prepared", trust)
+
+
+def test_prepare_source_revalidates_submodule_after_validation(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    harmony = recursive_source_checkout / "submodules/BepInEx.Harmony"
+    subprocess.run(["git", "checkout", "-q", "HEAD^"], cwd=harmony, check=True)
+    with pytest.raises(CompatError, match="submodule commit"):
         prepare_source(source, tmp_path / "prepared", trust)
 
 

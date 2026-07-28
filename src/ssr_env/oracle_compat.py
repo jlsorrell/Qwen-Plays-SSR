@@ -75,6 +75,9 @@ _LOWER_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _SOURCE_COMMIT = "57f1fb859bd4d0264cd2a59074d0e96c6a492a33"
 _HARMONY_SUBMODULE_COMMIT = "d4cdcb4cdeac14a0b77012165f5f5a9f5032a9fa"
 _HARMONY_SUBMODULE_PATH = "submodules/BepInEx.Harmony"
+_HARMONY_SUBMODULE_STATUS = (
+    f" {_HARMONY_SUBMODULE_COMMIT} {_HARMONY_SUBMODULE_PATH} (d4cdcb4)"
+)
 _PLATFORM_RELATIVE = "BepInEx.Preloader/Platform.cs"
 _OLD_PLATFORM_PROBE = "/System/Library/AccessibilityBundles"
 _NEW_PLATFORM_PROBE = "/System/Library/CoreServices"
@@ -399,13 +402,7 @@ def validate_source_checkout(source: Path, trust: CompatTrust) -> SourceCheckout
     if len(submodule_lines) != 1:
         raise CompatError("submodule commit does not match the pinned recursive tree")
     status = submodule_lines[0]
-    fields = status[1:].split()
-    if (
-        not status.startswith(" ")
-        or len(fields) < 2
-        or fields[0] != _HARMONY_SUBMODULE_COMMIT
-        or fields[1] != _HARMONY_SUBMODULE_PATH
-    ):
+    if status != _HARMONY_SUBMODULE_STATUS:
         raise CompatError("submodule commit does not match the pinned recursive tree")
 
     dirty = _git_text(
@@ -470,13 +467,39 @@ def prepare_source(
         source.root, _PLATFORM_RELATIVE
     ):
         raise CompatError("source patch target must not be symlinked")
+    try:
+        resolved_source_root = source.root.resolve(strict=True)
+    except OSError as exc:
+        raise CompatError("source checkout root cannot be resolved") from exc
+    if source.root != resolved_source_root:
+        raise CompatError("source checkout root does not match its validated path")
+    if source.source_commit != _SOURCE_COMMIT:
+        raise CompatError("source commit does not match the validated checkout")
+    if source.harmony_submodule_commit != _HARMONY_SUBMODULE_COMMIT:
+        raise CompatError("submodule commit does not match the validated checkout")
     destination_path = Path(destination)
     if destination_path.exists() or destination_path.is_symlink():
         raise CompatError("prepared source destination must be absent")
     destination_root = destination_path.resolve(strict=False)
     if destination_root.is_relative_to(source.root):
         raise CompatError("prepared source destination must be outside source checkout")
-    destination_root.mkdir(parents=True)
+
+    try:
+        revalidated = validate_source_checkout(source.root, trust)
+    except CompatError as exc:
+        dirty = _git_text(
+            source.root,
+            ["status", "--porcelain=v1", "--untracked-files=all"],
+            "clean checkout",
+        )
+        if (
+            "clean checkout" not in str(exc)
+            or dirty != f" M {_PLATFORM_RELATIVE}\n"
+        ):
+            raise
+    else:
+        if revalidated != source:
+            raise CompatError("source checkout identity changed after validation")
 
     platform_source = source.root / _PLATFORM_RELATIVE
     try:
@@ -489,6 +512,7 @@ def prepare_source(
     ):
         raise CompatError("patch preimage does not match the pinned source")
 
+    destination_root.mkdir(parents=True)
     before = _copy_tracked_source(source.root, destination_root)
     patch = _compat_patch(trust)
     patch_text = patch.read_text(encoding="utf-8")
