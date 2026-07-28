@@ -858,7 +858,8 @@ satisfy the concurrent-substitution contract.
 1. restore active DLL and manifest bytes/modes;
 2. move newly created backup/provenance artifacts into an exclusive
    `.ssr-oracle-recovery/<timestamp>-<token>/compat/`;
-3. remove only empty created live directories with `rmdir`;
+3. move verified transaction-owned staging, temporary, quarantine, and empty
+   live-directory leftovers into that recovery tree; do not unlink or rmdir;
 4. report rollback failures without hiding the original failure.
 
 Inject a failure after each file replace and manifest write. Each test asserts

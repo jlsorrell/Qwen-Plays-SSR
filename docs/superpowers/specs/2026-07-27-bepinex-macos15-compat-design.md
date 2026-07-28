@@ -300,6 +300,13 @@ Recovery directories use the UTC timestamp plus a cryptographically random
 128-bit suffix and are created with an exclusive operation, so retries cannot
 collide.
 
+The deploy transaction performs no terminal `unlink` or `rmdir`. macOS has no
+atomic unlink-by-verified-inode primitive, so even a quarantined name retains a
+post-verification substitution window. All verified transaction-owned staging,
+temporary, quarantine, and empty-directory leftovers are instead moved
+atomically and exclusively into the transaction's private recovery directory
+and preserved for audit on success or failure.
+
 Deployment is idempotent only when the currently deployed DLL, backup,
 provenance, and manifest are all healthy and byte-identical to the request. A
 different patch or build must first be restored to official state; in-place
