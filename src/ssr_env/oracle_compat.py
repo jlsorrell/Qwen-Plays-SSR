@@ -484,23 +484,6 @@ def prepare_source(
     if destination_root.is_relative_to(source.root):
         raise CompatError("prepared source destination must be outside source checkout")
 
-    try:
-        revalidated = validate_source_checkout(source.root, trust)
-    except CompatError as exc:
-        dirty = _git_text(
-            source.root,
-            ["status", "--porcelain=v1", "--untracked-files=all"],
-            "clean checkout",
-        )
-        if (
-            "clean checkout" not in str(exc)
-            or dirty != f" M {_PLATFORM_RELATIVE}\n"
-        ):
-            raise
-    else:
-        if revalidated != source:
-            raise CompatError("source checkout identity changed after validation")
-
     platform_source = source.root / _PLATFORM_RELATIVE
     try:
         preimage = platform_source.read_text(encoding="utf-8-sig")
@@ -512,8 +495,6 @@ def prepare_source(
     ):
         raise CompatError("patch preimage does not match the pinned source")
 
-    destination_root.mkdir(parents=True)
-    before = _copy_tracked_source(source.root, destination_root)
     patch = _compat_patch(trust)
     patch_text = patch.read_text(encoding="utf-8")
     if not any(
@@ -521,6 +502,25 @@ def prepare_source(
         for line in patch_text.splitlines()
     ):
         raise CompatError("patch preimage does not contain the macOS platform hunk")
+    try:
+        subprocess.run(
+            ["git", "apply", "--check", str(patch)],
+            cwd=source.root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CompatError(
+            "patch preimage does not accept the compatibility patch"
+        ) from exc
+
+    revalidated = validate_source_checkout(source.root, trust)
+    if revalidated != source:
+        raise CompatError("source checkout identity changed after validation")
+
+    destination_root.mkdir(parents=True)
+    before = _copy_tracked_source(source.root, destination_root)
     apply_environment = os.environ.copy()
     apply_environment["GIT_CEILING_DIRECTORIES"] = str(destination_root.parent)
     try:

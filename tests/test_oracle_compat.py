@@ -439,6 +439,21 @@ def test_prepare_source_revalidates_non_target_tracked_file(
         prepare_source(source, tmp_path / "prepared", trust)
 
 
+def test_prepare_source_rejects_out_of_hunk_platform_mutation_after_validation(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    platform = recursive_source_checkout / "BepInEx.Preloader/Platform.cs"
+    with platform.open("a", encoding="utf-8") as output:
+        output.write("\n// mutation after validation\n")
+    with pytest.raises(CompatError, match="clean checkout"):
+        prepare_source(source, tmp_path / "prepared", trust)
+    assert not (tmp_path / "prepared").exists()
+
+
 def test_prepare_source_rejects_forged_checkout_identity(
     recursive_source_checkout: Path,
     committed_compat_repo: Path,
