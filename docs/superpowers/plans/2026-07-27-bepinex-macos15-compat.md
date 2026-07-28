@@ -1056,6 +1056,20 @@ import ast
 import builtins
 from pathlib import Path
 
+def direct_sha256_result_edge(
+    callee: ast.expr,
+    imported_callables: dict[str, str],
+) -> str | None:
+    if not (
+        isinstance(callee, ast.Attribute)
+        and callee.attr == "hexdigest"
+        and isinstance(callee.value, ast.Call)
+        and isinstance(callee.value.func, ast.Name)
+        and imported_callables.get(callee.value.func.id) == "hashlib.sha256"
+    ):
+        return None
+    return "hashlib.sha256().hexdigest"
+
 def test_restore_transaction_static_graph_has_no_terminal_deletion(
     restore_no_terminal_deletion: None,
 ) -> None:
@@ -1218,6 +1232,7 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "ctypes.get_errno",
         "datetime.datetime.now",
         "hashlib.sha256",
+        "hashlib.sha256().hexdigest",
         "json.dumps",
         "json.loads",
         "os.close",
@@ -1225,6 +1240,7 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "os.fstat",
         "os.fsync",
         "os.fsencode",
+        "os.mkdir",
         "os.open",
         "os.read",
         "os.scandir",
@@ -1236,6 +1252,7 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "stat.S_ISDIR",
         "stat.S_ISLNK",
         "stat.S_ISREG",
+        "ssr_env.oracle_compat.load_trust",
         "builtins.RuntimeError.__init__",
     }
     allowed_transaction_primitives = {
@@ -1343,6 +1360,13 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
                         (function_name, node.lineno, callee.attr)
                     )
                     continue
+                hash_result_edge = direct_sha256_result_edge(
+                    callee,
+                    imported_callables,
+                )
+                if hash_result_edge is not None:
+                    observed_external.add(hash_result_edge)
+                    continue
                 is_super_hook = (
                     isinstance(callee.value, ast.Call)
                     and isinstance(callee.value.func, ast.Name)
@@ -1435,11 +1459,19 @@ join the same reachable worklist; inherited/no-hook exceptions are allowed only
 after hierarchy validation.
 An implementation edge not already listed must route through a reviewed
 module-level local wrapper or receive an explicit literal entry after its
-non-mutating contract is verified. Opaque imported helpers remain forbidden;
-the separately listed `_RENAMEATX_NP` boundary is the sole reviewed
-external namespace-mutation/rename primitive. Exact allowlisted `os.write` and
-`os.fchmod` edges remain reviewed content- and metadata-mutation primitives;
-they are not namespace deletion or rename operations.
+contract is verified. Opaque imported helpers remain forbidden. The separately
+listed `_RENAMEATX_NP` boundary is the sole reviewed external namespace
+move/replacement primitive. Exact `os.mkdir` is the separately reviewed
+namespace-creation primitive required for pinned recovery allocation. Exact
+allowlisted `os.write` and `os.fchmod` edges remain reviewed content- and
+metadata-mutation primitives; they are not namespace deletion, move, or
+replacement operations. The exact qualified
+`ssr_env.oracle_compat.load_trust` edge is allowlisted only as read-only
+committed-trust loading; it does not permit any other imported helper. The
+exact `hashlib.sha256().hexdigest` edge permits only `hexdigest()` invoked
+directly on the result of the exact imported `sha256(...)` constructor.
+Arbitrary result-object methods, including `digest()` and datetime formatting
+methods, remain unresolved and fail closed.
 
 Also add a raising runtime spy and use it around restore success and every
 forward failure, rollback failure, fsync failure, destination collision, and

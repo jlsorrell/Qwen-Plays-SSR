@@ -418,13 +418,20 @@ literal, hand-reviewed allowlist; module wildcards and blanket imported-callable
 allowance are forbidden. Import aliases, opaque imported helpers,
 class/instance dispatch, shell/process launch, and unresolved external calls
 are rejected. A new edge must instead use reviewed module-level local wrappers
-or receive an explicit qualified allowlist entry whose non-mutating contract
-has been verified. The one exact `renameatx_np` FFI transaction primitive is
-listed separately as the sole reviewed external namespace-mutation/rename
-boundary. This does not characterize all allowed external calls as
-non-mutating: exact allowlisted calls such as `os.write` and `os.fchmod`
-perform content and metadata mutation, respectively, without deleting or
-renaming a namespace entry.
+or receive an explicit qualified allowlist entry whose contract has been
+verified. The exact `renameatx_np` FFI transaction primitive is the sole
+reviewed external namespace move/replacement boundary. Exact `os.mkdir` is
+listed separately as the reviewed namespace-creation primitive required to
+allocate the pinned recovery graph. This does not characterize all allowed
+external calls as non-mutating: exact allowlisted calls such as `os.write` and
+`os.fchmod` perform content and metadata mutation, respectively, without
+deleting, moving, or replacing a namespace entry. The exact qualified
+`ssr_env.oracle_compat.load_trust` edge is separately allowlisted only for
+read-only committed-trust loading; no other imported helper is implied. The
+exact `hashlib.sha256().hexdigest` edge is separately modeled only for
+`hexdigest()` called directly on the result of the exact imported
+`sha256(...)` constructor. No general result-object method dispatch is
+allowed; other hash-result or datetime-result methods remain unresolved.
 
 The audit recognizes only class names in a literal, hand-reviewed
 `PASSIVE_DATACLASSES` allowlist. Each listed class must use either `@dataclass`
