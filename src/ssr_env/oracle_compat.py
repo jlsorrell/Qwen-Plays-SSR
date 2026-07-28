@@ -7,8 +7,11 @@ import html
 import json
 import os
 import re
+import signal
 import shutil
+import stat
 import subprocess
+import tarfile
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
@@ -101,6 +104,18 @@ _HARMONY_SUBMODULE_STATUS = (
 _PLATFORM_RELATIVE = "BepInEx.Preloader/Platform.cs"
 _OLD_PLATFORM_PROBE = "/System/Library/AccessibilityBundles"
 _NEW_PLATFORM_PROBE = "/System/Library/CoreServices"
+_LEGACY_REFERENCES = (
+    ("0Harmony", "2.9.0.0"),
+    ("BepInEx", "5.4.23.5"),
+    ("HarmonyXInterop", "1.0.0.0"),
+    ("Mono.Cecil", "0.10.4.0"),
+    ("MonoMod.RuntimeDetour", "22.1.29.1"),
+    ("MonoMod.Utils", "22.1.29.1"),
+    ("System", "2.0.0.0"),
+    ("System.Core", "3.5.0.0"),
+    ("mscorlib", "2.0.0.0"),
+)
+_BUILD_TARGET = "BepInEx.Preloader/BepInEx.Preloader.csproj@framework=net35"
 _TRUST_KEYS = {
     "schema_version",
     "patch_sha256",
@@ -652,6 +667,8 @@ def load_provenance(path: Path, trust: CompatTrust) -> BuildProvenance:
             or provenance.dependency_lock_sha256 != trust.dependencies_sha256
         ):
             raise CompatError("provenance hashes do not match trust")
+        if provenance.build_target != _BUILD_TARGET:
+            raise CompatError("provenance build target is not exact")
         return provenance
     except CompatError as exc:
         if "provenance" in str(exc):
@@ -675,7 +692,12 @@ _EXPECTED_BUILD_PROPERTIES = {
 _BUILD_TIMEOUT_SECONDS = 300
 
 
-def inspect_assembly(path: Path, inspector: Path) -> AssemblyMetadata:
+def inspect_assembly(
+    path: Path,
+    inspector: Path,
+    *,
+    require_platform_patch: bool = False,
+) -> AssemblyMetadata:
     """Inspect a managed PE through the non-loading metadata executable."""
     assembly = Path(path).resolve(strict=True)
     executable = Path(inspector).resolve(strict=True)
@@ -687,8 +709,12 @@ def inspect_assembly(path: Path, inspector: Path) -> AssemblyMetadata:
     if local_runtime.is_dir():
         environment["DOTNET_ROOT"] = str(local_runtime)
     try:
+        command = [str(executable)]
+        if require_platform_patch:
+            command.append("--require-platform-patch")
+        command.append(str(assembly))
         result = subprocess.run(
-            [str(executable), str(assembly)],
+            command,
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -799,15 +825,41 @@ def _execute_build_command(
     cwd: Path,
     env: dict[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    process = subprocess.Popen(
         command,
         cwd=cwd,
         env=env,
-        check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=_BUILD_TIMEOUT_SECONDS,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=_BUILD_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            command,
+            _BUILD_TIMEOUT_SECONDS,
+            output=stdout or exc.output,
+            stderr=stderr or exc.stderr,
+        ) from exc
+    return subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout,
+        stderr,
     )
 
 
@@ -892,6 +944,93 @@ def _build_environment(root: Path, packages: Path) -> dict[str, str]:
         }
     )
     return environment
+
+
+def _sdk_archive_path(repo_root: Path) -> Path:
+    return (
+        repo_root
+        / "data/oracle/compat/downloads/"
+        "dotnet-sdk-8.0.419-osx-arm64.tar.gz"
+    )
+
+
+def _has_any_symlink(path: Path) -> bool:
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            if stat.S_ISLNK(current.lstat().st_mode):
+                return True
+        except OSError:
+            return False
+    return False
+
+
+def _sha512_file(path: Path) -> str:
+    digest = hashlib.sha512()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _safe_extract_sdk(archive_path: Path, destination: Path) -> Path:
+    destination.mkdir()
+    try:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            members = archive.getmembers()
+            for member in members:
+                relative = PurePosixPath(member.name)
+                if (
+                    relative.is_absolute()
+                    or ".." in relative.parts
+                    or member.issym()
+                    or member.islnk()
+                    or not (member.isfile() or member.isdir())
+                ):
+                    raise CompatError("SDK archive contains an unsafe member")
+            archive.extractall(destination, members=members, filter="data")
+    except (OSError, tarfile.TarError) as exc:
+        raise CompatError("SDK archive cannot be safely extracted") from exc
+    executable = destination / "dotnet"
+    try:
+        mode = executable.lstat().st_mode
+    except OSError as exc:
+        raise CompatError("SDK archive does not contain dotnet") from exc
+    if not stat.S_ISREG(mode) or stat.S_ISLNK(mode) or not os.access(executable, os.X_OK):
+        raise CompatError("SDK archive dotnet executable is invalid")
+    return executable
+
+
+def _authenticate_sdk(
+    supplied_sdk: Path,
+    repo_root: Path,
+    toolchain: ToolchainLock,
+    work: Path,
+) -> Path:
+    supplied = Path(supplied_sdk)
+    expected = repo_root / "data/oracle/compat/dotnet-8.0.419/dotnet"
+    if _has_any_symlink(supplied):
+        raise CompatError("supplied SDK path must not be symlinked")
+    try:
+        if supplied.resolve(strict=True) != expected.resolve(strict=True):
+            raise CompatError("supplied SDK path is not the canonical pinned SDK")
+    except OSError as exc:
+        raise CompatError("supplied SDK path cannot be resolved") from exc
+
+    archive = _sdk_archive_path(repo_root)
+    if _has_any_symlink(archive):
+        raise CompatError("SDK archive path must not be symlinked")
+    try:
+        mode = archive.lstat().st_mode
+    except OSError as exc:
+        raise CompatError("SDK archive is missing") from exc
+    if not stat.S_ISREG(mode):
+        raise CompatError("SDK archive must be a regular file")
+    if _sha512_file(archive) != toolchain.dotnet_sdk_archive_sha512:
+        raise CompatError("SDK archive hash does not match toolchain")
+    return _safe_extract_sdk(archive, work / "verified-sdk")
 
 
 def _build_inspector(
@@ -1025,12 +1164,11 @@ def _validate_legacy_metadata(
         ".NETFramework,Version=v3.5",
     )
     actual = (metadata.name, metadata.version, metadata.target_framework)
-    references = dict(metadata.references)
     if (
         actual != expected
         or toolchain.framework != "net35"
         or metadata.metadata_version != "v2.0.50727"
-        or references.get("mscorlib") != "2.0.0.0"
+        or metadata.references != _LEGACY_REFERENCES
     ):
         raise CompatError("built preloader does not have exact legacy metadata")
 
@@ -1050,6 +1188,39 @@ def _write_durable(path: Path, data: bytes) -> None:
         os.fsync(output.fileno())
 
 
+def _safe_output_directory(path: Path) -> Path:
+    output = Path(os.path.abspath(path))
+    current = Path(output.anchor)
+    for part in output.parts[1:]:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            try:
+                current.mkdir()
+            except OSError as exc:
+                raise CompatError("publication output cannot be created safely") from exc
+            mode = current.lstat().st_mode
+        except OSError as exc:
+            raise CompatError("publication output cannot be inspected safely") from exc
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise CompatError("publication output path must contain only directories")
+    return output
+
+
+def _require_regular_file(path: Path, description: str) -> bytes:
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise CompatError(f"published build {description} is missing") from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise CompatError(f"published build {description} must be a regular file")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise CompatError(f"published build {description} cannot be read") from exc
+
+
 def _publish_result(
     output_dir: Path,
     work: Path,
@@ -1061,10 +1232,26 @@ def _publish_result(
     dll_name = "BepInEx.Preloader.dll"
     provenance_name = "provenance.json"
     provenance_bytes = canonical_json(asdict(provenance))
-    if result.exists():
+    try:
+        result_mode = result.lstat().st_mode
+    except FileNotFoundError:
+        result_mode = None
+    except OSError as exc:
+        raise CompatError("published build cannot be inspected safely") from exc
+    if result_mode is not None:
+        if stat.S_ISLNK(result_mode) or not stat.S_ISDIR(result_mode):
+            raise CompatError("published build must be a regular directory")
+        try:
+            entries = {item.name for item in result.iterdir()}
+        except OSError as exc:
+            raise CompatError("published build cannot be inspected safely") from exc
+        if entries != {dll_name, provenance_name}:
+            raise CompatError("published build must contain exactly two files")
         if (
-            (result / dll_name).read_bytes() != dll_bytes
-            or (result / provenance_name).read_bytes() != provenance_bytes
+            _require_regular_file(result / dll_name, dll_name) != dll_bytes
+            or _require_regular_file(
+                result / provenance_name, provenance_name
+            ) != provenance_bytes
         ):
             raise CompatError("refusing different existing build bytes")
     else:
@@ -1083,9 +1270,19 @@ def _publish_result(
             "provenance": f"{digest}/{provenance_name}",
         }
     )
+    current = output_dir / "current.json"
+    try:
+        current_mode = current.lstat().st_mode
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise CompatError("publication current pointer cannot be inspected") from exc
+    else:
+        if stat.S_ISLNK(current_mode) or not stat.S_ISREG(current_mode):
+            raise CompatError("publication current pointer must be a regular file")
     current_temp = output_dir / f".current.{uuid.uuid4().hex}.json"
     _write_durable(current_temp, current_bytes)
-    os.replace(current_temp, output_dir / "current.json")
+    os.replace(current_temp, current)
     _fsync_directory(output_dir)
     return result / dll_name, result / provenance_name
 
@@ -1115,11 +1312,20 @@ def build_compat_preloader(
     feed = _validate_feed(feed_dir, pins)
     checkout = validate_source_checkout(source, trust)
 
-    sdk_path = Path(sdk).resolve(strict=True)
-    output = Path(output_dir).resolve(strict=False)
-    output.mkdir(parents=True, exist_ok=True)
-    work = output / ".work" / uuid.uuid4().hex
-    work.mkdir(parents=True)
+    output = _safe_output_directory(Path(output_dir))
+    work_root = output / ".work"
+    try:
+        work_mode = work_root.lstat().st_mode
+    except FileNotFoundError:
+        work_root.mkdir()
+    except OSError as exc:
+        raise CompatError("publication work directory cannot be inspected") from exc
+    else:
+        if stat.S_ISLNK(work_mode) or not stat.S_ISDIR(work_mode):
+            raise CompatError("publication work path must be a regular directory")
+    work = work_root / uuid.uuid4().hex
+    work.mkdir()
+    sdk_path = _authenticate_sdk(Path(sdk), repository, toolchain, work)
     environment = _build_environment(work / "sdk-check", work / "sdk-packages")
     version_result = _run_build_command(
         [str(sdk_path), "--version"],
@@ -1142,9 +1348,11 @@ def build_compat_preloader(
     if first_bytes != second_bytes:
         raise CompatError("two fresh builds are not byte-identical")
 
-    metadata = inspect_assembly(first, inspector)
+    metadata = inspect_assembly(first, inspector, require_platform_patch=True)
     _validate_legacy_metadata(metadata, toolchain)
     patched_hash = _sha256(first_bytes)
+    if patched_hash == toolchain.official_preloader_sha256:
+        raise CompatError("patched output equals the locked official preloader")
     provenance = BuildProvenance(
         schema_version=1,
         source_commit=toolchain.source_commit,
@@ -1152,7 +1360,7 @@ def build_compat_preloader(
         toolchain_lock_sha256=trust.toolchain_sha256,
         dotnet_sdk_version=toolchain.dotnet_sdk_version,
         dependency_lock_sha256=trust.dependencies_sha256,
-        build_target=toolchain.project,
+        build_target=f"{toolchain.project}@framework={toolchain.framework}",
         official_preloader_sha256=toolchain.official_preloader_sha256,
         patched_preloader_sha256=patched_hash,
     )
