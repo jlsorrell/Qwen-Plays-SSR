@@ -16,6 +16,8 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, Sequence
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
+from ssr_env.oracle_compat import CompatError, load_provenance, load_trust
+
 EXPECTED_ASSEMBLY_SHA256 = (
     "886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564"
 )
@@ -43,6 +45,18 @@ REQUIRED_RUNTIME_DIRECTORIES = {
 }
 PLUGIN_RELATIVE_PATH = "BepInEx/plugins/SsrOracle.Plugin.dll"
 CONFIG_RELATIVE_PATH = "BepInEx/config/dev.jlsor.ssr.oracle.cfg"
+PRELOADER_RELATIVE_PATH = "BepInEx/core/BepInEx.Preloader.dll"
+PRELOADER_BACKUP_RELATIVE_PATH = (
+    "BepInEx/.ssr-oracle-backup/BepInEx.Preloader.dll"
+)
+PRELOADER_PROVENANCE_RELATIVE_PATH = (
+    "BepInEx/.ssr-oracle-compat/preloader-provenance.json"
+)
+EXPECTED_OFFICIAL_PRELOADER_SHA256 = (
+    "309dd5f1f1dda9209dfc4522a29ac983994f0cca135dee7012582028e9a47627"
+)
+_PRELOADER_BACKUP_ROOT = "BepInEx/.ssr-oracle-backup"
+_PRELOADER_COMPAT_ROOT = "BepInEx/.ssr-oracle-compat"
 _HASH_LENGTH = 64
 
 
@@ -82,14 +96,28 @@ class InstallManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class PreloaderCompatibilityStatus:
+    state: Literal["official", "patched", "invalid"]
+    official_sha256: str
+    active_sha256: str | None
+    patched_sha256: str | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class InstallStatus:
     manifest: InstallManifest
     missing: tuple[str, ...]
     changed: tuple[str, ...]
+    preloader_compatibility: PreloaderCompatibilityStatus
 
     @property
     def healthy(self) -> bool:
-        return not self.missing and not self.changed
+        return (
+            not self.missing
+            and not self.changed
+            and self.preloader_compatibility.state != "invalid"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +343,6 @@ def _validated_manifest_path(root: Path, relative_path: str) -> Path:
             f"manifest path contains parent traversal: {relative_path!r}"
         )
     candidate = root / Path(*pure.parts)
-    _inside(root, candidate)
     if (
         not relative_path
         or "\x00" in relative_path
@@ -621,12 +648,26 @@ def _entry_health(
     changed: list[str] = []
     for entry in entries:
         target = _validated_manifest_path(root, entry.relative_path)
-        if not _path_exists(target):
+        parts = PurePosixPath(entry.relative_path).parts
+        current = root
+        safe_parents = True
+        unsafe_parent_kind = "other"
+        for part in parts[:-1]:
+            current /= part
+            parent_kind = _lstat_kind(current)
+            if parent_kind != "directory":
+                safe_parents = False
+                unsafe_parent_kind = parent_kind
+                break
+        target_kind = _lstat_kind(target) if safe_parents else "other"
+        if target_kind == "absent" or (
+            not safe_parents and unsafe_parent_kind in {"absent", "file"}
+        ):
             missing.append(entry.relative_path)
         elif entry.kind == "directory":
-            if target.is_symlink() or not target.is_dir():
+            if target_kind != "directory":
                 changed.append(entry.relative_path)
-        elif target.is_symlink() or not target.is_file():
+        elif target_kind != "file":
             changed.append(entry.relative_path)
         elif _sha256_file(target) != entry.sha256:
             changed.append(entry.relative_path)
@@ -860,7 +901,247 @@ def deploy_plugin(
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def status_install(game_root: Path) -> InstallStatus:
+def _lstat_kind(
+    path: Path,
+) -> Literal["absent", "file", "directory", "symlink", "other"]:
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "other"
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    return "other"
+
+
+def _safe_regular_file(root: Path, relative_path: str) -> bool:
+    current = root
+    parts = PurePosixPath(relative_path).parts
+    for part in parts[:-1]:
+        current /= part
+        if _lstat_kind(current) != "directory":
+            return False
+    return _lstat_kind(current / parts[-1]) == "file"
+
+
+def _observed_hash(root: Path, relative_path: str) -> str | None:
+    if not _safe_regular_file(root, relative_path):
+        return None
+    try:
+        return _sha256_file(root / relative_path)
+    except InstallError:
+        return None
+
+
+def _manifest_entry(
+    manifest: InstallManifest, relative_path: str
+) -> ManifestEntry | None:
+    return next(
+        (
+            entry
+            for entry in manifest.entries
+            if entry.relative_path == relative_path
+        ),
+        None,
+    )
+
+
+def _compatibility_ownership_is_exact(manifest: InstallManifest) -> bool:
+    expected_kinds = {
+        _PRELOADER_BACKUP_ROOT: "directory",
+        PRELOADER_BACKUP_RELATIVE_PATH: "file",
+        _PRELOADER_COMPAT_ROOT: "directory",
+        PRELOADER_PROVENANCE_RELATIVE_PATH: "file",
+    }
+    observed = {
+        entry.relative_path: (entry.kind, entry.sha256)
+        for entry in manifest.entries
+        if entry.relative_path in {_PRELOADER_BACKUP_ROOT, _PRELOADER_COMPAT_ROOT}
+        or entry.relative_path.startswith(_PRELOADER_BACKUP_ROOT + "/")
+        or entry.relative_path.startswith(_PRELOADER_COMPAT_ROOT + "/")
+    }
+    return set(observed) == set(expected_kinds) and all(
+        observed[path][0] == kind
+        and (kind == "directory" or observed[path][1] is not None)
+        for path, kind in expected_kinds.items()
+    )
+
+
+def _preloader_compatibility_status(
+    root: Path,
+    manifest: InstallManifest,
+    missing: tuple[str, ...],
+    changed: tuple[str, ...],
+    repo_root: Path | None,
+) -> PreloaderCompatibilityStatus:
+    issues: set[str] = set()
+    active = root / PRELOADER_RELATIVE_PATH
+    active_hash = _observed_hash(root, PRELOADER_RELATIVE_PATH)
+    active_entry = _manifest_entry(manifest, PRELOADER_RELATIVE_PATH)
+    reserved_roots = (
+        root / _PRELOADER_BACKUP_ROOT,
+        root / _PRELOADER_COMPAT_ROOT,
+    )
+    reserved_present = any(
+        _lstat_kind(path) != "absent" for path in reserved_roots
+    )
+    compatibility_entries = tuple(
+        entry
+        for entry in manifest.entries
+        if entry.relative_path
+        in {_PRELOADER_BACKUP_ROOT, _PRELOADER_COMPAT_ROOT}
+        or entry.relative_path.startswith(_PRELOADER_BACKUP_ROOT + "/")
+        or entry.relative_path.startswith(_PRELOADER_COMPAT_ROOT + "/")
+    )
+
+    if manifest.runtime_archive_sha256 != EXPECTED_RUNTIME_ARCHIVE_SHA256:
+        issues.add("runtime_archive_mismatch")
+    if not _safe_regular_file(root, PRELOADER_RELATIVE_PATH):
+        issues.add(
+            "active_missing"
+            if _lstat_kind(active) == "absent"
+            else "active_unsafe"
+        )
+    elif (
+        active_entry is None
+        or active_entry.kind != "file"
+        or active_entry.sha256 != active_hash
+    ):
+        issues.add("active_hash_mismatch")
+
+    non_compat_problems = (
+        set(missing) | set(changed)
+    ) - {
+        PRELOADER_RELATIVE_PATH,
+        PRELOADER_BACKUP_RELATIVE_PATH,
+        PRELOADER_PROVENANCE_RELATIVE_PATH,
+        _PRELOADER_BACKUP_ROOT,
+        _PRELOADER_COMPAT_ROOT,
+    }
+    if non_compat_problems:
+        issues.add("install_manifest_unhealthy")
+
+    if not reserved_present and not compatibility_entries:
+        if (
+            active_hash is not None
+            and active_hash != EXPECTED_OFFICIAL_PRELOADER_SHA256
+        ):
+            issues.add("active_hash_mismatch")
+        state: Literal["official", "patched", "invalid"] = (
+            "official" if not issues else "invalid"
+        )
+        return PreloaderCompatibilityStatus(
+            state=state,
+            official_sha256=EXPECTED_OFFICIAL_PRELOADER_SHA256,
+            active_sha256=active_hash,
+            patched_sha256=None,
+            issues=tuple(sorted(issues)),
+        )
+
+    if reserved_present and not compatibility_entries:
+        issues.add("unmanaged_reserved_path")
+        return PreloaderCompatibilityStatus(
+            state="invalid",
+            official_sha256=EXPECTED_OFFICIAL_PRELOADER_SHA256,
+            active_sha256=active_hash,
+            patched_sha256=None,
+            issues=tuple(sorted(issues)),
+        )
+
+    if not _compatibility_ownership_is_exact(manifest):
+        issues.add("manifest_compatibility_ownership_mismatch")
+
+    backup_hash = _observed_hash(root, PRELOADER_BACKUP_RELATIVE_PATH)
+    if not _safe_regular_file(root, PRELOADER_BACKUP_RELATIVE_PATH):
+        issues.add(
+            "backup_missing"
+            if _lstat_kind(root / PRELOADER_BACKUP_RELATIVE_PATH) == "absent"
+            else "backup_unsafe"
+        )
+    provenance_path = root / PRELOADER_PROVENANCE_RELATIVE_PATH
+    if not _safe_regular_file(root, PRELOADER_PROVENANCE_RELATIVE_PATH):
+        issues.add(
+            "provenance_missing"
+            if _lstat_kind(provenance_path) == "absent"
+            else "provenance_unsafe"
+        )
+
+    provenance = None
+    if _safe_regular_file(root, PRELOADER_PROVENANCE_RELATIVE_PATH):
+        try:
+            trust = load_trust(
+                repo_root
+                if repo_root is not None
+                else Path(__file__).resolve().parents[2]
+            )
+        except (CompatError, OSError):
+            issues.add("compatibility_trust_invalid")
+        else:
+            try:
+                provenance = load_provenance(provenance_path, trust)
+            except (CompatError, OSError):
+                issues.add("provenance_invalid")
+
+    patched_hash = (
+        provenance.patched_preloader_sha256
+        if provenance is not None
+        else None
+    )
+    backup_entry = _manifest_entry(manifest, PRELOADER_BACKUP_RELATIVE_PATH)
+    provenance_entry = _manifest_entry(
+        manifest, PRELOADER_PROVENANCE_RELATIVE_PATH
+    )
+    provenance_hash = _observed_hash(
+        root, PRELOADER_PROVENANCE_RELATIVE_PATH
+    )
+    if provenance is not None:
+        if (
+            active_hash is not None
+            and (
+                active_hash != provenance.patched_preloader_sha256
+                or active_entry is None
+                or active_entry.sha256
+                != provenance.patched_preloader_sha256
+            )
+        ):
+            issues.add("active_hash_mismatch")
+        if (
+            provenance.official_preloader_sha256
+            != EXPECTED_OFFICIAL_PRELOADER_SHA256
+            or (
+                backup_hash is not None
+                and (
+                    backup_hash != EXPECTED_OFFICIAL_PRELOADER_SHA256
+                    or backup_entry is None
+                    or backup_entry.sha256
+                    != EXPECTED_OFFICIAL_PRELOADER_SHA256
+                )
+            )
+        ):
+            issues.add("backup_hash_mismatch")
+        if (
+            provenance_entry is None
+            or provenance_entry.sha256 != provenance_hash
+        ):
+            issues.add("provenance_hash_mismatch")
+
+    return PreloaderCompatibilityStatus(
+        state="patched" if not issues else "invalid",
+        official_sha256=EXPECTED_OFFICIAL_PRELOADER_SHA256,
+        active_sha256=active_hash,
+        patched_sha256=patched_hash,
+        issues=tuple(sorted(issues)),
+    )
+
+
+def status_install(
+    game_root: Path, repo_root: Path | None = None
+) -> InstallStatus:
     """Check every manifest-owned path without modifying the install."""
     game, manifest = _inspected_manifest(game_root)
     missing, changed = _entry_health(game.root, manifest.entries)
@@ -868,6 +1149,9 @@ def status_install(game_root: Path) -> InstallStatus:
         manifest=manifest,
         missing=missing,
         changed=changed,
+        preloader_compatibility=_preloader_compatibility_status(
+            game.root, manifest, missing, changed, repo_root
+        ),
     )
 
 
@@ -945,6 +1229,15 @@ def _status_to_dict(status: InstallStatus) -> dict[str, object]:
         "missing": list(status.missing),
         "changed": list(status.changed),
         "healthy": status.healthy,
+        "preloader_compatibility": {
+            "state": status.preloader_compatibility.state,
+            "official_sha256": (
+                status.preloader_compatibility.official_sha256
+            ),
+            "active_sha256": status.preloader_compatibility.active_sha256,
+            "patched_sha256": status.preloader_compatibility.patched_sha256,
+            "issues": list(status.preloader_compatibility.issues),
+        },
     }
 
 

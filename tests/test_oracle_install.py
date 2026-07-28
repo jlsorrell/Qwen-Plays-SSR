@@ -897,6 +897,17 @@ def test_cli_status_prints_deterministic_json_and_returns_health_exit_code(
     capsys: pytest.CaptureFixture[str],
 ):
     game, archive = make_known_game(tmp_path, monkeypatch)
+    official_preloader = b"official preloader"
+    with ZipFile(archive, "a") as zf:
+        zf.writestr(
+            "BepInEx/core/BepInEx.Preloader.dll", official_preloader
+        )
+    pin_runtime_archive(monkeypatch, archive)
+    monkeypatch.setattr(
+        oracle_install,
+        "EXPECTED_OFFICIAL_PRELOADER_SHA256",
+        sha256(official_preloader).hexdigest(),
+    )
     install_runtime(game, archive)
 
     assert main(["status", "--game-root", str(game)]) == 0
@@ -922,6 +933,13 @@ def test_cli_status_prints_deterministic_json_and_returns_health_exit_code(
             "schema_version": 1,
         },
         "missing": [],
+        "preloader_compatibility": {
+            "active_sha256": sha256(official_preloader).hexdigest(),
+            "issues": [],
+            "official_sha256": sha256(official_preloader).hexdigest(),
+            "patched_sha256": None,
+            "state": "official",
+        },
     }
 
     (game / "run_bepinex.sh").write_text("changed")
