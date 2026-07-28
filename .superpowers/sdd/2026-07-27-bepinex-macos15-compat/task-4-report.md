@@ -401,3 +401,45 @@ provenance.
   eligible for staging; owner-local `.DS_Store`, plan, decompilation, README,
   and plugin changes remain untouched.
 - `git diff --check` passed.
+
+## Fix Round 1b: enclosing-repository isolation
+
+Post-review comparison found that the pre-fix canonical hash
+`1339f682...dfd3` and the fresh external-root hash `5a777c72...4816`
+differed despite identical pinned source and build inputs. A controlled build
+below the controller worktree produced `93761fd7...da2f`; its generated
+`BepInEx.Preloader.AssemblyInfo.cs` contained:
+
+```text
+AssemblyInformationalVersion("5.4.23.5+0a926a1a7f11a5f52b31cc5455207dc6dc875940")
+```
+
+The prepared source has no `.git`, so Microsoft SourceLink walked into the
+enclosing controller repository and incorporated its current HEAD. External
+roots had no enclosing repository and generated plain `5.4.23.5`.
+
+`GIT_CEILING_DIRECTORIES` and a forced non-repository `GIT_DIR` were tested but
+did not suppress the SDK SourceLink provider. The exact build contract now
+locks `EnableSourceControlManagerQueries=false`, the documented SourceLink
+switch which prevents source-control discovery. The property is present in
+`oracle/compat/toolchain.json`, the strict Python expected-property map, and
+each publish command. Canonical hashes were updated together:
+
+```text
+toolchain.json SHA-256:
+cebe2e9b504f7a281dbbe0cd65c4e3191010c37ebcc703ee8d3518be5f7c13d8
+```
+
+Focused command-contract TDD was RED before the switch and GREEN after it.
+With the single locked property, a real output root nested below the controller
+worktree generated informational version `5.4.23.5` and converged exactly to
+the external-root DLL:
+
+```text
+in-repository SHA-256: 5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816
+external SHA-256:      5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816
+```
+
+The scope expansion to `oracle/compat/toolchain.json` and
+`oracle/compat/trust.json` was explicitly authorized after the environment-only
+isolation proved ineffective.

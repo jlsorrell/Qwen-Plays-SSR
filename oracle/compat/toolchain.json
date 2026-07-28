@@ -3,6 +3,7 @@
     "Configuration": "Release",
     "ContinuousIntegrationBuild": "true",
     "Deterministic": "true",
+    "EnableSourceControlManagerQueries": "false",
     "PathMap": "{source_root}=/_/src"
   },
   "dotnet_sdk_archive_sha512": "8a539eeefd2a8e7430c1967584a79dac366faad732541dfb8ed90192de776bd5be94170dfac493ee6b4a8ae2603de9952ce2d2b9022e90003c4b62d7aeb2379a",

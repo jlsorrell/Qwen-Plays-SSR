@@ -1250,6 +1250,10 @@ def test_build_restore_uses_locked_mode_without_unsupported_framework_switch(
     ]
     assert len(publishes) == 2
     assert all("-p:BuildInParallel=false" in command for command in publishes)
+    assert all(
+        "-p:EnableSourceControlManagerQueries=false" in command
+        for command in publishes
+    )
 
 
 def test_build_cli_routes_exact_paths(compat_cli, monkeypatch, tmp_path, capsys):

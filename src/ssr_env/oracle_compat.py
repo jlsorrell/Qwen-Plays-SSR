@@ -687,6 +687,7 @@ _EXPECTED_BUILD_PROPERTIES = {
     "Configuration": "Release",
     "ContinuousIntegrationBuild": "true",
     "Deterministic": "true",
+    "EnableSourceControlManagerQueries": "false",
     "PathMap": "{source_root}=/_/src",
 }
 _BUILD_TIMEOUT_SECONDS = 300
@@ -1143,6 +1144,10 @@ def _build_once(
             f"-p:ContinuousIntegrationBuild={properties['ContinuousIntegrationBuild']}",
             f"-p:PathMap={path_map}",
             "-p:BuildInParallel=false",
+            (
+                "-p:EnableSourceControlManagerQueries="
+                f"{properties['EnableSourceControlManagerQueries']}"
+            ),
         ],
         cwd=prepared,
         env=environment,
