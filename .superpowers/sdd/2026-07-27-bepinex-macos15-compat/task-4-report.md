@@ -458,3 +458,68 @@ provenance files were also byte-identical and recorded toolchain lock
 `cebe2e9b...c13d8`. The game assembly remained
 `886660b5...1c564`, `git diff --check` passed, and the ignored in-repository
 acceptance output introduced no stageable generated file.
+
+## Fix Round 2 evidence
+
+### Authenticated inspector runtime
+
+Builder-side attestation no longer launches the inspector apphost with
+`DOTNET_ROOT` pointing at the repository runtime. `inspect_assembly` retains
+its existing two-argument behavior for the public CLI/tests and accepts an
+optional explicit verified `dotnet`. The compatibility builder passes its
+freshly archive-authenticated `sdk_path`; inspection executes:
+
+```text
+<work>/verified-sdk/dotnet
+<work>/inspector/publish/SsrOracle.CompatInspector.dll
+--require-platform-patch
+<work>/build-a/publish/BepInEx.Preloader.dll
+```
+
+`DOTNET_ROOT` is exactly `<work>/verified-sdk`, inherited architecture-specific
+`DOTNET_ROOT_*` overrides are removed, and `DOTNET_MULTILEVEL_LOOKUP=0`.
+Focused regressions poison the inherited ARM64/X64 runtime variables with the
+repository path, then verify the sanitized environment, DLL-hosted invocation,
+and builder forwarding. The repository runtime cannot participate in hostfxr
+or CoreCLR resolution. Focused result: `2 passed`.
+
+### Malformed switch IL
+
+The switch-operand decoder now reads and validates the count before
+multiplication. Negative counts and counts larger than the remaining IL table
+capacity throw `BadImageFormatException("invalid switch operand")`; no checked
+integer overflow can escape the invalid-assembly boundary.
+
+A compiled test mutator locates the exact
+`BepInEx.Preloader.PlatformUtils.SetPlatform` method and changes its real
+`switch` count to `-1` and `Int32.MaxValue`. Before the fix the negative case
+reported only a generic truncated operand and the oversized case aborted with
+exit `-6`. Both now emit `invalid managed assembly: invalid switch operand`
+and exit `2`. Focused result: `2 passed`.
+
+Full post-change suite:
+
+```text
+68 passed in 34.08s
+```
+
+### Real authenticated build and final audit
+
+One real CLI invocation used fresh root
+`/private/tmp/ssr-task4-round2.LSaM0G`. Its authenticated SDK extraction built
+two independent internal roots; both DLLs were byte-identical:
+
+```text
+5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816
+```
+
+The freshly authenticated `verified-sdk/dotnet` then ran the inspector DLL in
+patch mode against the published result. The exact compiled patch, assembly
+identity/version, CLR2 metadata, complete nine-reference map, and inferred
+net35 target all passed. Canonical provenance retains framework-bearing target
+and toolchain lock `cebe2e9b...c13d8`; canonical `current.json` points to the
+matching hash-addressed pair.
+
+The installed game assembly remained read-only at SHA-256
+`886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564`.
+`git diff --check` passed, and no generated Task 4 file is stageable.

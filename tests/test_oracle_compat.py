@@ -212,6 +212,118 @@ def built_inspector(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="module")
+def switch_il_mutator(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = Path(__file__).resolve().parents[1]
+    sdk = root / "data/oracle/compat/dotnet-8.0.419/dotnet"
+    project_root = tmp_path_factory.mktemp("switch-mutator")
+    (project_root / "SwitchMutator.csproj").write_text(
+        """<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+</Project>
+"""
+    )
+    (project_root / "Program.cs").write_text(
+        """using System.Buffers.Binary;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+
+byte[] data = File.ReadAllBytes(args[0]);
+using PEReader pe = new(new MemoryStream(data));
+MetadataReader metadata = pe.GetMetadataReader();
+MethodDefinition? match = null;
+foreach (TypeDefinitionHandle typeHandle in metadata.TypeDefinitions)
+{
+    TypeDefinition type = metadata.GetTypeDefinition(typeHandle);
+    if (metadata.GetString(type.Name) != "PlatformUtils"
+        || metadata.GetString(type.Namespace) != "BepInEx.Preloader")
+    {
+        continue;
+    }
+    foreach (MethodDefinitionHandle methodHandle in type.GetMethods())
+    {
+        MethodDefinition method = metadata.GetMethodDefinition(methodHandle);
+        if (metadata.GetString(method.Name) == "SetPlatform")
+        {
+            match = method;
+        }
+    }
+}
+MethodDefinition target = match
+    ?? throw new InvalidOperationException("method missing");
+byte[] il = pe.GetMethodBody(target.RelativeVirtualAddress).GetILBytes().ToArray();
+int switchOffset = -1;
+for (int index = 0; index <= il.Length - 5; index++)
+{
+    int count = BinaryPrimitives.ReadInt32LittleEndian(il.AsSpan(index + 1, 4));
+    if (il[index] == 0x45
+        && count > 0
+        && count <= (il.Length - index - 5) / 4)
+    {
+        if (switchOffset != -1)
+        {
+            throw new InvalidOperationException("duplicate switch");
+        }
+        switchOffset = index;
+    }
+}
+if (switchOffset == -1)
+{
+    throw new InvalidOperationException("switch missing");
+}
+SectionHeader section = pe.PEHeaders.SectionHeaders.Single(
+    candidate => target.RelativeVirtualAddress >= candidate.VirtualAddress
+        && target.RelativeVirtualAddress
+            < candidate.VirtualAddress
+                + Math.Max(candidate.VirtualSize, candidate.SizeOfRawData));
+int bodyOffset = section.PointerToRawData
+    + target.RelativeVirtualAddress
+    - section.VirtualAddress;
+int headerSize;
+if ((data[bodyOffset] & 3) == 2)
+{
+    headerSize = 1;
+}
+else
+{
+    ushort flagsAndSize = BinaryPrimitives.ReadUInt16LittleEndian(
+        data.AsSpan(bodyOffset, 2));
+    headerSize = ((flagsAndSize >> 12) & 0xF) * 4;
+}
+BinaryPrimitives.WriteInt32LittleEndian(
+    data.AsSpan(bodyOffset + headerSize + switchOffset + 1, 4),
+    int.Parse(args[2]));
+File.WriteAllBytes(args[1], data);
+"""
+    )
+    output = project_root / "publish"
+    environment = os.environ.copy()
+    environment["DOTNET_CLI_HOME"] = str(project_root / "dotnet-home")
+    environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"
+    result = subprocess.run(
+        [
+            str(sdk),
+            "publish",
+            str(project_root / "SwitchMutator.csproj"),
+            "--configuration",
+            "Release",
+            "--output",
+            str(output),
+            "--disable-build-servers",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=300,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return output / "SwitchMutator"
+
+
+@pytest.fixture(scope="module")
 def synthetic_net35_preloader(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Path:
@@ -238,12 +350,26 @@ def synthetic_net35_preloader(
     (project_root / "Marker.cs").write_text(
         """namespace BepInEx.Preloader
 {
-    public sealed class Marker
+    public static class PlatformUtils
     {
-        public static int Count()
+        public static int SetPlatform(int value)
         {
-            return System.Linq.Enumerable.Count(
-                System.Linq.Enumerable.Empty<int>());
+            switch (value)
+            {
+                case 0:
+                    return "/System/Library/CoreServices".Length;
+                case 1:
+                    return 11;
+                case 2:
+                    return 12;
+                case 3:
+                    return 13;
+                case 4:
+                    return 14;
+                default:
+                    return System.Linq.Enumerable.Count(
+                        System.Linq.Enumerable.Empty<int>());
+            }
         }
     }
 }
@@ -365,7 +491,7 @@ def _fake_build_process(
     *,
     authenticate_sdk: bool = True,
 ):
-    state = {"publish": 0, "commands": []}
+    state = {"publish": 0, "commands": [], "inspections": []}
 
     def execute(command, *, cwd, env):
         state["commands"].append(command)
@@ -387,10 +513,11 @@ def _fake_build_process(
         "ssr_env.oracle_compat._execute_build_command",
         execute,
     )
-    monkeypatch.setattr(
-        "ssr_env.oracle_compat.inspect_assembly",
-        lambda path, inspector, **kwargs: _legacy_metadata(),
-    )
+    def inspect(path, inspector, **kwargs):
+        state["inspections"].append(kwargs.get("verified_dotnet"))
+        return _legacy_metadata()
+
+    monkeypatch.setattr("ssr_env.oracle_compat.inspect_assembly", inspect)
     if authenticate_sdk:
         def fake_authenticate_sdk(supplied_sdk, repo_root, toolchain, work):
             executable = work / "verified-sdk/dotnet"
@@ -832,6 +959,71 @@ def test_inspector_reports_identity_version_clr_and_references(
     assert metadata.references == LEGACY_REFERENCES
 
 
+def test_inspector_uses_explicit_verified_dotnet_runtime(
+    monkeypatch,
+    tmp_path: Path,
+):
+    assembly = tmp_path / "assembly.dll"
+    assembly.write_bytes(b"managed fixture")
+    verified_root = tmp_path / "verified-sdk"
+    verified_root.mkdir()
+    dotnet = verified_root / "dotnet"
+    dotnet.write_bytes(b"verified host")
+    dotnet.chmod(0o755)
+    inspector = tmp_path / "inspector/SsrOracle.CompatInspector"
+    inspector.parent.mkdir()
+    inspector.write_bytes(b"apphost")
+    inspector.chmod(0o755)
+    inspector_dll = inspector.parent / f"{inspector.name}.dll"
+    inspector_dll.write_bytes(b"inspector assembly")
+    observed = {}
+    repository_runtime = (
+        Path(__file__).resolve().parents[1]
+        / "data/oracle/compat/dotnet-8.0.419"
+    )
+    monkeypatch.setenv("DOTNET_ROOT_ARM64", str(repository_runtime))
+    monkeypatch.setenv("DOTNET_ROOT_X64", str(repository_runtime))
+
+    def run(command, **kwargs):
+        observed["command"] = command
+        observed["environment"] = kwargs["env"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            canonical_json(
+                {
+                    "assembly_name": "BepInEx.Preloader",
+                    "assembly_version": "5.4.23.5",
+                    "metadata_version": "v2.0.50727",
+                    "references": dict(LEGACY_REFERENCES),
+                    "target_framework": ".NETFramework,Version=v3.5",
+                }
+            ),
+            b"",
+        )
+
+    monkeypatch.setattr(oracle_compat.subprocess, "run", run)
+    inspect_assembly(
+        assembly,
+        inspector,
+        require_platform_patch=True,
+        verified_dotnet=dotnet,
+    )
+
+    assert observed["command"] == [
+        str(dotnet),
+        str(inspector_dll),
+        "--require-platform-patch",
+        str(assembly),
+    ]
+    assert observed["environment"]["DOTNET_ROOT"] == str(verified_root)
+    assert "DOTNET_ROOT_ARM64" not in observed["environment"]
+    assert "DOTNET_ROOT_X64" not in observed["environment"]
+    assert observed["environment"]["DOTNET_MULTILEVEL_LOOKUP"] == "0"
+    assert str(repository_runtime) not in observed["command"]
+    assert observed["environment"]["DOTNET_ROOT"] != str(repository_runtime)
+
+
 def test_inspector_rejects_missing_net35_reference_signal(
     net35_without_system_core: Path,
     built_inspector: Path,
@@ -889,6 +1081,51 @@ def test_inspector_rejects_managed_native_header(
 
     with pytest.raises(CompatError, match="metadata is invalid"):
         inspect_assembly(changed, built_inspector)
+
+
+@pytest.mark.parametrize("switch_count", [-1, 0x7FFFFFFF])
+def test_inspector_reports_malformed_switch_il_as_invalid_assembly(
+    synthetic_net35_preloader: Path,
+    built_inspector: Path,
+    switch_il_mutator: Path,
+    tmp_path: Path,
+    switch_count: int,
+):
+    changed = tmp_path / f"malformed-switch-{switch_count}.dll"
+    environment = os.environ.copy()
+    environment["DOTNET_ROOT"] = str(
+        Path(__file__).resolve().parents[1]
+        / "data/oracle/compat/dotnet-8.0.419"
+    )
+    mutation = subprocess.run(
+        [
+            str(switch_il_mutator),
+            str(synthetic_net35_preloader),
+            str(changed),
+            str(switch_count),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        timeout=30,
+    )
+    assert mutation.returncode == 0, mutation.stderr
+
+    result = subprocess.run(
+        [
+            str(built_inspector),
+            "--require-platform-patch",
+            str(changed),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        timeout=30,
+    )
+
+    assert result.returncode == 2
+    assert b"invalid managed assembly" in result.stderr
+    assert b"invalid switch operand" in result.stderr
 
 
 def test_inspector_requires_compiled_platform_patch(
@@ -1022,6 +1259,7 @@ def test_build_executes_sdk_from_fresh_verified_extraction(
     assert extracted.name == "dotnet"
     assert extracted.parent.name == "verified-sdk"
     assert extracted != root / "data/oracle/compat/dotnet-8.0.419/dotnet"
+    assert state["inspections"] == [extracted]
 
 
 @pytest.mark.parametrize(

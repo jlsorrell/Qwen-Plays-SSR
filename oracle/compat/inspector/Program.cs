@@ -84,14 +84,14 @@ internal static class Program
         AssemblyDefinition definition = metadata.GetAssemblyDefinition();
         string assemblyName = RequiredString(metadata, definition.Name, "assembly name");
         SortedDictionary<string, string> references = ReadReferences(metadata);
-        string targetFramework = ReadTargetFramework(
-            metadata,
-            definition,
-            references);
         if (requirePlatformPatch)
         {
             RequirePlatformPatch(pe, metadata);
         }
+        string targetFramework = ReadTargetFramework(
+            metadata,
+            definition,
+            references);
 
         using Utf8JsonWriter writer = new(
             output,
@@ -207,6 +207,20 @@ internal static class Program
 
     private static void SkipOperand(ref BlobReader reader, OperandType operandType)
     {
+        if (operandType == OperandType.InlineSwitch)
+        {
+            if (reader.RemainingBytes < sizeof(int))
+            {
+                throw new BadImageFormatException("invalid switch operand");
+            }
+            int count = reader.ReadInt32();
+            if (count < 0 || count > reader.RemainingBytes / sizeof(int))
+            {
+                throw new BadImageFormatException("invalid switch operand");
+            }
+            reader.ReadBytes(count * sizeof(int));
+            return;
+        }
         int bytes = operandType switch
         {
             OperandType.InlineNone => 0,
@@ -224,13 +238,8 @@ internal static class Program
                 or OperandType.InlineType
                 or OperandType.ShortInlineR => 4,
             OperandType.InlineI8 or OperandType.InlineR => 8,
-            OperandType.InlineSwitch => checked(4 + 4 * reader.ReadInt32()),
             _ => throw new BadImageFormatException("unsupported IL operand"),
         };
-        if (operandType == OperandType.InlineSwitch)
-        {
-            bytes -= 4;
-        }
         if (bytes < 0 || reader.RemainingBytes < bytes)
         {
             throw new BadImageFormatException("truncated IL operand");

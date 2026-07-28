@@ -698,19 +698,33 @@ def inspect_assembly(
     inspector: Path,
     *,
     require_platform_patch: bool = False,
+    verified_dotnet: Path | None = None,
 ) -> AssemblyMetadata:
     """Inspect a managed PE through the non-loading metadata executable."""
     assembly = Path(path).resolve(strict=True)
     executable = Path(inspector).resolve(strict=True)
     environment = os.environ.copy()
-    local_runtime = (
-        Path(__file__).resolve().parents[2]
-        / "data/oracle/compat/dotnet-8.0.419"
-    )
-    if local_runtime.is_dir():
-        environment["DOTNET_ROOT"] = str(local_runtime)
-    try:
+    command: list[str]
+    if verified_dotnet is not None:
+        dotnet = Path(verified_dotnet).resolve(strict=True)
+        inspector_dll = (
+            executable.parent / f"{executable.name}.dll"
+        ).resolve(strict=True)
+        for name in list(environment):
+            if name == "DOTNET_ROOT" or name.startswith("DOTNET_ROOT_"):
+                del environment[name]
+        environment["DOTNET_ROOT"] = str(dotnet.parent)
+        environment["DOTNET_MULTILEVEL_LOOKUP"] = "0"
+        command = [str(dotnet), str(inspector_dll)]
+    else:
+        local_runtime = (
+            Path(__file__).resolve().parents[2]
+            / "data/oracle/compat/dotnet-8.0.419"
+        )
+        if local_runtime.is_dir():
+            environment["DOTNET_ROOT"] = str(local_runtime)
         command = [str(executable)]
+    try:
         if require_platform_patch:
             command.append("--require-platform-patch")
         command.append(str(assembly))
@@ -1353,7 +1367,12 @@ def build_compat_preloader(
     if first_bytes != second_bytes:
         raise CompatError("two fresh builds are not byte-identical")
 
-    metadata = inspect_assembly(first, inspector, require_platform_patch=True)
+    metadata = inspect_assembly(
+        first,
+        inspector,
+        require_platform_patch=True,
+        verified_dotnet=sdk_path,
+    )
     _validate_legacy_metadata(metadata, toolchain)
     patched_hash = _sha256(first_bytes)
     if patched_hash == toolchain.official_preloader_sha256:
