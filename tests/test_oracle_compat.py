@@ -11,10 +11,14 @@ import pytest
 
 from ssr_env.oracle_compat import (
     CompatError,
+    SourceCheckout,
     canonical_json,
     load_provenance,
     load_trust,
     parse_trust_data,
+    prepare_source,
+    source_differences,
+    validate_source_checkout,
 )
 
 
@@ -119,6 +123,35 @@ def committed_compat_repo(tmp_path: Path) -> Path:
         check=True,
     )
     return tmp_path
+
+
+@pytest.fixture(scope="module")
+def pinned_recursive_checkout() -> Path:
+    checkout = (
+        Path(__file__).resolve().parents[1]
+        / "data/oracle/compat/upstream/BepInEx-5.4.23.5"
+    )
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=checkout,
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+        == ""
+    )
+    return checkout
+
+
+@pytest.fixture
+def recursive_source_checkout(
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+) -> Path:
+    checkout = tmp_path / "source"
+    shutil.copytree(pinned_recursive_checkout, checkout, symlinks=True)
+    return checkout
 
 
 @pytest.fixture
@@ -232,3 +265,175 @@ def test_load_provenance_rejects_noncanonical_json(
     valid_provenance.write_text(json.dumps(json.loads(valid_provenance.read_text())))
     with pytest.raises(CompatError, match="canonical"):
         load_provenance(valid_provenance, trust)
+
+
+def test_prepare_source_changes_only_platform_cs_one_hunk(
+    pinned_recursive_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(pinned_recursive_checkout, trust)
+    prepared = prepare_source(source, tmp_path / "prepared", trust)
+    platform = prepared / "BepInEx.Preloader/Platform.cs"
+    assert "AccessibilityBundles" not in platform.read_text(encoding="utf-8-sig")
+    assert platform.read_text(encoding="utf-8-sig").count(
+        "/System/Library/CoreServices"
+    ) == 1
+    changed = source_differences(pinned_recursive_checkout, prepared)
+    assert changed == ["BepInEx.Preloader/Platform.cs"]
+
+
+def test_validate_source_checkout_rejects_wrong_head(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+):
+    marker = recursive_source_checkout / "wrong-head"
+    marker.write_text("new commit\n")
+    subprocess.run(
+        ["git", "add", "wrong-head"], cwd=recursive_source_checkout, check=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "wrong head",
+        ],
+        cwd=recursive_source_checkout,
+        check=True,
+    )
+    with pytest.raises(CompatError, match="source commit"):
+        validate_source_checkout(
+            recursive_source_checkout, load_trust(committed_compat_repo)
+        )
+
+
+def test_validate_source_checkout_rejects_dirty_tracked_file(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+):
+    (recursive_source_checkout / "README.md").write_text("dirty\n")
+    with pytest.raises(CompatError, match="clean checkout"):
+        validate_source_checkout(
+            recursive_source_checkout, load_trust(committed_compat_repo)
+        )
+
+
+def test_validate_source_checkout_rejects_untracked_file(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+):
+    (recursive_source_checkout / "untracked").write_text("untracked\n")
+    with pytest.raises(CompatError, match="clean checkout"):
+        validate_source_checkout(
+            recursive_source_checkout, load_trust(committed_compat_repo)
+        )
+
+
+def test_validate_source_checkout_requires_exact_harmony_submodule(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+):
+    harmony = recursive_source_checkout / "submodules/BepInEx.Harmony"
+    previous = subprocess.run(
+        ["git", "rev-parse", "HEAD^"],
+        cwd=harmony,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "-q", previous], cwd=harmony, check=True)
+    with pytest.raises(CompatError, match="submodule commit"):
+        validate_source_checkout(
+            recursive_source_checkout, load_trust(committed_compat_repo)
+        )
+
+
+def test_prepare_source_rejects_already_patched_source(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    patch = committed_compat_repo / "oracle/compat/bepinex-macos15-platform.patch"
+    subprocess.run(
+        ["git", "apply", str(patch)],
+        cwd=recursive_source_checkout,
+        check=True,
+    )
+    with pytest.raises(CompatError, match="patch preimage"):
+        prepare_source(source, tmp_path / "prepared", trust)
+
+
+def test_prepare_source_rejects_changed_preimage(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    platform = recursive_source_checkout / "BepInEx.Preloader/Platform.cs"
+    platform.write_text(
+        platform.read_text(encoding="utf-8-sig").replace(
+            "current = Platform.Android;", "current = Platform.Windows;"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(CompatError, match="patch preimage"):
+        prepare_source(source, tmp_path / "prepared", trust)
+
+
+def test_validate_source_checkout_rejects_symlinked_root(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    link = tmp_path / "source-link"
+    link.symlink_to(recursive_source_checkout, target_is_directory=True)
+    with pytest.raises(CompatError, match="checkout root"):
+        validate_source_checkout(link, load_trust(committed_compat_repo))
+
+
+def test_prepare_source_rejects_symlinked_patch_target(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+    tmp_path: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    platform = recursive_source_checkout / "BepInEx.Preloader/Platform.cs"
+    original = recursive_source_checkout / "Platform-original.cs"
+    platform.rename(original)
+    platform.symlink_to(original)
+    with pytest.raises(CompatError, match="patch target"):
+        prepare_source(source, tmp_path / "prepared", trust)
+
+
+def test_prepare_source_rejects_destination_inside_checkout(
+    recursive_source_checkout: Path,
+    committed_compat_repo: Path,
+):
+    trust = load_trust(committed_compat_repo)
+    source = validate_source_checkout(recursive_source_checkout, trust)
+    with pytest.raises(CompatError, match="outside source checkout"):
+        prepare_source(source, recursive_source_checkout / "prepared", trust)
+    assert not (recursive_source_checkout / "prepared").exists()
+
+
+def test_source_checkout_is_an_immutable_resolved_record(
+    pinned_recursive_checkout: Path,
+    committed_compat_repo: Path,
+):
+    source = validate_source_checkout(
+        pinned_recursive_checkout, load_trust(committed_compat_repo)
+    )
+    assert isinstance(source, SourceCheckout)
+    assert source.root == pinned_recursive_checkout.resolve()
+    with pytest.raises(AttributeError):
+        source.source_commit = "0" * 40

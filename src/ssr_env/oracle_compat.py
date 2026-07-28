@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -48,6 +50,13 @@ class PackagePin:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceCheckout:
+    root: Path
+    source_commit: str
+    harmony_submodule_commit: str
+
+
+@dataclass(frozen=True, slots=True)
 class BuildProvenance:
     schema_version: int
     source_commit: str
@@ -63,6 +72,12 @@ class BuildProvenance:
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _LOWER_SHA512 = re.compile(r"[0-9a-f]{128}\Z")
 _LOWER_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_SOURCE_COMMIT = "57f1fb859bd4d0264cd2a59074d0e96c6a492a33"
+_HARMONY_SUBMODULE_COMMIT = "d4cdcb4cdeac14a0b77012165f5f5a9f5032a9fa"
+_HARMONY_SUBMODULE_PATH = "submodules/BepInEx.Harmony"
+_PLATFORM_RELATIVE = "BepInEx.Preloader/Platform.cs"
+_OLD_PLATFORM_PROBE = "/System/Library/AccessibilityBundles"
+_NEW_PLATFORM_PROBE = "/System/Library/CoreServices"
 _TRUST_KEYS = {
     "schema_version",
     "patch_sha256",
@@ -316,6 +331,238 @@ def parse_toolchain_data(data: object) -> ToolchainLock:
 
 def load_toolchain(path: Path) -> ToolchainLock:
     return parse_toolchain_data(_decode_canonical(path, "toolchain"))
+
+
+def _git_text(root: Path, arguments: list[str], label: str) -> str:
+    try:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=root,
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CompatError(f"{label} cannot be inspected") from exc
+
+
+def _tracked_relatives(root: Path) -> tuple[str, ...]:
+    try:
+        output = subprocess.run(
+            ["git", "ls-files", "-z", "--recurse-submodules"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout
+        decoded = output.decode("utf-8")
+    except (OSError, UnicodeDecodeError, subprocess.CalledProcessError) as exc:
+        raise CompatError("source checkout tracked files cannot be inspected") from exc
+    relatives = tuple(item for item in decoded.split("\0") if item)
+    if not relatives:
+        raise CompatError("source checkout has no tracked files")
+    for relative in relatives:
+        _relative_path(relative, "source tracked file")
+    return relatives
+
+
+def _has_symlink_component(root: Path, relative: str) -> bool:
+    current = root
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def validate_source_checkout(source: Path, trust: CompatTrust) -> SourceCheckout:
+    """Validate the exact clean recursive BepInEx checkout."""
+    if not isinstance(trust, CompatTrust):
+        raise CompatError("source trust is invalid")
+    source_path = Path(source)
+    if source_path.is_symlink():
+        raise CompatError("source checkout root must not be symlinked")
+    try:
+        root = source_path.resolve(strict=True)
+    except OSError as exc:
+        raise CompatError("source checkout root cannot be resolved") from exc
+    if not root.is_dir():
+        raise CompatError("source checkout root must be a directory")
+
+    source_commit = _git_text(root, ["rev-parse", "HEAD"], "source commit").strip()
+    if source_commit != _SOURCE_COMMIT:
+        raise CompatError("source commit does not match the pinned commit")
+
+    submodule_lines = _git_text(
+        root, ["submodule", "status", "--recursive"], "submodule commit"
+    ).splitlines()
+    if len(submodule_lines) != 1:
+        raise CompatError("submodule commit does not match the pinned recursive tree")
+    status = submodule_lines[0]
+    fields = status[1:].split()
+    if (
+        not status.startswith(" ")
+        or len(fields) < 2
+        or fields[0] != _HARMONY_SUBMODULE_COMMIT
+        or fields[1] != _HARMONY_SUBMODULE_PATH
+    ):
+        raise CompatError("submodule commit does not match the pinned recursive tree")
+
+    dirty = _git_text(
+        root,
+        ["status", "--porcelain=v1", "--untracked-files=all"],
+        "clean checkout",
+    )
+    if dirty != "":
+        raise CompatError("source must be a clean checkout")
+    if _has_symlink_component(root, _PLATFORM_RELATIVE):
+        raise CompatError("source patch target must not be symlinked")
+
+    return SourceCheckout(
+        root=root,
+        source_commit=source_commit,
+        harmony_submodule_commit=_HARMONY_SUBMODULE_COMMIT,
+    )
+
+
+def _copy_tracked_source(source: Path, destination: Path) -> dict[str, str]:
+    before: dict[str, str] = {}
+    for relative in _tracked_relatives(source):
+        if _has_symlink_component(source, relative):
+            raise CompatError(f"source tracked file is symlinked: {relative}")
+        source_file = source / relative
+        if not source_file.is_file():
+            raise CompatError(f"source tracked file cannot be read: {relative}")
+        data = source_file.read_bytes()
+        before[relative] = _sha256(data)
+        destination_file = destination / relative
+        destination_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_file, destination_file)
+        if _sha256(destination_file.read_bytes()) != before[relative]:
+            raise CompatError(f"source copy hash mismatch: {relative}")
+    return before
+
+
+def _compat_patch(trust: CompatTrust) -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+    relative = "oracle/compat/bepinex-macos15-platform.patch"
+    patch = repo_root / relative
+    if patch.is_symlink():
+        raise CompatError("compatibility patch must not be symlinked")
+    data = _require_head_blob(repo_root, relative)
+    if _sha256(data) != trust.patch_sha256:
+        raise CompatError("compatibility patch does not match trust")
+    try:
+        return patch.resolve(strict=True)
+    except OSError as exc:
+        raise CompatError("compatibility patch cannot be resolved") from exc
+
+
+def prepare_source(
+    source: SourceCheckout,
+    destination: Path,
+    trust: CompatTrust,
+) -> Path:
+    """Copy and patch a validated checkout without mutating its Git tree."""
+    if not isinstance(source, SourceCheckout) or not isinstance(trust, CompatTrust):
+        raise CompatError("source preparation inputs are invalid")
+    if source.root.is_symlink() or _has_symlink_component(
+        source.root, _PLATFORM_RELATIVE
+    ):
+        raise CompatError("source patch target must not be symlinked")
+    destination_path = Path(destination)
+    if destination_path.exists() or destination_path.is_symlink():
+        raise CompatError("prepared source destination must be absent")
+    destination_root = destination_path.resolve(strict=False)
+    if destination_root.is_relative_to(source.root):
+        raise CompatError("prepared source destination must be outside source checkout")
+    destination_root.mkdir(parents=True)
+
+    platform_source = source.root / _PLATFORM_RELATIVE
+    try:
+        preimage = platform_source.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise CompatError("patch preimage cannot be read") from exc
+    if (
+        preimage.count(_OLD_PLATFORM_PROBE) != 1
+        or preimage.count(_NEW_PLATFORM_PROBE) != 0
+    ):
+        raise CompatError("patch preimage does not match the pinned source")
+
+    before = _copy_tracked_source(source.root, destination_root)
+    patch = _compat_patch(trust)
+    patch_text = patch.read_text(encoding="utf-8")
+    if not any(
+        line.startswith("+") and "current = Platform.MacOS;" in line
+        for line in patch_text.splitlines()
+    ):
+        raise CompatError("patch preimage does not contain the macOS platform hunk")
+    apply_environment = os.environ.copy()
+    apply_environment["GIT_CEILING_DIRECTORIES"] = str(destination_root.parent)
+    try:
+        subprocess.run(
+            ["git", "apply", "--check", str(patch)],
+            cwd=destination_root,
+            check=True,
+            text=True,
+            capture_output=True,
+            env=apply_environment,
+        )
+        subprocess.run(
+            ["git", "apply", str(patch)],
+            cwd=destination_root,
+            check=True,
+            text=True,
+            capture_output=True,
+            env=apply_environment,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CompatError(
+            "patch preimage does not accept the compatibility patch"
+        ) from exc
+
+    after = {
+        relative: _sha256((destination_root / relative).read_bytes())
+        for relative in before
+    }
+    changed = sorted(
+        relative for relative in before if before[relative] != after[relative]
+    )
+    if changed != [_PLATFORM_RELATIVE]:
+        raise CompatError("prepared source changed files outside the patch target")
+    platform = (destination_root / _PLATFORM_RELATIVE).read_text(
+        encoding="utf-8-sig"
+    )
+    if (
+        platform.count(_OLD_PLATFORM_PROBE) != 0
+        or platform.count(_NEW_PLATFORM_PROBE) != 1
+        or "current = Platform.MacOS;" not in platform
+    ):
+        raise CompatError("prepared source does not contain the exact macOS probe")
+    return destination_root
+
+
+def source_differences(source: Path, prepared: Path) -> list[str]:
+    """List content differences between tracked source files and a prepared tree."""
+    source_root = Path(source).resolve(strict=True)
+    prepared_root = Path(prepared).resolve(strict=True)
+    tracked = set(_tracked_relatives(source_root))
+    prepared_files = {
+        path.relative_to(prepared_root).as_posix()
+        for path in prepared_root.rglob("*")
+        if path.is_file()
+    }
+    changed: list[str] = []
+    for relative in sorted(tracked | prepared_files):
+        source_file = source_root / relative
+        prepared_file = prepared_root / relative
+        if (
+            relative not in tracked
+            or relative not in prepared_files
+            or _sha256(source_file.read_bytes()) != _sha256(prepared_file.read_bytes())
+        ):
+            changed.append(relative)
+    return changed
 
 
 def load_provenance(path: Path, trust: CompatTrust) -> BuildProvenance:
