@@ -2415,7 +2415,7 @@ def _rollback_preloader_deploy_fd(
                 f"created live directory {name}",
             )
         except (InstallError, OSError) as exc:
-            errors.append(f"cannot remove created live directory {name}: {exc}")
+            errors.append(f"cannot preserve created live directory {name}: {exc}")
     if errors:
         raise InstallError("rollback failed: " + "; ".join(errors))
 
