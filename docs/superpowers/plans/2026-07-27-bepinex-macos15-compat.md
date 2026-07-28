@@ -1085,6 +1085,11 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "_CompatRecovery",
         "_PathEvidence",
     }
+    SAFE_LOCAL_EXCEPTIONS = {
+        "InstallError",
+        "_RenameAtError",
+        "_RetainedDirectoryCollision",
+    }
     forbidden_passive_hooks = {
         "__init__", "__post_init__", "__new__", "__setattr__", "__delattr__",
     }
@@ -1121,10 +1126,9 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
     assert PASSIVE_DATACLASSES <= class_nodes.keys()
     for name in PASSIVE_DATACLASSES:
         class_node = class_nodes[name]
-        assert any(
-            is_dataclass_decorator(item)
-            for item in class_node.decorator_list
-        ), name
+        assert not class_node.keywords, (name, "metaclass/class keywords")
+        assert len(class_node.decorator_list) == 1, (name, "extra decorators")
+        assert is_dataclass_decorator(class_node.decorator_list[0]), name
         custom_hooks = {
             child.name
             for child in class_node.body
@@ -1133,6 +1137,50 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         }
         assert not custom_hooks, (name, custom_hooks)
         assert not has_default_factory(class_node), name
+
+    builtin_exception_bases = {
+        "BaseException", "Exception", "RuntimeError",
+    }
+
+    def is_exception_subclass(name: str, seen: set[str]) -> bool:
+        if name in builtin_exception_bases:
+            return True
+        if name in seen or name not in class_nodes:
+            return False
+        seen = seen | {name}
+        bases = class_nodes[name].bases
+        return bool(bases) and all(
+            isinstance(base, ast.Name)
+            and is_exception_subclass(base.id, seen)
+            for base in bases
+        )
+
+    assert SAFE_LOCAL_EXCEPTIONS <= class_nodes.keys()
+    exception_hooks: dict[str, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for name in SAFE_LOCAL_EXCEPTIONS:
+        class_node = class_nodes[name]
+        assert is_exception_subclass(name, set()), name
+        assert not class_node.decorator_list, (name, "exception decorator")
+        assert not class_node.keywords, (name, "metaclass/class keywords")
+        hooks = {
+            child.name: child
+            for child in class_node.body
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name in {"__new__", "__init__"}
+        }
+        forbidden_hooks = {
+            child.name
+            for child in class_node.body
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name.startswith("__")
+            and child.name.endswith("__")
+            and child.name not in {"__new__", "__init__"}
+        }
+        assert not forbidden_hooks, (name, forbidden_hooks)
+        assert all(not hook.decorator_list for hook in hooks.values()), name
+        exception_hooks[name] = hooks
+        for hook_name, hook in hooks.items():
+            functions[f"{name}.{hook_name}"] = hook
     imported_modules: dict[str, str] = {}
     imported_callables: dict[str, str] = {}
     import_aliases: set[str] = set()
@@ -1163,7 +1211,7 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "builtins.int", "builtins.isinstance", "builtins.len",
         "builtins.list", "builtins.max", "builtins.min",
         "builtins.range", "builtins.reversed", "builtins.set",
-        "builtins.sorted", "builtins.str", "builtins.tuple",
+        "builtins.sorted", "builtins.str", "builtins.super", "builtins.tuple",
         "builtins.zip",
     }
     allowed_external_calls = {
@@ -1188,6 +1236,7 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "stat.S_ISDIR",
         "stat.S_ISLNK",
         "stat.S_ISREG",
+        "builtins.RuntimeError.__init__",
     }
     allowed_transaction_primitives = {
         "module_global._RENAMEATX_NP",
@@ -1196,6 +1245,10 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
         "asyncio.create_subprocess", "multiprocessing", "os.exec",
         "os.fork", "os.forkpty", "os.popen", "os.posix_spawn",
         "os.spawn", "os.system", "pty", "subprocess",
+    }
+    allowed_exception_super_edges = {
+        ("_RenameAtError.__init__", "__init__"):
+            "builtins.RuntimeError.__init__",
     }
 
     pending = ["restore_preloader"]
@@ -1257,6 +1310,11 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
                     violations.append((function_name, node.lineno, name))
                 elif name in PASSIVE_DATACLASSES:
                     pass
+                elif name in SAFE_LOCAL_EXCEPTIONS:
+                    pending.extend(
+                        f"{name}.{hook_name}"
+                        for hook_name in exception_hooks[name]
+                    )
                 elif name in import_aliases:
                     violations.append(
                         (
@@ -1284,6 +1342,29 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
                     violations.append(
                         (function_name, node.lineno, callee.attr)
                     )
+                    continue
+                is_super_hook = (
+                    isinstance(callee.value, ast.Call)
+                    and isinstance(callee.value.func, ast.Name)
+                    and callee.value.func.id == "super"
+                    and not callee.value.args
+                    and not callee.value.keywords
+                    and callee.attr in {"__new__", "__init__"}
+                )
+                if is_super_hook:
+                    edge = allowed_exception_super_edges.get(
+                        (function_name, callee.attr)
+                    )
+                    if edge is None:
+                        violations.append(
+                            (
+                                function_name,
+                                node.lineno,
+                                f"unresolved exception super hook: {callee.attr}",
+                            )
+                        )
+                    else:
+                        observed_external.add(edge)
                     continue
                 raw = dotted_name(callee)
                 if raw is None:
@@ -1347,6 +1428,11 @@ This test traverses every permitted module-local helper reachable from
 callee, fails closed on unresolved bare/indirect call edges, and rejects
 terminal deletion throughout the graph. The builtin, external, and transaction
 primitive sets are literal qualified-name allowlists, never module wildcards.
+`SAFE_LOCAL_EXCEPTIONS` is a separate literal constructor allowlist: hierarchy,
+decorator/metaclass restrictions, and construction hooks are checked before
+use. Custom `__new__`/`__init__` bodies and their exact modeled `super()` edges
+join the same reachable worklist; inherited/no-hook exceptions are allowed only
+after hierarchy validation.
 An implementation edge not already listed must route through a reviewed
 module-level local wrapper or receive an explicit literal entry after its
 non-mutating contract is verified. Opaque imported helpers remain forbidden;

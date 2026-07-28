@@ -435,13 +435,25 @@ constructor is unresolved and rejected. If a construction hook becomes
 necessary, its work moves to a directly reachable module-level helper and is
 audited there rather than silently broadening passive-class inference.
 
+Local exception construction uses a separate exact
+`SAFE_LOCAL_EXCEPTIONS` allowlist. Every entry must exist, be provably derived
+from `BaseException`, have no decorators or metaclass/class keywords, and
+define no special construction hook except an explicitly modeled `__new__` or
+`__init__`. An allowed exception with either hook is not passive: its hook body
+is enqueued and traversed by the same fail-closed local call-graph and external
+allowlist audit. Inherited/no-hook exception constructors are permitted only
+after the same hierarchy validation. `_RenameAtError.__init__`, including its
+exact inherited `RuntimeError.__init__` edge, is therefore audited rather than
+silently accepted.
+
 The audit rejects terminal deletion calls in the complete reachable graph.
-Independently, runtime tests replace the `os`, `pathlib`, and `shutil` terminal-deletion
-primitives with raising spies while exercising restore success and every
-forward failure, rollback failure, fsync failure, destination collision, and
-substitution case; all spies must record zero calls. An external crash may
-leave the deliberately fail-closed `invalid` state with all copies preserved;
-status reports stable recovery guidance and no command claims success.
+Independently, runtime tests replace the `os`, `pathlib`, and `shutil`
+terminal-deletion primitives with raising spies while exercising restore
+success and every forward failure, rollback failure, fsync failure,
+destination collision, and substitution case; all spies must record zero
+calls. An external crash may leave the deliberately fail-closed `invalid`
+state with all copies preserved; status reports stable recovery guidance and
+no command claims success.
 
 The command verifies the restored DLL hash, mode, manifest health, absence of
 live compatibility entries, and retained recovery contents before reporting
