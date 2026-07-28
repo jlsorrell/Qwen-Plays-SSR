@@ -1670,7 +1670,7 @@ Require literal markers for:
 ```text
 BepInEx 5.4.23.5
 Unity v2018.4.25f1
-[SsrOracle] ready
+SSR oracle boot probe loaded
 ```
 
 Also fail on `DllNotFoundException`, `Preloader error`, unexpected exit, or

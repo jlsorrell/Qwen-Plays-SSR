@@ -506,7 +506,7 @@ The compatibility layer is accepted only through a controlled oracle-mode boot:
 3. enable the narrow boot-probe configuration and launch the exact known game
    process;
 4. wait for bounded log markers showing BepInEx 5.4.23.5, Unity 2018.4.25f1,
-   and the SSR oracle plugin load marker;
+   and the exact plugin load marker `SSR oracle boot probe loaded`;
 5. terminate only the process started by the probe, return mode to `off`, and
    re-run all preflight checks.
 
