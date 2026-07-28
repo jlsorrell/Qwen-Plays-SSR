@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import errno
 import json
 import os
 import secrets
@@ -182,6 +183,7 @@ class _CompatRecovery:
     bep_in_ex: _DirectoryHandle
     backup: _DirectoryHandle
     provenance: _DirectoryHandle
+    cleanup: _DirectoryHandle
 
 
 def _sha256_file(path: Path) -> str:
@@ -988,6 +990,17 @@ _RENAMEATX_NP.argtypes = (
 _RENAMEATX_NP.restype = ctypes.c_int
 
 
+def _require_safe_leaf(name: str, description: str) -> None:
+    if not name or "/" in name or "\x00" in name or name in {".", ".."}:
+        raise InstallError(f"unsafe leaf for {description}")
+
+
+class _RenameAtError(InstallError):
+    def __init__(self, error_number: int, message: str):
+        super().__init__(message)
+        self.error_number = error_number
+
+
 def _renameatx(
     source_parent: _DirectoryHandle,
     source_name: str,
@@ -997,8 +1010,7 @@ def _renameatx(
     description: str,
 ) -> None:
     for name in (source_name, destination_name):
-        if not name or "/" in name or "\x00" in name or name in {".", ".."}:
-            raise InstallError(f"unsafe rename leaf for {description}")
+        _require_safe_leaf(name, f"rename {description}")
     result = _RENAMEATX_NP(
         source_parent.fd,
         os.fsencode(source_name),
@@ -1008,9 +1020,10 @@ def _renameatx(
     )
     if result != 0:
         error_number = ctypes.get_errno()
-        raise InstallError(
+        raise _RenameAtError(
+            error_number,
             f"cannot {description}: "
-            f"[Errno {error_number}] {os.strerror(error_number)}"
+            f"[Errno {error_number}] {os.strerror(error_number)}",
         )
 
 
@@ -1283,6 +1296,7 @@ def _mkdir_open_child(
     name: str,
     description: str,
     boundary_prefix: str,
+    recovery: _CompatRecovery,
 ) -> _DirectoryHandle:
     temporary = f".ssr-oracle-dir-{secrets.token_hex(16)}"
     try:
@@ -1316,16 +1330,83 @@ def _mkdir_open_child(
             raise InstallError("; ".join(errors)) from exc
         cleanup_name = name if published else temporary
         try:
-            _remove_owned_empty_directory_at(
+            _preserve_owned_empty_directory_at(
                 parent,
                 cleanup_name,
                 child,
+                recovery,
                 description,
             )
         except (InstallError, OSError) as cleanup_error:
             child.close()
             errors.append(f"{description} cleanup failed: {cleanup_error}")
         raise InstallError("; ".join(errors)) from exc
+
+
+class _RetainedDirectoryCollision(InstallError):
+    pass
+
+
+def _mkdir_open_retained_child(
+    parent: _DirectoryHandle,
+    name: str,
+    description: str,
+    boundary_prefix: str,
+) -> _DirectoryHandle:
+    _require_safe_leaf(name, description)
+    temporary = ""
+    for _ in range(128):
+        temporary = (
+            f".ssr-oracle-recovery-dir-{secrets.token_hex(16)}"
+        )
+        try:
+            os.mkdir(temporary, 0o700, dir_fd=parent.fd)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise InstallError(
+                f"cannot create temporary {description}: {exc}"
+            ) from exc
+        break
+    else:
+        raise InstallError(
+            f"cannot allocate an exclusive temporary {description}"
+        )
+
+    child: _DirectoryHandle | None = None
+    published = False
+    try:
+        child = _open_child_directory(parent, temporary, description)
+        _verify_named_directory(parent, temporary, child)
+        _renameatx(
+            parent,
+            temporary,
+            parent,
+            name,
+            _RENAME_EXCL,
+            f"publish {description} directory",
+        )
+        published = True
+        _verify_named_directory(parent, name, child)
+        _deploy_preloader_checkpoint(f"{boundary_prefix}_mkdir")
+        _fsync_handle(child, f"{boundary_prefix}_child_fsync")
+        _fsync_handle(parent, f"{boundary_prefix}_parent_fsync")
+        return child
+    except _RenameAtError as exc:
+        if child is not None:
+            child.close()
+        message = (
+            f"{exc}; preserved all partial {description} scaffolding"
+        )
+        if not published and exc.error_number == errno.EEXIST:
+            raise _RetainedDirectoryCollision(message) from exc
+        raise InstallError(message) from exc
+    except Exception as exc:
+        if child is not None:
+            child.close()
+        raise InstallError(
+            f"{exc}; preserved all partial {description} scaffolding"
+        ) from exc
 
 
 def _write_new_file_at(
@@ -1428,113 +1509,45 @@ def _named_file_is_identity(
     )
 
 
-def _remove_owned_file_at(
+def _preserve_owned_file_at(
     parent: _DirectoryHandle,
     name: str,
     identity: _FileIdentity,
+    recovery: _CompatRecovery,
     boundary_prefix: str,
 ) -> None:
-    if not _named_file_is_identity(parent, name, identity):
-        raise InstallError(f"{boundary_prefix} file changed identity")
-    quarantine = f".ssr-oracle-cleanup-{secrets.token_hex(16)}"
-    _renameatx(
+    _preserve_owned_entry_at(
         parent,
         name,
-        parent,
-        quarantine,
-        _RENAME_EXCL,
-        f"quarantine {boundary_prefix} file",
+        "file",
+        identity,
+        recovery,
+        boundary_prefix,
     )
-    if not _named_file_is_identity(parent, quarantine, identity):
-        try:
-            _renameatx(
-                parent,
-                quarantine,
-                parent,
-                name,
-                _RENAME_EXCL,
-                f"restore raced {boundary_prefix} file",
-            )
-            _fsync_rename_parents(
-                parent,
-                parent,
-                f"{boundary_prefix}_restore",
-            )
-        except InstallError as restore_error:
-            raise InstallError(
-                f"{boundary_prefix} file changed during quarantine; "
-                f"restore failed: {restore_error}"
-            ) from restore_error
-        raise InstallError(
-            f"{boundary_prefix} file changed during quarantine"
-        )
-    try:
-        os.unlink(quarantine, dir_fd=parent.fd)
-        _deploy_preloader_checkpoint(f"{boundary_prefix}_unlink")
-        _fsync_handle(parent, f"{boundary_prefix}_parent_fsync")
-    except (InstallError, OSError) as exc:
-        raise InstallError(
-            f"cannot remove quarantined {boundary_prefix} file: {exc}"
-        ) from exc
 
 
-def _remove_owned_empty_directory_at(
+def _preserve_owned_empty_directory_at(
     parent: _DirectoryHandle,
     name: str,
     child: _DirectoryHandle,
+    recovery: _CompatRecovery,
     description: str,
-    rmdir_boundary: str | None = None,
-    parent_fsync_boundary: str | None = None,
 ) -> None:
     _verify_named_directory(parent, name, child)
     if not _directory_is_empty(child):
         raise InstallError(f"{description} is not empty")
-    quarantine = f".ssr-oracle-dir-cleanup-{secrets.token_hex(16)}"
-    _renameatx(
-        parent,
-        name,
-        parent,
-        quarantine,
-        _RENAME_EXCL,
-        f"quarantine {description} directory",
-    )
+    identity = _FileIdentity(child.device, child.inode)
     try:
-        _verify_named_directory(parent, quarantine, child)
-    except InstallError as exc:
-        try:
-            _renameatx(
-                parent,
-                quarantine,
-                parent,
-                name,
-                _RENAME_EXCL,
-                f"restore raced {description} directory",
-            )
-            _fsync_rename_parents(
-                parent,
-                parent,
-                f"{description}_race_restore",
-            )
-        except InstallError as restore_error:
-            child.close()
-            raise InstallError(
-                f"{description} changed during quarantine; "
-                f"restore failed: {restore_error}"
-            ) from restore_error
+        _preserve_owned_entry_at(
+            parent,
+            name,
+            "directory",
+            identity,
+            recovery,
+            description,
+        )
+    finally:
         child.close()
-        raise InstallError(
-            f"{description} changed during quarantine"
-        ) from exc
-    child.close()
-    try:
-        os.rmdir(quarantine, dir_fd=parent.fd)
-        if rmdir_boundary is not None:
-            _deploy_preloader_checkpoint(rmdir_boundary)
-        _fsync_handle(parent, parent_fsync_boundary)
-    except (InstallError, OSError) as exc:
-        raise InstallError(
-            f"cannot remove quarantined {description} directory: {exc}"
-        ) from exc
 
 
 def _deploy_preloader_checkpoint(boundary: str) -> None:
@@ -1586,6 +1599,7 @@ def _updated_preloader_manifest(
 def _create_compat_staging(
     root: _DirectoryHandle,
     payloads: dict[str, tuple[bytes, int]],
+    recovery: _CompatRecovery,
 ) -> _CompatStaging:
     name = f".ssr-oracle-compat-staging-{secrets.token_hex(16)}"
     staging_root = _mkdir_open_child(
@@ -1593,6 +1607,7 @@ def _create_compat_staging(
         name,
         "compatibility staging root",
         "staging_root",
+        recovery,
     )
 
     opened: list[
@@ -1605,6 +1620,7 @@ def _create_compat_staging(
             "BepInEx",
             "staging BepInEx",
             "staging_bepinex",
+            recovery,
         )
         opened.append((bep_in_ex, staging_root, "BepInEx"))
         backup = _mkdir_open_child(
@@ -1612,6 +1628,7 @@ def _create_compat_staging(
             ".ssr-oracle-backup",
             "staging backup directory",
             "staging_backup_dir",
+            recovery,
         )
         opened.append((backup, bep_in_ex, ".ssr-oracle-backup"))
         compat = _mkdir_open_child(
@@ -1619,6 +1636,7 @@ def _create_compat_staging(
             ".ssr-oracle-compat",
             "staging provenance directory",
             "staging_compat_dir",
+            recovery,
         )
         opened.append((compat, bep_in_ex, ".ssr-oracle-compat"))
         core = _mkdir_open_child(
@@ -1626,6 +1644,7 @@ def _create_compat_staging(
             "core",
             "staging core directory",
             "staging_core_dir",
+            recovery,
         )
         opened.append((core, bep_in_ex, "core"))
         file_locations = {
@@ -1684,34 +1703,25 @@ def _create_compat_staging(
         errors = [str(exc)]
         if assembled is not None:
             try:
-                _cleanup_compat_staging_fd(root, assembled)
+                _cleanup_compat_staging_fd(root, assembled, recovery)
             except InstallError as cleanup_error:
                 errors.append(f"staging cleanup failed: {cleanup_error}")
             raise InstallError("; ".join(errors)) from exc
-        for handle, parent, child_name in reversed(opened):
-            try:
-                _remove_owned_empty_directory_at(
-                    parent,
-                    child_name,
-                    handle,
-                    f"staging {child_name}",
-                )
-            except (InstallError, OSError) as cleanup_error:
-                handle.close()
-                errors.append(
-                    f"staging cleanup failed for {child_name}: "
-                    f"{cleanup_error}"
-                )
+        for handle, _, _ in reversed(opened):
+            handle.close()
         try:
-            _remove_owned_empty_directory_at(
+            _preserve_owned_entry_at(
                 root,
                 name,
-                staging_root,
-                "compatibility staging root",
+                "directory",
+                _FileIdentity(staging_root.device, staging_root.inode),
+                recovery,
+                "staging_cleanup",
             )
         except (InstallError, OSError) as cleanup_error:
-            staging_root.close()
             errors.append(f"staging cleanup failed: {cleanup_error}")
+        finally:
+            staging_root.close()
         raise InstallError("; ".join(errors)) from exc
 
 
@@ -1726,76 +1736,36 @@ def _directory_is_empty(handle: _DirectoryHandle) -> bool:
 def _cleanup_compat_staging_fd(
     root: _DirectoryHandle,
     staging: _CompatStaging,
+    recovery: _CompatRecovery,
 ) -> None:
-    errors: list[str] = []
-    for parent, leaf, identity in staging.files.values():
-        kind = _entry_kind_at(parent, leaf)
-        if kind == "file" and _named_file_is_identity(
-            parent, leaf, identity
-        ):
-            try:
-                _remove_owned_file_at(
-                    parent,
-                    leaf,
-                    identity,
-                    "staging_cleanup",
-                )
-            except (InstallError, OSError) as exc:
-                errors.append(f"cannot clean staged file {leaf}: {exc}")
-        elif kind != "absent":
-            errors.append(f"staged file changed identity or type: {leaf}")
-
-    children = (
-        (staging.backup, ".ssr-oracle-backup"),
-        (staging.compat, ".ssr-oracle-compat"),
-        (staging.core, "core"),
-    )
-    for handle, name in children:
-        try:
-            _remove_owned_empty_directory_at(
-                staging.bep_in_ex,
-                name,
-                handle,
-                handle.label,
-                "staging_cleanup_child_rmdir",
-                "staging_cleanup_bepinex_fsync",
-            )
-        except (InstallError, OSError) as exc:
-            errors.append(f"cannot clean {handle.label}: {exc}")
+    identity = _FileIdentity(staging.root.device, staging.root.inode)
     try:
-        _remove_owned_empty_directory_at(
-            staging.root,
-            "BepInEx",
-            staging.bep_in_ex,
-            "staging BepInEx",
-            "staging_cleanup_bepinex_rmdir",
-            "staging_cleanup_root_fsync",
-        )
-    except (InstallError, OSError) as exc:
-        errors.append(f"cannot clean staging BepInEx: {exc}")
-    try:
-        _remove_owned_empty_directory_at(
+        _preserve_owned_entry_at(
             root,
             staging.name,
-            staging.root,
-            "compatibility staging root",
-            "staging_cleanup_root_rmdir",
-            "staging_cleanup_game_root_fsync",
+            "directory",
+            identity,
+            recovery,
+            "staging_cleanup",
         )
-    except (InstallError, OSError) as exc:
-        errors.append(f"cannot clean compatibility staging root: {exc}")
-    if errors:
-        raise InstallError("; ".join(errors))
+    finally:
+        staging.core.close()
+        staging.compat.close()
+        staging.backup.close()
+        staging.bep_in_ex.close()
+        staging.root.close()
 
 
 def _create_live_compat_directories(
     bep_in_ex: _DirectoryHandle,
+    recovery: _CompatRecovery,
 ) -> tuple[_DirectoryHandle, _DirectoryHandle]:
     backup = _mkdir_open_child(
         bep_in_ex,
         ".ssr-oracle-backup",
         "live backup directory",
         "live_backup_dir",
+        recovery,
     )
     try:
         compat = _mkdir_open_child(
@@ -1803,14 +1773,16 @@ def _create_live_compat_directories(
             ".ssr-oracle-compat",
             "live provenance directory",
             "live_compat_dir",
+            recovery,
         )
     except Exception as exc:
         errors = [str(exc)]
         try:
-            _remove_owned_empty_directory_at(
+            _preserve_owned_empty_directory_at(
                 bep_in_ex,
                 ".ssr-oracle-backup",
                 backup,
+                recovery,
                 "live backup directory",
             )
         except (InstallError, OSError) as cleanup_error:
@@ -1829,6 +1801,7 @@ def _atomic_replace_at(
     mode: int,
     boundary_prefix: str,
     expected: _StableFileSnapshot,
+    recovery: _CompatRecovery,
     published: list[_StableFileSnapshot] | None = None,
 ) -> _StableFileSnapshot:
     temporary = f".{name}.{secrets.token_hex(16)}.tmp"
@@ -1920,10 +1893,11 @@ def _atomic_replace_at(
         )
     ):
         try:
-            _remove_owned_file_at(
+            _preserve_owned_file_at(
                 parent,
                 temporary,
                 cleanup_identity,
+                recovery,
                 f"{boundary_prefix}_temporary_cleanup",
             )
         except (InstallError, OSError) as cleanup_error:
@@ -1952,81 +1926,245 @@ def _atomic_replace_at(
     return replacement
 
 
+def _entry_is_owned(
+    parent: _DirectoryHandle,
+    name: str,
+    expected_kind: Literal["file", "directory"],
+    identity: _FileIdentity,
+) -> bool:
+    try:
+        observed = os.stat(
+            name, dir_fd=parent.fd, follow_symlinks=False
+        )
+    except OSError:
+        return False
+    return (
+        (
+            expected_kind == "file"
+            and stat.S_ISREG(observed.st_mode)
+        )
+        or (
+            expected_kind == "directory"
+            and stat.S_ISDIR(observed.st_mode)
+        )
+    ) and (
+        observed.st_dev == identity.device
+        and observed.st_ino == identity.inode
+    )
+
+
+def _find_owned_cleanup_entry(
+    recovery: _CompatRecovery,
+    expected_kind: Literal["file", "directory"],
+    identity: _FileIdentity,
+) -> str | None:
+    try:
+        with os.scandir(recovery.cleanup.fd) as entries:
+            for entry in entries:
+                try:
+                    observed = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                kind_matches = (
+                    stat.S_ISREG(observed.st_mode)
+                    if expected_kind == "file"
+                    else stat.S_ISDIR(observed.st_mode)
+                )
+                if kind_matches and (
+                    observed.st_dev,
+                    observed.st_ino,
+                ) == (identity.device, identity.inode):
+                    return entry.name
+    except OSError as exc:
+        raise InstallError(
+            f"cannot inspect recovery cleanup after preservation race: {exc}"
+        ) from exc
+    return None
+
+
+def _preserve_owned_entry_at(
+    source_parent: _DirectoryHandle,
+    source_name: str,
+    expected_kind: Literal["file", "directory"],
+    identity: _FileIdentity,
+    recovery: _CompatRecovery,
+    boundary_prefix: str,
+) -> str:
+    _require_safe_leaf(source_name, boundary_prefix)
+    if not _entry_is_owned(
+        source_parent, source_name, expected_kind, identity
+    ):
+        raise InstallError(
+            f"{boundary_prefix} {expected_kind} changed before preservation"
+        )
+
+    for _ in range(128):
+        destination_name = (
+            f"{expected_kind}-{secrets.token_hex(16)}"
+        )
+        try:
+            _renameatx(
+                source_parent,
+                source_name,
+                recovery.cleanup,
+                destination_name,
+                _RENAME_EXCL,
+                f"preserve {boundary_prefix} {expected_kind}",
+            )
+        except _RenameAtError as exc:
+            if exc.error_number == errno.EEXIST:
+                if not _entry_is_owned(
+                    source_parent,
+                    source_name,
+                    expected_kind,
+                    identity,
+                ):
+                    raise InstallError(
+                        f"{boundary_prefix} {expected_kind} changed while "
+                        "retrying a cleanup-leaf collision"
+                    ) from exc
+                continue
+            raise
+
+        sync_error: InstallError | None = None
+        try:
+            _fsync_rename_parents(
+                source_parent,
+                recovery.cleanup,
+                f"{boundary_prefix}_preserve",
+            )
+        except InstallError as exc:
+            sync_error = exc
+        if not _entry_is_owned(
+            recovery.cleanup,
+            destination_name,
+            expected_kind,
+            identity,
+        ):
+            restore_error: InstallError | None = None
+            try:
+                _renameatx(
+                    recovery.cleanup,
+                    destination_name,
+                    source_parent,
+                    source_name,
+                    _RENAME_EXCL,
+                    f"restore raced {boundary_prefix} {expected_kind}",
+                )
+                _fsync_rename_parents(
+                    recovery.cleanup,
+                    source_parent,
+                    f"{boundary_prefix}_race_restore",
+                )
+            except InstallError as exc:
+                restore_error = exc
+            recovered_name = _find_owned_cleanup_entry(
+                recovery,
+                expected_kind,
+                identity,
+            )
+            if recovered_name is not None and restore_error is None:
+                if sync_error is not None:
+                    raise InstallError(
+                        f"{boundary_prefix} {expected_kind} was preserved "
+                        f"but recovery sync failed: {sync_error}"
+                    ) from sync_error
+                return recovered_name
+            message = (
+                f"{boundary_prefix} {expected_kind} changed during "
+                "preservation"
+            )
+            if restore_error is not None:
+                message += f"; restore failed: {restore_error}"
+            if recovered_name is not None:
+                message += "; owned entry retained in recovery cleanup"
+            if sync_error is not None:
+                message += f"; recovery sync failed: {sync_error}"
+            raise InstallError(message)
+        if sync_error is not None:
+            raise InstallError(
+                f"{boundary_prefix} {expected_kind} was preserved but "
+                f"recovery sync failed: {sync_error}"
+            ) from sync_error
+        return destination_name
+    raise InstallError(
+        f"cannot allocate an exclusive cleanup leaf for {boundary_prefix}"
+    )
+
+
 def _allocate_compat_recovery_fd(
     root: _DirectoryHandle,
     retained_parent: _DirectoryHandle | None = None,
 ) -> _CompatRecovery:
     parent_created = False
-    if retained_parent is not None:
-        _verify_named_directory(
-            root, ".ssr-oracle-recovery", retained_parent
-        )
-        parent = _duplicate_directory_handle(
-            retained_parent, "recovery parent"
-        )
-    elif _entry_kind_at(root, ".ssr-oracle-recovery") == "absent":
-        parent = _mkdir_open_child(
-            root,
-            ".ssr-oracle-recovery",
-            "recovery parent",
-            "recovery_parent",
-        )
-        parent_created = True
-    else:
-        raise InstallError("recovery parent changed after preflight")
-
+    parent: _DirectoryHandle | None = None
     run: _DirectoryHandle | None = None
-    run_created = False
     run_name = ""
-    opened: list[
-        tuple[_DirectoryHandle, _DirectoryHandle, str]
-    ] = []
+    opened: list[_DirectoryHandle] = []
     try:
+        if retained_parent is not None:
+            _verify_named_directory(
+                root, ".ssr-oracle-recovery", retained_parent
+            )
+            parent = _duplicate_directory_handle(
+                retained_parent, "recovery parent"
+            )
+        elif _entry_kind_at(root, ".ssr-oracle-recovery") == "absent":
+            parent = _mkdir_open_retained_child(
+                root,
+                ".ssr-oracle-recovery",
+                "recovery parent",
+                "recovery_parent",
+            )
+            parent_created = True
+        else:
+            raise InstallError("recovery parent changed after preflight")
+
         for _ in range(128):
             run_name = _compat_recovery_name()
-            if _entry_kind_at(parent, run_name) != "absent":
-                continue
             try:
-                run = _mkdir_open_child(
+                run = _mkdir_open_retained_child(
                     parent,
                     run_name,
                     "compatibility recovery run",
                     "recovery_run",
                 )
-            except InstallError:
-                if _entry_kind_at(parent, run_name) != "absent":
-                    continue
-                raise
-            run_created = True
+            except _RetainedDirectoryCollision:
+                continue
             break
         if run is None:
             raise InstallError(
                 "cannot allocate an exclusive compatibility recovery"
             )
-        compat = _mkdir_open_child(
+        compat = _mkdir_open_retained_child(
             run, "compat", "compatibility recovery", "recovery_compat"
         )
-        opened.append((compat, run, "compat"))
-        bep_in_ex = _mkdir_open_child(
+        opened.append(compat)
+        bep_in_ex = _mkdir_open_retained_child(
             compat, "BepInEx", "recovery BepInEx", "recovery_bepinex"
         )
-        opened.append((bep_in_ex, compat, "BepInEx"))
-        backup = _mkdir_open_child(
+        opened.append(bep_in_ex)
+        backup = _mkdir_open_retained_child(
             bep_in_ex,
             ".ssr-oracle-backup",
             "recovery backup directory",
             "recovery_backup_dir",
         )
-        opened.append((backup, bep_in_ex, ".ssr-oracle-backup"))
-        provenance = _mkdir_open_child(
+        opened.append(backup)
+        provenance = _mkdir_open_retained_child(
             bep_in_ex,
             ".ssr-oracle-compat",
             "recovery provenance directory",
             "recovery_provenance_dir",
         )
-        opened.append(
-            (provenance, bep_in_ex, ".ssr-oracle-compat")
+        opened.append(provenance)
+        cleanup = _mkdir_open_retained_child(
+            run,
+            "cleanup",
+            "recovery cleanup directory",
+            "recovery_cleanup_dir",
         )
+        opened.append(cleanup)
         return _CompatRecovery(
             parent=parent,
             parent_created=parent_created,
@@ -2036,63 +2174,22 @@ def _allocate_compat_recovery_fd(
             bep_in_ex=bep_in_ex,
             backup=backup,
             provenance=provenance,
+            cleanup=cleanup,
         )
     except Exception as exc:
-        errors = [str(exc)]
-        for handle, containing, child_name in reversed(opened):
-            try:
-                _remove_owned_empty_directory_at(
-                    containing,
-                    child_name,
-                    handle,
-                    f"recovery {child_name}",
-                )
-            except (InstallError, OSError) as cleanup_error:
-                handle.close()
-                errors.append(
-                    f"recovery cleanup failed for {child_name}: "
-                    f"{cleanup_error}"
-                )
+        for handle in reversed(opened):
+            handle.close()
         if run is not None:
-            try:
-                _remove_owned_empty_directory_at(
-                    parent,
-                    run_name,
-                    run,
-                    "compatibility recovery run",
-                )
-            except InstallError as cleanup_error:
-                run.close()
-                errors.append(
-                    f"recovery cleanup refused: {cleanup_error}"
-                )
-                run_created = False
-            else:
-                run_created = False
-        elif run_created:
-            errors.append(
-                "recovery cleanup refused without retained run identity"
-            )
-            run_created = False
-        if parent_created:
-            try:
-                _remove_owned_empty_directory_at(
-                    root,
-                    ".ssr-oracle-recovery",
-                    parent,
-                    "recovery parent",
-                )
-            except (InstallError, OSError) as cleanup_error:
-                parent.close()
-                errors.append(
-                    f"recovery parent cleanup failed: {cleanup_error}"
-                )
-        else:
+            run.close()
+        if parent is not None:
             parent.close()
-        raise InstallError("; ".join(errors)) from exc
+        raise InstallError(
+            f"{exc}; preserved any partial compatibility recovery scaffolding"
+        ) from exc
 
 
 def _close_recovery(recovery: _CompatRecovery) -> None:
+    recovery.cleanup.close()
     recovery.provenance.close()
     recovery.backup.close()
     recovery.bep_in_ex.close()
@@ -2102,12 +2199,11 @@ def _close_recovery(recovery: _CompatRecovery) -> None:
 
 
 def _preserve_compat_recovery_fd(
-    root: _DirectoryHandle,
     backup: _DirectoryHandle,
     compat: _DirectoryHandle,
     possibly_published: Sequence[str],
     published_artifacts: dict[str, _StableFileSnapshot],
-    recovery_parent: _DirectoryHandle | None,
+    recovery: _CompatRecovery,
 ) -> None:
     sources = {
         PRELOADER_BACKUP_RELATIVE_PATH: (
@@ -2136,92 +2232,88 @@ def _preserve_compat_recovery_fd(
     )
     if not recoverable:
         return
-    recovery = _allocate_compat_recovery_fd(root, recovery_parent)
     errors: list[str] = []
-    try:
-        destinations = {
-            PRELOADER_BACKUP_RELATIVE_PATH: (
-                recovery.backup,
-                "BepInEx.Preloader.dll",
-            ),
-            PRELOADER_PROVENANCE_RELATIVE_PATH: (
-                recovery.provenance,
-                "preloader-provenance.json",
-            ),
-        }
-        for relative_path in recoverable:
-            source_parent, source_name, label = sources[relative_path]
-            destination_parent, destination_name = destinations[relative_path]
-            if _entry_kind_at(destination_parent, destination_name) != "absent":
-                errors.append(
-                    f"recovery destination already exists for {label}"
-                )
-                continue
-            moved = False
-            try:
+    destinations = {
+        PRELOADER_BACKUP_RELATIVE_PATH: (
+            recovery.backup,
+            "BepInEx.Preloader.dll",
+        ),
+        PRELOADER_PROVENANCE_RELATIVE_PATH: (
+            recovery.provenance,
+            "preloader-provenance.json",
+        ),
+    }
+    for relative_path in recoverable:
+        source_parent, source_name, label = sources[relative_path]
+        destination_parent, destination_name = destinations[relative_path]
+        if _entry_kind_at(destination_parent, destination_name) != "absent":
+            errors.append(
+                f"recovery destination already exists for {label}"
+            )
+            continue
+        moved = False
+        try:
+            _renameatx(
+                source_parent,
+                source_name,
+                destination_parent,
+                destination_name,
+                _RENAME_EXCL,
+                f"preserve compatibility {label}",
+            )
+            moved = True
+            _deploy_preloader_checkpoint(
+                f"recovery_{label}_post_rename_preopen"
+            )
+            recovered_fd, recovered = _open_stable_child_file(
+                destination_parent,
+                destination_name,
+                f"recovered compatibility {label}",
+            )
+            os.close(recovered_fd)
+            if recovered != published_artifacts[relative_path]:
                 _renameatx(
+                    destination_parent,
+                    destination_name,
                     source_parent,
                     source_name,
-                    destination_parent,
-                    destination_name,
                     _RENAME_EXCL,
-                    f"preserve compatibility {label}",
+                    f"restore raced compatibility {label}",
                 )
-                moved = True
-                _deploy_preloader_checkpoint(
-                    f"recovery_{label}_post_rename_preopen"
-                )
-                recovered_fd, recovered = _open_stable_child_file(
+                _fsync_rename_parents(
                     destination_parent,
-                    destination_name,
-                    f"recovered compatibility {label}",
+                    source_parent,
+                    f"recovery_{label}_race_restore",
                 )
-                os.close(recovered_fd)
-                if recovered != published_artifacts[relative_path]:
-                    _renameatx(
-                        destination_parent,
-                        destination_name,
-                        source_parent,
-                        source_name,
-                        _RENAME_EXCL,
-                        f"restore raced compatibility {label}",
-                    )
-                    _fsync_rename_parents(
-                        destination_parent,
-                        source_parent,
-                        f"recovery_{label}_race_restore",
-                    )
-                    moved = False
-                    raise InstallError(
-                        f"compatibility {label} changed during recovery move"
-                    )
-                _deploy_preloader_checkpoint(f"recovery_{label}_move")
-                _fsync_handle(
-                    source_parent, f"recovery_{label}_source_fsync"
+                moved = False
+                raise InstallError(
+                    f"compatibility {label} changed during recovery move"
                 )
-                _fsync_handle(
-                    destination_parent,
-                    f"recovery_{label}_destination_fsync",
+            _deploy_preloader_checkpoint(f"recovery_{label}_move")
+            _fsync_handle(
+                source_parent, f"recovery_{label}_source_fsync"
+            )
+            _fsync_handle(
+                destination_parent,
+                f"recovery_{label}_destination_fsync",
+            )
+        except (InstallError, OSError) as exc:
+            sync_errors: list[str] = []
+            if moved:
+                for handle in (source_parent, destination_parent):
+                    try:
+                        _fsync_handle(handle)
+                    except InstallError as sync_error:
+                        sync_errors.append(str(sync_error))
+            errors.append(
+                f"cannot preserve compatibility {label}: {exc}"
+                + (
+                    "; recovery sync failed: "
+                    + "; ".join(sync_errors)
+                    if sync_errors
+                    else ""
                 )
-            except (InstallError, OSError) as exc:
-                sync_errors: list[str] = []
-                if moved:
-                    for handle in (source_parent, destination_parent):
-                        try:
-                            _fsync_handle(handle)
-                        except InstallError as sync_error:
-                            sync_errors.append(str(sync_error))
-                errors.append(
-                    f"cannot preserve compatibility {label}: {exc}"
-                    + (
-                        "; recovery sync failed: "
-                        + "; ".join(sync_errors)
-                        if sync_errors
-                        else ""
-                    )
-                )
-    finally:
-        _close_recovery(recovery)
+            )
     if errors:
         raise InstallError("; ".join(errors))
 
@@ -2254,7 +2346,7 @@ def _rollback_preloader_deploy_fd(
     compat: _DirectoryHandle | None,
     possibly_published: Sequence[str],
     published_artifacts: dict[str, _StableFileSnapshot],
-    recovery_parent: _DirectoryHandle | None,
+    recovery: _CompatRecovery,
 ) -> None:
     errors: list[str] = []
     try:
@@ -2273,6 +2365,7 @@ def _rollback_preloader_deploy_fd(
                 active_snapshot.mode,
                 "rollback_active",
                 current_active,
+                recovery,
             )
     except InstallError as exc:
         errors.append(f"active restore failed: {exc}")
@@ -2292,18 +2385,18 @@ def _rollback_preloader_deploy_fd(
                 manifest_snapshot.mode,
                 "rollback_manifest",
                 current_manifest,
+                recovery,
             )
     except InstallError as exc:
         errors.append(f"manifest restore failed: {exc}")
     if backup is not None and compat is not None:
         try:
             _preserve_compat_recovery_fd(
-                root,
                 backup,
                 compat,
                 possibly_published,
                 published_artifacts,
-                recovery_parent,
+                recovery,
             )
         except InstallError as exc:
             errors.append(f"compatibility recovery failed: {exc}")
@@ -2314,13 +2407,12 @@ def _rollback_preloader_deploy_fd(
         if handle is None:
             continue
         try:
-            _remove_owned_empty_directory_at(
+            _preserve_owned_empty_directory_at(
                 bep_in_ex,
                 name,
                 handle,
+                recovery,
                 f"created live directory {name}",
-                f"rollback_{name}_rmdir",
-                f"rollback_{name}_parent_fsync",
             )
         except (InstallError, OSError) as exc:
             errors.append(f"cannot remove created live directory {name}: {exc}")
@@ -2535,6 +2627,7 @@ def deploy_preloader(
     backup: _DirectoryHandle | None = None
     compat: _DirectoryHandle | None = None
     recovery_parent: _DirectoryHandle | None = None
+    recovery: _CompatRecovery | None = None
     active_snapshot: _StableFileSnapshot | None = None
     manifest_snapshot: _StableFileSnapshot | None = None
     published_active: list[_StableFileSnapshot] = []
@@ -2736,8 +2829,11 @@ def deploy_preloader(
             requested_provenance.payload,
             requested_preloader.payload,
         )
-        staging = _create_compat_staging(root, payloads)
-        backup, compat = _create_live_compat_directories(bep_in_ex)
+        recovery = _allocate_compat_recovery_fd(root, recovery_parent)
+        staging = _create_compat_staging(root, payloads, recovery)
+        backup, compat = _create_live_compat_directories(
+            bep_in_ex, recovery
+        )
         destinations = {
             PRELOADER_BACKUP_RELATIVE_PATH: (
                 backup,
@@ -2795,6 +2891,7 @@ def deploy_preloader(
                     _RENAME_SWAP,
                     "publish compatibility artifact active",
                 )
+                possibly_published.append(relative_path)
                 staging.files[relative_path] = (
                     source_parent,
                     source_name,
@@ -2804,7 +2901,6 @@ def deploy_preloader(
                     ),
                 )
                 published_active.append(staged_source)
-                possibly_published.append(relative_path)
                 _deploy_preloader_checkpoint(
                     "active_post_rename_preopen"
                 )
@@ -2857,8 +2953,8 @@ def deploy_preloader(
                     _RENAME_EXCL,
                     f"publish compatibility artifact {label}",
                 )
-                published_artifacts[relative_path] = staged_source
                 possibly_published.append(relative_path)
+                published_artifacts[relative_path] = staged_source
                 _deploy_preloader_checkpoint(
                     f"{label}_post_rename_preopen"
                 )
@@ -2905,6 +3001,7 @@ def deploy_preloader(
             manifest_snapshot.mode,
             "manifest",
             manifest_snapshot,
+            recovery,
             published_manifest,
         )
         _deploy_preloader_checkpoint("manifest")
@@ -2928,7 +3025,7 @@ def deploy_preloader(
             raise InstallError(
                 "deployed preloader failed final manifest verification"
             )
-        _cleanup_compat_staging_fd(root, staging)
+        _cleanup_compat_staging_fd(root, staging, recovery)
         staging = None
         compat.close()
         backup.close()
@@ -2941,6 +3038,7 @@ def deploy_preloader(
             and core is not None
             and active_snapshot is not None
             and manifest_snapshot is not None
+            and recovery is not None
             and (backup is not None or compat is not None)
         ):
             try:
@@ -2960,13 +3058,13 @@ def deploy_preloader(
                     compat=compat,
                     possibly_published=possibly_published,
                     published_artifacts=published_artifacts,
-                    recovery_parent=recovery_parent,
+                    recovery=recovery,
                 )
             except InstallError as rollback_error:
                 details.append(str(rollback_error))
         if root is not None and staging is not None:
             try:
-                _cleanup_compat_staging_fd(root, staging)
+                _cleanup_compat_staging_fd(root, staging, recovery)
                 staging = None
             except InstallError as cleanup_error:
                 details.append(f"staging cleanup failed: {cleanup_error}")
@@ -2993,6 +3091,8 @@ def deploy_preloader(
             backup.close()
         if core is not None:
             core.close()
+        if recovery is not None:
+            _close_recovery(recovery)
         if recovery_parent is not None:
             recovery_parent.close()
         if bep_in_ex is not None:
