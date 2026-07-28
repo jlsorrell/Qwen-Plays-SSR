@@ -77,7 +77,7 @@
       "filename": "unityengine.5.6.1.nupkg",
       "package_id": "UnityEngine",
       "sha256": "350ab9017bfece555e9479949cff68a50aaca0d86075f426ae0acb132d057096",
-      "source_index": "https://api.nuget.org/v3/index.json",
+      "source_index": "https://nuget.bepinex.dev/v3/index.json",
       "version": "5.6.1"
     }
   ],

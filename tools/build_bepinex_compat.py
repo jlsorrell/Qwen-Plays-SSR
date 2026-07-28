@@ -22,9 +22,35 @@ from ssr_env.oracle_compat import (
 )
 
 
-SOURCE_INDEX = "https://api.nuget.org/v3/index.json"
-FLAT_CONTAINER = "https://api.nuget.org/v3-flatcontainer"
+NUGET_ORG_INDEX = "https://api.nuget.org/v3/index.json"
+NUGET_ORG_PACKAGES = "https://api.nuget.org/v3-flatcontainer"
+BEPINEX_INDEX = "https://nuget.bepinex.dev/v3/index.json"
+BEPINEX_PACKAGES = "https://nuget.bepinex.dev/v3/package"
 LOCK_ROOT = Path("oracle/compat/nuget-lock")
+PACKAGE_SOURCES = {
+    ("HarmonyX", "2.0.6"): (NUGET_ORG_INDEX, NUGET_ORG_PACKAGES),
+    ("HarmonyX", "2.9.0"): (NUGET_ORG_INDEX, NUGET_ORG_PACKAGES),
+    ("Microsoft.NETFramework.ReferenceAssemblies", "1.0.3"): (
+        NUGET_ORG_INDEX,
+        NUGET_ORG_PACKAGES,
+    ),
+    ("Microsoft.NETFramework.ReferenceAssemblies.net35", "1.0.3"): (
+        NUGET_ORG_INDEX,
+        NUGET_ORG_PACKAGES,
+    ),
+    ("Mono.Cecil", "0.10.4"): (NUGET_ORG_INDEX, NUGET_ORG_PACKAGES),
+    ("MonoMod.RuntimeDetour", "20.5.21.5"): (
+        NUGET_ORG_INDEX,
+        NUGET_ORG_PACKAGES,
+    ),
+    ("MonoMod.RuntimeDetour", "22.1.29.1"): (
+        NUGET_ORG_INDEX,
+        NUGET_ORG_PACKAGES,
+    ),
+    ("MonoMod.Utils", "20.5.21.5"): (NUGET_ORG_INDEX, NUGET_ORG_PACKAGES),
+    ("MonoMod.Utils", "22.1.29.1"): (NUGET_ORG_INDEX, NUGET_ORG_PACKAGES),
+    ("UnityEngine", "5.6.1"): (BEPINEX_INDEX, BEPINEX_PACKAGES),
+}
 
 
 class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
@@ -70,11 +96,25 @@ def _filename(package_id: str, version: str) -> str:
     return f"{package_id}.{version}.nupkg".lower()
 
 
+def _source(package_id: str, version: str) -> tuple[str, str]:
+    try:
+        return PACKAGE_SOURCES[(package_id, version)]
+    except KeyError as exc:
+        raise CompatError(
+            f"no trusted package source for {package_id} {version}"
+        ) from exc
+
+
+def _source_index(package_id: str, version: str) -> str:
+    return _source(package_id, version)[0]
+
+
 def _package_url(package_id: str, version: str) -> str:
     lowered_id = urllib.parse.quote(package_id.lower(), safe="")
     lowered_version = urllib.parse.quote(version.lower(), safe="")
+    package_base = _source(package_id, version)[1]
     return (
-        f"{FLAT_CONTAINER}/{lowered_id}/{lowered_version}/"
+        f"{package_base}/{lowered_id}/{lowered_version}/"
         f"{lowered_id}.{lowered_version}.nupkg"
     )
 
@@ -151,7 +191,7 @@ def lock_packages(repo_root: Path, feed_dir: Path) -> None:
                 "filename": filename,
                 "package_id": package_id,
                 "sha256": sha256,
-                "source_index": SOURCE_INDEX,
+                "source_index": _source_index(package_id, version),
                 "version": version,
             }
         )

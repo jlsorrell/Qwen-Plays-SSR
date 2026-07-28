@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -27,9 +28,44 @@ COMPAT_INPUTS = (
     "nuget-lock/submodules/BepInEx.Harmony/HarmonyXInterop/packages.lock.json",
 )
 
+PACKAGE_SOURCES = (
+    ("HarmonyX", "2.0.6", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/harmonyx/2.0.6/harmonyx.2.0.6.nupkg"),
+    ("HarmonyX", "2.9.0", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/harmonyx/2.9.0/harmonyx.2.9.0.nupkg"),
+    ("Microsoft.NETFramework.ReferenceAssemblies", "1.0.3",
+     "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/microsoft.netframework.referenceassemblies/1.0.3/microsoft.netframework.referenceassemblies.1.0.3.nupkg"),
+    ("Microsoft.NETFramework.ReferenceAssemblies.net35", "1.0.3",
+     "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/microsoft.netframework.referenceassemblies.net35/1.0.3/microsoft.netframework.referenceassemblies.net35.1.0.3.nupkg"),
+    ("Mono.Cecil", "0.10.4", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/mono.cecil/0.10.4/mono.cecil.0.10.4.nupkg"),
+    ("MonoMod.RuntimeDetour", "20.5.21.5", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/monomod.runtimedetour/20.5.21.5/monomod.runtimedetour.20.5.21.5.nupkg"),
+    ("MonoMod.RuntimeDetour", "22.1.29.1", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/monomod.runtimedetour/22.1.29.1/monomod.runtimedetour.22.1.29.1.nupkg"),
+    ("MonoMod.Utils", "20.5.21.5", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/monomod.utils/20.5.21.5/monomod.utils.20.5.21.5.nupkg"),
+    ("MonoMod.Utils", "22.1.29.1", "https://api.nuget.org/v3/index.json",
+     "https://api.nuget.org/v3-flatcontainer/monomod.utils/22.1.29.1/monomod.utils.22.1.29.1.nupkg"),
+    ("UnityEngine", "5.6.1", "https://nuget.bepinex.dev/v3/index.json",
+     "https://nuget.bepinex.dev/v3/package/unityengine/5.6.1/unityengine.5.6.1.nupkg"),
+)
+
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+@pytest.fixture(scope="module")
+def compat_cli():
+    path = Path(__file__).resolve().parents[1] / "tools/build_bepinex_compat.py"
+    spec = importlib.util.spec_from_file_location("build_bepinex_compat", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _lock_tree_sha256(root: Path) -> str:
@@ -145,6 +181,26 @@ def test_load_provenance_rejects_unknown_keys_and_hash_mismatch(
 
 def test_canonical_json_is_sorted_utf8_with_final_newline():
     assert canonical_json({"b": 2, "a": 1}) == b'{\n  "a": 1,\n  "b": 2\n}\n'
+
+
+@pytest.mark.parametrize(
+    ("package_id", "version", "source_index", "package_url"),
+    PACKAGE_SOURCES,
+)
+def test_package_routing_uses_exact_authoritative_https_source(
+    compat_cli,
+    package_id,
+    version,
+    source_index,
+    package_url,
+):
+    assert compat_cli._source_index(package_id, version) == source_index
+    assert compat_cli._package_url(package_id, version) == package_url
+
+
+def test_package_routing_rejects_pin_outside_exact_allowlist(compat_cli):
+    with pytest.raises(CompatError, match="no trusted package source"):
+        compat_cli._package_url("UnityEngine", "5.6.2")
 
 
 @pytest.mark.parametrize(
