@@ -266,6 +266,14 @@ Before any mutation it must:
    paths, or a pre-existing non-identical backup; and
 6. snapshot the current manifest and all targets needed for rollback.
 
+All mutable game, staging, and recovery directories are opened and retained by
+descriptor using `O_DIRECTORY | O_NOFOLLOW`. Publication, rollback, recovery
+moves, and manifest replacement use descriptor-relative operations and verify
+the pinned directory device/inode identities, so a pathname component swapped
+after preflight cannot redirect a write outside the inspected game root.
+Supplied DLL and provenance inputs are likewise opened through a no-follow
+component chain and read from stable regular-file descriptors.
+
 The command stages same-filesystem temporary files, then atomically installs:
 
 - the official backup at

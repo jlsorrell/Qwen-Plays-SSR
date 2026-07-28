@@ -844,7 +844,11 @@ provenance, and patched DLL on the game filesystem.
 - [ ] **Step 4: Implement publication and manifest-last rollback**
 
 Publish backup, provenance, and patched DLL with atomic file replacement, then
-write the updated manifest last. On any failure:
+write the updated manifest last. Retain no-follow directory descriptors from
+preflight through publication and use descriptor-relative replacement; pathname
+rechecks alone do not satisfy containment. Inject failures independently at
+every file write/fsync, replace, parent-directory fsync, manifest atomic-write
+sub-boundary, staging cleanup, and recovery movement. On any failure:
 
 1. restore active DLL and manifest bytes/modes;
 2. move newly created backup/provenance artifacts into an exclusive
