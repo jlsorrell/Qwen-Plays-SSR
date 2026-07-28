@@ -420,12 +420,23 @@ class/instance dispatch, shell/process launch, and unresolved external calls
 are rejected. A new edge must instead use reviewed module-level local wrappers
 or receive an explicit qualified allowlist entry whose non-mutating contract
 has been verified. The one exact `renameatx_np` FFI transaction primitive is
-listed separately as a reviewed non-deleting mutation boundary.
+listed separately as the sole reviewed external namespace-mutation/rename
+boundary. This does not characterize all allowed external calls as
+non-mutating: exact allowlisted calls such as `os.write` and `os.fchmod`
+perform content and metadata mutation, respectively, without deleting or
+renaming a namespace entry.
 
-The audit recognizes passive data carriers decorated as either `@dataclass` or
-`@dataclass(...)`, but only when they define no explicit `__init__`. It rejects
-terminal deletion calls in the complete reachable graph. Independently,
-runtime tests replace the `os`, `pathlib`, and `shutil` terminal-deletion
+The audit recognizes only class names in a literal, hand-reviewed
+`PASSIVE_DATACLASSES` allowlist. Each listed class must use either `@dataclass`
+or `@dataclass(...)`, define no explicit construction or assignment hook
+(`__init__`, `__post_init__`, `__new__`, `__setattr__`, or `__delattr__`), and
+contain no `dataclasses.field(default_factory=...)`. Every other local class
+constructor is unresolved and rejected. If a construction hook becomes
+necessary, its work moves to a directly reachable module-level helper and is
+audited there rather than silently broadening passive-class inference.
+
+The audit rejects terminal deletion calls in the complete reachable graph.
+Independently, runtime tests replace the `os`, `pathlib`, and `shutil` terminal-deletion
 primitives with raising spies while exercising restore success and every
 forward failure, rollback failure, fsync failure, destination collision, and
 substitution case; all spies must record zero calls. An external crash may

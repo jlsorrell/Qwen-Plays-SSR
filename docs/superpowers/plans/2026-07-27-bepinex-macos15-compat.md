@@ -1042,9 +1042,11 @@ functions. Do not put transaction mutation in class/instance methods; do not
 use local callable aliases, callbacks, lambdas, `functools.partial`,
 `getattr`, `globals`, `locals`, `eval`, `exec`, or dynamic lookup. Passive
 data-class construction is permitted for `@dataclass` and `@dataclass(...)`
-classes with no explicit `__init__`, but filesystem mutation remains in direct
-module-level helpers. Opaque imported helpers and shell/process launch are
-forbidden from the restore-reachable graph.
+classes named in the exact literal `PASSIVE_DATACLASSES` allowlist, provided
+they define no construction/assignment hook and no field `default_factory`.
+Every other local class constructor is rejected. Filesystem mutation remains
+in direct module-level helpers. Opaque imported helpers and shell/process launch
+are forbidden from the restore-reachable graph.
 
 Add this conservative call-graph test to
 `tests/test_oracle_install_compat.py`:
@@ -1068,26 +1070,69 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
     class_nodes = {
         node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
     }
+    PASSIVE_DATACLASSES = {
+        "GameInstall",
+        "ArchiveMember",
+        "ManifestEntry",
+        "InstallManifest",
+        "PreloaderCompatibilityStatus",
+        "InstallStatus",
+        "_FileSnapshot",
+        "_StableFileSnapshot",
+        "_FileIdentity",
+        "_DirectoryHandle",
+        "_CompatStaging",
+        "_CompatRecovery",
+        "_PathEvidence",
+    }
+    forbidden_passive_hooks = {
+        "__init__", "__post_init__", "__new__", "__setattr__", "__delattr__",
+    }
 
     def is_dataclass_decorator(decorator: ast.expr) -> bool:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
         return isinstance(target, ast.Name) and target.id == "dataclass"
 
-    passive_dataclasses = {
-        name
-        for name, node in class_nodes.items()
-        if (
-            any(is_dataclass_decorator(item) for item in node.decorator_list)
-            and not any(
-                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and child.name == "__init__"
-                for child in node.body
+    def has_default_factory(node: ast.ClassDef) -> bool:
+        for statement in node.body:
+            value = (
+                statement.value
+                if isinstance(statement, (ast.Assign, ast.AnnAssign))
+                else None
             )
-        )
-    }
-    allowed_local_exception_constructors = {
-        "InstallError", "_RenameAtError", "_RetainedDirectoryCollision",
-    }
+            if not isinstance(value, ast.Call):
+                continue
+            callee = value.func
+            is_field = (
+                isinstance(callee, ast.Name) and callee.id == "field"
+            ) or (
+                isinstance(callee, ast.Attribute)
+                and isinstance(callee.value, ast.Name)
+                and callee.value.id == "dataclasses"
+                and callee.attr == "field"
+            )
+            if is_field and any(
+                keyword.arg == "default_factory"
+                for keyword in value.keywords
+            ):
+                return True
+        return False
+
+    assert PASSIVE_DATACLASSES <= class_nodes.keys()
+    for name in PASSIVE_DATACLASSES:
+        class_node = class_nodes[name]
+        assert any(
+            is_dataclass_decorator(item)
+            for item in class_node.decorator_list
+        ), name
+        custom_hooks = {
+            child.name
+            for child in class_node.body
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name in forbidden_passive_hooks
+        }
+        assert not custom_hooks, (name, custom_hooks)
+        assert not has_default_factory(class_node), name
     imported_modules: dict[str, str] = {}
     imported_callables: dict[str, str] = {}
     import_aliases: set[str] = set()
@@ -1210,10 +1255,7 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
                     pending.append(name)
                 elif name in terminal or name in forbidden_dynamic:
                     violations.append((function_name, node.lineno, name))
-                elif (
-                    name in passive_dataclasses
-                    or name in allowed_local_exception_constructors
-                ):
+                elif name in PASSIVE_DATACLASSES:
                     pass
                 elif name in import_aliases:
                     violations.append(
@@ -1309,7 +1351,9 @@ An implementation edge not already listed must route through a reviewed
 module-level local wrapper or receive an explicit literal entry after its
 non-mutating contract is verified. Opaque imported helpers remain forbidden;
 the separately listed `_RENAMEATX_NP` boundary is the sole reviewed
-non-deleting external mutation primitive.
+external namespace-mutation/rename primitive. Exact allowlisted `os.write` and
+`os.fchmod` edges remain reviewed content- and metadata-mutation primitives;
+they are not namespace deletion or rename operations.
 
 Also add a raising runtime spy and use it around restore success and every
 forward failure, rollback failure, fsync failure, destination collision, and
