@@ -330,33 +330,78 @@ It requires:
 - provenance whose patch and toolchain-lock hashes match the committed inputs.
 
 Restore is transactional but is not described as globally atomic. After
-snapshotting the live preloader, backup, provenance, modes, and manifest, it
-allocates an exclusive
-`.ssr-oracle-recovery/<timestamp>-<128-bit-random>/compat/` directory and uses
-this exact order:
+snapshotting the live preloader, backup, provenance, their modes, both owned
+live-directory identities, and the manifest, it fully allocates and pins by
+descriptor one exclusive recovery run before the first live-state mutation:
 
-1. move the backup and provenance into recovery, preserving their relative
-   paths and modes;
-2. atomically replace the active preloader with the validated backup bytes
-   staged on the same filesystem;
-3. atomically write one final manifest containing the official preloader hash
-   and no compatibility entries; and
-4. remove only the two now-empty live compatibility directories with
-   non-recursive `rmdir`.
+```text
+.ssr-oracle-recovery/<timestamp>-<128-bit-random>/
+  compat/BepInEx/.ssr-oracle-backup/
+  compat/BepInEx/.ssr-oracle-compat/
+  cleanup/
+```
+
+Creation of this recovery scaffolding is itself preparatory filesystem
+mutation. A partially allocated run is retained if allocation or durability
+fails; restore does not mutate the active preloader, manifest, backup,
+provenance, or live compatibility directories until the complete run,
+`compat`, and `cleanup` graph has been opened with
+`O_DIRECTORY | O_NOFOLLOW`, identity-pinned, and parent-fsynced.
+
+The forward transaction then uses this exact order:
+
+1. move the backup and provenance to their required-absent recovery
+   destinations with descriptor-relative
+   `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`, reopen the moved leaves,
+   and validate them against the preflight snapshots;
+2. replace the active preloader with validated official bytes staged on the
+   same filesystem using
+   `renameatx_np(RENAME_SWAP | RENAME_NOFOLLOW_ANY)`, validate the displaced
+   patched inode in private staging, and immediately swap back and fail if the
+   displaced inode is not the preflight snapshot;
+3. install one final manifest containing the official preloader hash and no
+   compatibility entries using the same swap, displaced-inode validation, and
+   swap-back protocol; and
+4. after verifying that each pinned live compatibility directory is the exact
+   expected empty directory, move it atomically and exclusively into the
+   retained `cleanup/` directory. The transaction never calls `rmdir`.
+
+Every successful move or swap fsyncs both affected parent directories before
+the next state transition. If a source changes during an exclusive move, the
+command moves it back only to its required-absent original name; a collision is
+a hard failure and neither object is overwritten. Every transaction-owned
+staging file, swap-displaced file, temporary file, quarantine entry, and empty
+directory is moved atomically and exclusively into `cleanup/` and retained for
+audit. Restore performs no terminal `unlink` or `rmdir` on success, rollback,
+or error cleanup.
 
 Until step 3 completes, status is allowed to report `invalid`; no intermediate
-manifest is written. An in-process failure after any step restores every
-snapshot in reverse order, moving recovery files back only into verified-absent
-destinations, and then restores the original manifest last. Failure-injection
-tests cover every boundary. An external crash may leave the deliberately
-fail-closed `invalid` state with both copies preserved; status reports stable
-recovery guidance and no command claims success.
+manifest is written. Rollback reverses only completed transitions in this
+order: move the exact pinned empty live directories back from `cleanup/` with
+exclusive required-absent renames; restore the patched active preloader with a
+validated swap; restore backup and provenance from recovery with exclusive
+required-absent renames; then restore the patched manifest last with a
+validated swap. Each rollback source is checked against its retained snapshot.
+Any source substitution, destination collision, unexpected displaced inode, or
+fsync failure is a hard rollback failure: preserve all distinguishable copies
+and report their recovery location rather than overwrite, delete, or silently
+adopt one.
 
-The command verifies the restored DLL hash, mode, manifest health, and absence
-of live compatibility entries before reporting success. If validation or any
-mutation fails, it returns to the complete patched state or reports a hard
-failure with both states preserved for manual recovery. It never silently
-chooses one of two inconsistent copies.
+Failure injection covers every forward and rollback write, file fsync,
+directory fsync, exclusive move, swap, displaced-inode validation, swap-back,
+recovery allocation, and cleanup-preservation boundary. Race tests substitute
+each mutable parent, source leaf, destination leaf, active/manifest leaf, and
+empty live directory before its descriptor-relative operation. A static audit
+also proves that no restore-reachable path invokes terminal deletion. An
+external crash may leave the deliberately fail-closed `invalid` state with all
+copies preserved; status reports stable recovery guidance and no command claims
+success.
+
+The command verifies the restored DLL hash, mode, manifest health, absence of
+live compatibility entries, and retained recovery contents before reporting
+success. If validation or any mutation fails, it returns to the complete
+patched state or reports a hard failure with all surviving states preserved for
+manual recovery. It never silently chooses one of two inconsistent copies.
 
 ## Status Model
 
@@ -436,8 +481,10 @@ Required tests cover:
   ownership, mode preservation, and refusal of unmanaged or changed files;
 - failure injection at every staged replacement and manifest write, proving
   exact rollback and recovery preservation;
-- restore hash checks, exact official-byte restoration, recovery movement,
-  repeat-call behavior, and rollback to the patched state;
+- restore hash checks, exact official-byte restoration, descriptor-pinned
+  recovery allocation, exclusive recovery/cleanup movement, validated
+  active/manifest swaps, repeat-call behavior, rollback to the patched state,
+  collision/substitution preservation, and a zero-terminal-deletion audit;
 - all three status states, unmanaged reserved-path file/directory/symlink
   variants, and stable issue codes; and
 - boot-probe marker parsing, timeout cleanup, mode reset, exact-process
@@ -479,7 +526,9 @@ The compatibility layer is complete only when:
    preloader using the committed lock and patch;
 2. no upstream source or generated binary is tracked by Git;
 3. deploy, status, rollback, and restore tests prove exact byte and mode
-   preservation under injected failures;
+   preservation under injected failures, concurrent substitutions, and
+   destination collisions, and prove that deploy- and restore-reachable paths
+   perform no terminal deletion;
 4. the official preloader can be restored and reported as healthy with no live
    compatibility entries;
 5. a patched controlled boot reaches the exact BepInEx, Unity, and SSR oracle

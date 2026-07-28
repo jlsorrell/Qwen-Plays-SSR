@@ -53,6 +53,9 @@ restore, `System.Reflection.Metadata`.
   boot logs.
 - Generated/recovery paths use resolved roots, reject symlinks, and use
   exclusive UTC-timestamp-plus-128-bit-random names.
+- Deploy and restore perform no terminal `unlink` or `rmdir`. Preserve every
+  transaction-owned temporary, displaced, quarantine, staging, and empty
+  directory artifact in the transaction's retained recovery run.
 - Each implementation task uses TDD, ends with focused and regression tests,
   receives a requirements review and a code-quality review, and commits only
   its named files.
@@ -901,46 +904,114 @@ git commit -m "feat: deploy patched BepInEx preloader"
   `restore_preloader(game_root: Path, repo_root: Path | None = None) ->
   tuple[InstallManifest, Path]` and CLI `restore-preloader`.
 
-- [ ] **Step 1: Write failing restore and failure-boundary tests**
+- [ ] **Step 1: Write failing restore precondition, race, and success tests**
 
 Cover official-state refusal, changed active/backup/provenance, trust mismatch,
-reserved symlinks, recovery collision retry, success, and failures after:
+reserved symlinks, recovery-name collision retry, partial recovery-allocation
+failure, and success. Before the first live mutation, assert that the complete
+exclusive recovery run has descriptor-pinned `compat` and `cleanup` subtrees
+and that each creation and parent fsync completed.
 
-```text
-backup move
-provenance move
-active replacement
-final manifest write
-first rmdir
-second rmdir
-```
+For backup, provenance, active, manifest, and both live compatibility
+directories, inject parent replacement, source substitution, and destination
+collision immediately before the descriptor-relative operation. For active and
+manifest swaps, also substitute the live leaf so the displaced-inode check must
+swap back. Assert that unrelated substituted objects are never overwritten,
+adopted, or deleted; every transaction-owned object remains either at its
+original name or below the reported recovery run.
 
-Every injected failure must return to byte/mode-identical patched state or
-raise a hard rollback error while preserving both copies.
+The happy path asserts exact official active bytes and mode, a healthy official
+manifest, absent live compatibility entries, the original backup/provenance
+files under `compat/`, both exact empty former live directories under
+`cleanup/`, and no terminal deletion calls.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Write failing forward and rollback boundary tests**
+
+Inject independently before and after every recovery allocation/open/fsync,
+staging write/chmod/file-fsync, exclusive backup/provenance move and both
+parent-directory fsyncs, active/manifest swap, displaced-inode validation,
+swap-back, empty-live-directory move, cleanup-preservation move, and recovery
+directory fsync.
+
+Repeat the same injection coverage for rollback: empty-directory restoration,
+active swap and displaced validation, backup/provenance exclusive restoration,
+patched-manifest-last swap and displaced validation, preservation of every
+temporary/displaced object, and every associated parent-directory fsync. Each
+failure must return to byte/mode-identical patched state or raise a hard
+rollback error with every distinguishable copy preserved. Destination
+collisions must always be hard failures and must never overwrite either
+object.
+
+- [ ] **Step 3: Verify RED**
 
 ```bash
 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest \
   tests/test_oracle_install_compat.py -k restore -q
 ```
 
-- [ ] **Step 3: Implement the exact restore state machine**
+- [ ] **Step 4: Allocate and pin recovery before live mutation**
 
-After full patched-state validation and snapshots:
+After full patched-state validation, retain no-follow descriptors and snapshots
+for every mutable parent, file, and owned live directory. Fully allocate,
+open, identity-pin, and parent-fsync this exclusive run before changing live
+compatibility state:
 
-1. create exclusive recovery directory;
-2. move backup and provenance into it, preserving relative paths/modes;
-3. atomically replace active with validated backup bytes;
-4. atomically write one final official manifest with compatibility entries
-   removed;
-5. `rmdir` only the two empty live compatibility directories;
+```text
+.ssr-oracle-recovery/<timestamp>-<128-bit-random>/
+  compat/BepInEx/.ssr-oracle-backup/
+  compat/BepInEx/.ssr-oracle-compat/
+  cleanup/
+```
+
+Recovery-name allocation retries only an `EEXIST` collision. Preserve partial
+scaffolding on every other allocation/open/fsync failure; do not begin live
+mutation unless the complete graph is pinned and durable.
+
+- [ ] **Step 5: Implement the descriptor-relative forward state machine**
+
+Use this exact order:
+
+1. move backup and provenance to required-absent recovery leaves with
+   `renameatx_np(RENAME_EXCL | RENAME_NOFOLLOW_ANY)`, reopen them, validate the
+   preflight snapshots, and fsync both parent directories. On a snapshot
+   mismatch, move the unexpected leaf back only to its required-absent original
+   name; if that name has collided, preserve both locations and hard-fail;
+2. install staged official active bytes with
+   `renameatx_np(RENAME_SWAP | RENAME_NOFOLLOW_ANY)`, validate the displaced
+   patched inode, swap back on mismatch, and fsync both parents;
+3. install the final official manifest with the same validated-swap protocol;
+4. verify each pinned live compatibility directory is the expected empty
+   directory, then move it exclusively into `cleanup/`, reopen and validate
+   the moved directory identity, and fsync both parents. On mismatch, restore
+   it only to its required-absent live name or hard-fail on collision;
+5. preserve every transaction-owned staged, temporary, quarantine, and
+   swap-displaced artifact by an exclusive move into `cleanup/`; and
 6. re-run status and require `official`.
 
-Rollback reverses each completed step and restores the patched manifest last.
-Never recursively delete or overwrite a recovery collision.
+Do not use pathname-relative mutation, ordinary rename after a leaf check,
+terminal `unlink`, or `rmdir`.
 
-- [ ] **Step 4: Add CLI and repeat behavior**
+- [ ] **Step 6: Implement patched-manifest-last rollback**
+
+Reverse only completed transitions in this exact order:
+
+1. restore each exact empty directory from `cleanup/` to its required-absent
+   live name with an exclusive no-follow rename;
+2. restore the patched active preloader with a swap, validate the displaced
+   official inode, and swap back on mismatch;
+3. restore backup and provenance from recovery to required-absent live names
+   with exclusive no-follow renames; and
+4. restore the patched manifest last with a swap, validate the displaced
+   official-manifest inode, and swap back on mismatch.
+
+Validate every rollback source against its retained snapshot and fsync both
+parents after each move or swap. A source substitution, destination collision,
+unexpected displaced inode, preservation failure, or fsync failure is a hard
+rollback failure. Preserve all distinguishable copies in the retained recovery
+run and report both the original and rollback errors; never overwrite or
+delete a collision.
+
+- [ ] **Step 7: Add CLI and repeat behavior**
 
 Parser:
 
@@ -951,9 +1022,41 @@ restore-preloader --game-root PATH [--repo-root PATH]
 Success JSON contains `manifest` and absolute `recovery`. Calling restore in
 official state exits 2 with `preloader compatibility is not patched`.
 
-- [ ] **Step 5: Test and commit**
+- [ ] **Step 8: Audit deletion reachability, test, and commit**
 
 ```bash
+UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python - <<'PY'
+import ast
+from pathlib import Path
+
+tree = ast.parse(Path("src/ssr_env/oracle_install.py").read_text())
+functions = {
+    node.name: node
+    for node in tree.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+}
+pending = ["restore_preloader"]
+reachable = set()
+terminal = {"unlink", "rmdir", "remove", "rmtree"}
+violations = []
+while pending:
+    name = pending.pop()
+    if name in reachable:
+        continue
+    reachable.add(name)
+    node = functions[name]
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if isinstance(child.func, ast.Name):
+            if child.func.id in functions:
+                pending.append(child.func.id)
+            if child.func.id in terminal:
+                violations.append((name, child.func.id, child.lineno))
+        elif child.func.attr in terminal:
+            violations.append((name, child.func.attr, child.lineno))
+assert not violations, violations
+PY
 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest \
   tests/test_oracle_install_compat.py tests/test_oracle_install.py -q
 git add src/ssr_env/oracle_install.py tests/test_oracle_install_compat.py
