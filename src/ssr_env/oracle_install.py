@@ -16,7 +16,12 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, Sequence
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
-from ssr_env.oracle_compat import CompatError, load_provenance, load_trust
+from ssr_env.oracle_compat import (
+    EXPECTED_PATCHED_PRELOADER_SHA256,
+    CompatError,
+    load_provenance,
+    load_trust,
+)
 
 EXPECTED_ASSEMBLY_SHA256 = (
     "886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564"
@@ -919,23 +924,34 @@ def _lstat_kind(
     return "other"
 
 
-def _safe_regular_file(root: Path, relative_path: str) -> bool:
+@dataclass(frozen=True, slots=True)
+class _PathEvidence:
+    state: Literal["file", "missing", "unsafe"]
+    sha256: str | None
+
+
+def _regular_file_evidence(
+    root: Path, relative_path: str
+) -> _PathEvidence:
     current = root
     parts = PurePosixPath(relative_path).parts
     for part in parts[:-1]:
         current /= part
-        if _lstat_kind(current) != "directory":
-            return False
-    return _lstat_kind(current / parts[-1]) == "file"
-
-
-def _observed_hash(root: Path, relative_path: str) -> str | None:
-    if not _safe_regular_file(root, relative_path):
-        return None
+        parent_kind = _lstat_kind(current)
+        if parent_kind == "absent":
+            return _PathEvidence("missing", None)
+        if parent_kind != "directory":
+            return _PathEvidence("unsafe", None)
+    target = current / parts[-1]
+    target_kind = _lstat_kind(target)
+    if target_kind == "absent":
+        return _PathEvidence("missing", None)
+    if target_kind != "file":
+        return _PathEvidence("unsafe", None)
     try:
-        return _sha256_file(root / relative_path)
+        return _PathEvidence("file", _sha256_file(target))
     except InstallError:
-        return None
+        return _PathEvidence("unsafe", None)
 
 
 def _manifest_entry(
@@ -972,6 +988,44 @@ def _compatibility_ownership_is_exact(manifest: InstallManifest) -> bool:
     )
 
 
+def _directory_tree_is_exact(
+    root: Path,
+    relative_path: str,
+    expected: dict[str, Literal["file", "directory"]],
+) -> bool:
+    directory = root / relative_path
+    current = root
+    for part in PurePosixPath(relative_path).parts:
+        current /= part
+        if _lstat_kind(current) != "directory":
+            return False
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        with os.scandir(descriptor) as entries:
+            observed: dict[str, str] = {}
+            for entry in entries:
+                mode = entry.stat(follow_symlinks=False).st_mode
+                if stat.S_ISREG(mode):
+                    kind = "file"
+                elif stat.S_ISDIR(mode):
+                    kind = "directory"
+                elif stat.S_ISLNK(mode):
+                    kind = "symlink"
+                else:
+                    kind = "other"
+                observed[entry.name] = kind
+    except OSError:
+        return False
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return observed == expected
+
+
 def _preloader_compatibility_status(
     root: Path,
     manifest: InstallManifest,
@@ -980,8 +1034,8 @@ def _preloader_compatibility_status(
     repo_root: Path | None,
 ) -> PreloaderCompatibilityStatus:
     issues: set[str] = set()
-    active = root / PRELOADER_RELATIVE_PATH
-    active_hash = _observed_hash(root, PRELOADER_RELATIVE_PATH)
+    active_evidence = _regular_file_evidence(root, PRELOADER_RELATIVE_PATH)
+    active_hash = active_evidence.sha256
     active_entry = _manifest_entry(manifest, PRELOADER_RELATIVE_PATH)
     reserved_roots = (
         root / _PRELOADER_BACKUP_ROOT,
@@ -1001,10 +1055,10 @@ def _preloader_compatibility_status(
 
     if manifest.runtime_archive_sha256 != EXPECTED_RUNTIME_ARCHIVE_SHA256:
         issues.add("runtime_archive_mismatch")
-    if not _safe_regular_file(root, PRELOADER_RELATIVE_PATH):
+    if active_evidence.state != "file":
         issues.add(
             "active_missing"
-            if _lstat_kind(active) == "absent"
+            if active_evidence.state == "missing"
             else "active_unsafe"
         )
     elif (
@@ -1055,24 +1109,40 @@ def _preloader_compatibility_status(
 
     if not _compatibility_ownership_is_exact(manifest):
         issues.add("manifest_compatibility_ownership_mismatch")
+    if not _directory_tree_is_exact(
+        root,
+        _PRELOADER_BACKUP_ROOT,
+        {"BepInEx.Preloader.dll": "file"},
+    ) or not _directory_tree_is_exact(
+        root,
+        _PRELOADER_COMPAT_ROOT,
+        {"preloader-provenance.json": "file"},
+    ):
+        issues.add("unmanaged_reserved_path")
 
-    backup_hash = _observed_hash(root, PRELOADER_BACKUP_RELATIVE_PATH)
-    if not _safe_regular_file(root, PRELOADER_BACKUP_RELATIVE_PATH):
+    backup_evidence = _regular_file_evidence(
+        root, PRELOADER_BACKUP_RELATIVE_PATH
+    )
+    backup_hash = backup_evidence.sha256
+    if backup_evidence.state != "file":
         issues.add(
             "backup_missing"
-            if _lstat_kind(root / PRELOADER_BACKUP_RELATIVE_PATH) == "absent"
+            if backup_evidence.state == "missing"
             else "backup_unsafe"
         )
     provenance_path = root / PRELOADER_PROVENANCE_RELATIVE_PATH
-    if not _safe_regular_file(root, PRELOADER_PROVENANCE_RELATIVE_PATH):
+    provenance_evidence = _regular_file_evidence(
+        root, PRELOADER_PROVENANCE_RELATIVE_PATH
+    )
+    if provenance_evidence.state != "file":
         issues.add(
             "provenance_missing"
-            if _lstat_kind(provenance_path) == "absent"
+            if provenance_evidence.state == "missing"
             else "provenance_unsafe"
         )
 
     provenance = None
-    if _safe_regular_file(root, PRELOADER_PROVENANCE_RELATIVE_PATH):
+    if provenance_evidence.state == "file":
         try:
             trust = load_trust(
                 repo_root
@@ -1096,14 +1166,15 @@ def _preloader_compatibility_status(
     provenance_entry = _manifest_entry(
         manifest, PRELOADER_PROVENANCE_RELATIVE_PATH
     )
-    provenance_hash = _observed_hash(
-        root, PRELOADER_PROVENANCE_RELATIVE_PATH
-    )
+    provenance_hash = provenance_evidence.sha256
     if provenance is not None:
         if (
             active_hash is not None
             and (
                 active_hash != provenance.patched_preloader_sha256
+                or active_hash != EXPECTED_PATCHED_PRELOADER_SHA256
+                or provenance.patched_preloader_sha256
+                != EXPECTED_PATCHED_PRELOADER_SHA256
                 or active_entry is None
                 or active_entry.sha256
                 != provenance.patched_preloader_sha256

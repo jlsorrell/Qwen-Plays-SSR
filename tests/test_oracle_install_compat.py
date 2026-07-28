@@ -7,6 +7,7 @@ from zipfile import ZipFile
 
 import pytest
 
+import ssr_env.oracle_compat as oracle_compat
 import ssr_env.oracle_install as oracle_install
 from ssr_env.oracle_compat import BuildProvenance, CompatTrust, canonical_json
 from ssr_env.oracle_install import (
@@ -92,7 +93,7 @@ def trust() -> CompatTrust:
 def _provenance(trust: CompatTrust) -> BuildProvenance:
     return BuildProvenance(
         schema_version=1,
-        source_commit="5" * 40,
+        source_commit="57f1fb859bd4d0264cd2a59074d0e96c6a492a33",
         patch_sha256=trust.patch_sha256,
         toolchain_lock_sha256=trust.toolchain_sha256,
         dotnet_sdk_version="8.0.419",
@@ -110,6 +111,20 @@ def _write_patched_install(
     trust: CompatTrust,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    official_hash = sha256(OFFICIAL_BYTES).hexdigest()
+    patched_hash = sha256(PATCHED_BYTES).hexdigest()
+    monkeypatch.setattr(
+        oracle_compat, "_OFFICIAL_PRELOADER_SHA256", official_hash
+    )
+    monkeypatch.setattr(
+        oracle_compat, "EXPECTED_PATCHED_PRELOADER_SHA256", patched_hash
+    )
+    monkeypatch.setattr(
+        oracle_install,
+        "EXPECTED_PATCHED_PRELOADER_SHA256",
+        patched_hash,
+        raising=False,
+    )
     provenance = _provenance(trust)
     active = game / ACTIVE_PATH
     active.write_bytes(PATCHED_BYTES)
@@ -212,6 +227,23 @@ def test_status_reports_invalid_stable_issue_codes(
     active.write_bytes(b"changed")
     status = status_install(installed_patched_game, repo_root=Path("/unused"))
     assert status.preloader_compatibility.issues == ("active_hash_mismatch",)
+
+
+def test_status_rejects_hash_consistent_arbitrary_unreviewed_active_bytes(
+    installed_patched_game: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        oracle_install,
+        "EXPECTED_PATCHED_PRELOADER_SHA256",
+        "a" * 64,
+        raising=False,
+    )
+    status = status_install(installed_patched_game, repo_root=Path("/unused"))
+    assert status.preloader_compatibility.state == "invalid"
+    assert status.preloader_compatibility.issues == (
+        "active_hash_mismatch",
+    )
 
 
 def test_compatibility_status_is_immutable():
@@ -335,6 +367,63 @@ def test_status_rejects_symlinked_compatibility_parent(
     assert expected_issue in status.preloader_compatibility.issues
 
 
+@pytest.mark.parametrize(
+    ("parent_relative", "artifact_relative", "unsafe_issue", "missing_issue"),
+    [
+        ("BepInEx/core", ACTIVE_PATH, "active_unsafe", "active_missing"),
+        (BACKUP_ROOT, BACKUP_PATH, "backup_unsafe", "backup_missing"),
+        (
+            COMPAT_ROOT,
+            PROVENANCE_PATH,
+            "provenance_unsafe",
+            "provenance_missing",
+        ),
+    ],
+)
+def test_status_reports_symlinked_parent_as_unsafe_when_child_is_absent(
+    parent_relative: str,
+    artifact_relative: str,
+    unsafe_issue: str,
+    missing_issue: str,
+    installed_patched_game: Path,
+    tmp_path: Path,
+):
+    parent = installed_patched_game / parent_relative
+    preserved = tmp_path / ("preserved-" + parent.name)
+    parent.replace(preserved)
+    empty = tmp_path / ("empty-" + parent.name)
+    empty.mkdir()
+    parent.symlink_to(empty, target_is_directory=True)
+
+    status = status_install(installed_patched_game, repo_root=Path("/unused"))
+
+    assert unsafe_issue in status.preloader_compatibility.issues
+    assert missing_issue not in status.preloader_compatibility.issues
+    assert not (empty / Path(artifact_relative).name).exists()
+
+
+@pytest.mark.parametrize(
+    ("artifact_relative", "unsafe_issue"),
+    [
+        (BACKUP_PATH, "backup_unsafe"),
+        (PROVENANCE_PATH, "provenance_unsafe"),
+    ],
+)
+def test_status_rejects_expected_reserved_child_with_directory_type(
+    artifact_relative: str,
+    unsafe_issue: str,
+    installed_patched_game: Path,
+):
+    artifact = installed_patched_game / artifact_relative
+    artifact.unlink()
+    artifact.mkdir()
+
+    status = status_install(installed_patched_game, repo_root=Path("/unused"))
+
+    assert unsafe_issue in status.preloader_compatibility.issues
+    assert "unmanaged_reserved_path" in status.preloader_compatibility.issues
+
+
 def test_status_rejects_noncanonical_provenance(
     installed_patched_game: Path,
 ):
@@ -434,6 +523,21 @@ def test_status_rejects_extra_compatibility_manifest_ownership(
     assert "manifest_compatibility_ownership_mismatch" in (
         status.preloader_compatibility.issues
     )
+
+
+@pytest.mark.parametrize("reserved_root", [BACKUP_ROOT, COMPAT_ROOT])
+@pytest.mark.parametrize("kind", ["file", "directory", "symlink"])
+def test_status_rejects_unowned_reserved_tree_children(
+    reserved_root: str,
+    kind: str,
+    installed_patched_game: Path,
+    tmp_path: Path,
+):
+    extra = installed_patched_game / reserved_root / "unowned"
+    _create_path_of_kind(extra, kind, tmp_path)
+    status = status_install(installed_patched_game, repo_root=Path("/unused"))
+    assert status.preloader_compatibility.state == "invalid"
+    assert "unmanaged_reserved_path" in status.preloader_compatibility.issues
 
 
 def test_status_rejects_backup_hash_mismatch(

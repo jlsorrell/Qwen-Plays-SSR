@@ -96,6 +96,13 @@ _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _LOWER_SHA512 = re.compile(r"[0-9a-f]{128}\Z")
 _LOWER_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _SOURCE_COMMIT = "57f1fb859bd4d0264cd2a59074d0e96c6a492a33"
+_DOTNET_SDK_VERSION = "8.0.419"
+_OFFICIAL_PRELOADER_SHA256 = (
+    "309dd5f1f1dda9209dfc4522a29ac983994f0cca135dee7012582028e9a47627"
+)
+EXPECTED_PATCHED_PRELOADER_SHA256 = (
+    "5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816"
+)
 _HARMONY_SUBMODULE_COMMIT = "d4cdcb4cdeac14a0b77012165f5f5a9f5032a9fa"
 _HARMONY_SUBMODULE_PATH = "submodules/BepInEx.Harmony"
 _HARMONY_SUBMODULE_STATUS = (
@@ -669,6 +676,17 @@ def load_provenance(path: Path, trust: CompatTrust) -> BuildProvenance:
             raise CompatError("provenance hashes do not match trust")
         if provenance.build_target != _BUILD_TARGET:
             raise CompatError("provenance build target is not exact")
+        if provenance.source_commit != _SOURCE_COMMIT:
+            raise CompatError("provenance source commit is not exact")
+        if provenance.dotnet_sdk_version != _DOTNET_SDK_VERSION:
+            raise CompatError("provenance SDK version is not exact")
+        if provenance.official_preloader_sha256 != _OFFICIAL_PRELOADER_SHA256:
+            raise CompatError("provenance official preloader hash is not exact")
+        if (
+            provenance.patched_preloader_sha256
+            != EXPECTED_PATCHED_PRELOADER_SHA256
+        ):
+            raise CompatError("provenance patched preloader hash is not exact")
         return provenance
     except CompatError as exc:
         if "provenance" in str(exc):
@@ -1377,6 +1395,10 @@ def build_compat_preloader(
     patched_hash = _sha256(first_bytes)
     if patched_hash == toolchain.official_preloader_sha256:
         raise CompatError("patched output equals the locked official preloader")
+    if patched_hash != EXPECTED_PATCHED_PRELOADER_SHA256:
+        raise CompatError(
+            "patched output does not match the reviewed preloader hash"
+        )
     provenance = BuildProvenance(
         schema_version=1,
         source_commit=toolchain.source_commit,

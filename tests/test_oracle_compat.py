@@ -490,8 +490,15 @@ def _fake_build_process(
     outputs: list[bytes | BaseException],
     *,
     authenticate_sdk: bool = True,
+    pin_output: bool = True,
 ):
     state = {"publish": 0, "commands": [], "inspections": []}
+    if pin_output and outputs and isinstance(outputs[0], bytes):
+        monkeypatch.setattr(
+            oracle_compat,
+            "EXPECTED_PATCHED_PRELOADER_SHA256",
+            _sha256(outputs[0]),
+        )
 
     def execute(command, *, cwd, env):
         state["commands"].append(command)
@@ -569,9 +576,11 @@ def _build_with_fake_process(
     pinned_recursive_checkout: Path,
     tmp_path: Path,
     outputs: list[bytes | BaseException],
+    *,
+    pin_output: bool = True,
 ):
     root = Path(__file__).resolve().parents[1]
-    _fake_build_process(monkeypatch, outputs)
+    _fake_build_process(monkeypatch, outputs, pin_output=pin_output)
     return build_compat_preloader(
         source=pinned_recursive_checkout,
         sdk=root / "data/oracle/compat/dotnet-8.0.419/dotnet",
@@ -597,8 +606,12 @@ def valid_provenance(
         "build_target": (
             "BepInEx.Preloader/BepInEx.Preloader.csproj@framework=net35"
         ),
-        "official_preloader_sha256": "3" * 64,
-        "patched_preloader_sha256": "4" * 64,
+        "official_preloader_sha256": (
+            "309dd5f1f1dda9209dfc4522a29ac983994f0cca135dee7012582028e9a47627"
+        ),
+        "patched_preloader_sha256": (
+            "5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816"
+        ),
     }
     path = tmp_path / "provenance.json"
     path.write_bytes(canonical_json(data))
@@ -651,6 +664,79 @@ def test_load_provenance_requires_framework_bearing_build_target(
     valid_provenance.write_bytes(canonical_json(decoded))
     with pytest.raises(CompatError, match="build target"):
         load_provenance(valid_provenance, trust)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("source_commit", "6" * 40, "source commit"),
+        ("dotnet_sdk_version", "8.0.420", "SDK version"),
+        ("official_preloader_sha256", "7" * 64, "official preloader"),
+        ("patched_preloader_sha256", "8" * 64, "patched preloader"),
+        (
+            "build_target",
+            "BepInEx.Preloader/BepInEx.Preloader.csproj@framework=net40",
+            "build target",
+        ),
+    ],
+)
+def test_load_provenance_requires_all_pinned_identity_fields(
+    committed_compat_repo: Path,
+    valid_provenance: Path,
+    field: str,
+    value: str,
+    message: str,
+):
+    trust = load_trust(committed_compat_repo)
+    decoded = json.loads(valid_provenance.read_text())
+    decoded[field] = value
+    valid_provenance.write_bytes(canonical_json(decoded))
+    with pytest.raises(CompatError, match=message):
+        load_provenance(valid_provenance, trust)
+
+
+def test_reviewed_patched_preloader_hash_is_exported_and_exact():
+    assert oracle_compat.EXPECTED_PATCHED_PRELOADER_SHA256 == (
+        "5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816"
+    )
+
+
+def test_real_committed_trust_accepts_reviewed_canonical_provenance(
+    tmp_path: Path,
+):
+    root = Path(__file__).resolve().parents[1]
+    trust = load_trust(root)
+    path = tmp_path / "reviewed-provenance.json"
+    path.write_bytes(
+        canonical_json(
+            {
+                "schema_version": 1,
+                "source_commit": (
+                    "57f1fb859bd4d0264cd2a59074d0e96c6a492a33"
+                ),
+                "patch_sha256": trust.patch_sha256,
+                "toolchain_lock_sha256": trust.toolchain_sha256,
+                "dotnet_sdk_version": "8.0.419",
+                "dependency_lock_sha256": trust.dependencies_sha256,
+                "build_target": (
+                    "BepInEx.Preloader/BepInEx.Preloader.csproj"
+                    "@framework=net35"
+                ),
+                "official_preloader_sha256": (
+                    "309dd5f1f1dda9209dfc4522a29ac983994f0cca135dee7012582028e9a47627"
+                ),
+                "patched_preloader_sha256": (
+                    "5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816"
+                ),
+            }
+        )
+    )
+
+    provenance = load_provenance(path, trust)
+
+    assert provenance.patched_preloader_sha256 == (
+        oracle_compat.EXPECTED_PATCHED_PRELOADER_SHA256
+    )
 
 
 def test_canonical_json_is_sorted_utf8_with_final_newline():
@@ -1180,6 +1266,23 @@ def test_build_rejects_output_equal_to_locked_official(
             pinned_recursive_checkout,
             tmp_path,
             [official_bytes, official_bytes],
+        )
+    assert not (tmp_path / "builds/current.json").exists()
+
+
+def test_build_rejects_output_not_equal_to_reviewed_patched_hash(
+    monkeypatch,
+    pinned_recursive_checkout: Path,
+    tmp_path: Path,
+):
+    arbitrary = b"not the reviewed managed assembly"
+    with pytest.raises(CompatError, match="reviewed preloader hash"):
+        _build_with_fake_process(
+            monkeypatch,
+            pinned_recursive_checkout,
+            tmp_path,
+            [arbitrary, arbitrary],
+            pin_output=False,
         )
     assert not (tmp_path / "builds/current.json").exists()
 
