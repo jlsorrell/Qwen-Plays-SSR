@@ -20,3 +20,6 @@ oracle/plugin/bin/
 oracle/plugin/obj/
 oracle/plugin/tests/bin/
 oracle/plugin/tests/obj/
+
+# Locally fetched/built BepInEx compatibility material; never commit.
+data/oracle/compat/

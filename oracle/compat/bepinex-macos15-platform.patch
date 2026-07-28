@@ -1,0 +1,16 @@
+diff --git a/BepInEx.Preloader/Platform.cs b/BepInEx.Preloader/Platform.cs
+index 3c73362..b3629b1 100644
+--- a/BepInEx.Preloader/Platform.cs
++++ b/BepInEx.Preloader/Platform.cs
+@@ -98,9 +98,9 @@ namespace BepInEx.Preloader
+ 			{
+ 				current = Platform.Android;
+ 			}
+-			else if (Is(current, Platform.Unix) && Directory.Exists("/System/Library/AccessibilityBundles"))
++			else if (Is(current, Platform.Unix) && Directory.Exists("/System/Library/CoreServices"))
+ 			{
+-				current = Platform.iOS;
++				current = Platform.MacOS;
+ 			}
+ 
+ 			// Is64BitOperatingSystem has been added in .NET Framework 4.0
