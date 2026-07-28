@@ -658,7 +658,9 @@ the ignored output root.
 - [ ] **Step 5: Compare, inspect, and publish**
 
 Require byte equality, then validate exact assembly name, `net35`, CLR v2,
-`mscorlib` 2.0, source/patch/lock hashes, and version from the toolchain.
+`mscorlib` 2.0, source/patch/lock hashes, version from the toolchain, and the
+reviewed accepted patched-preloader SHA-256
+`5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816`.
 Write DLL and provenance to a new
 `<output>/<patched-sha256>/` directory, fsync, then atomically write
 `<output>/current.json`. Refuse different existing bytes.
@@ -779,8 +781,10 @@ EXPECTED_OFFICIAL_PRELOADER_SHA256 = (
 Official requires the official active hash, matching manifest entry, and both
 reserved live roots absent by `lstat`. Patched requires valid clean-HEAD trust,
 canonical provenance, matching active/backup/manifest hashes, safe regular
-files, and owned parent directories. Every other combination is invalid and
-makes `InstallStatus.healthy` false. Status never repairs.
+files, owned parent directories, and exact agreement with the reviewed accepted
+patched-preloader SHA-256. Reserved live directories must contain exactly the
+owned expected entries without following symlinks. Every other combination is
+invalid and makes `InstallStatus.healthy` false. Status never repairs.
 
 - [ ] **Step 5: Test and commit**
 

@@ -174,6 +174,13 @@ The accepted DLL must then pass metadata checks:
 - the patched method exists once; and
 - no additional build output is selected for deployment.
 
+The resulting Task 4 artifact is also pinned in reviewed source as
+`5a777c72ee4cb592f5ea7b0fa7bb15f1db7fa417f1374536f327e3d42aad4816`.
+This value was derived only after two authenticated builds in both in-repository
+and external output roots produced byte-identical DLLs and the non-loading
+inspector validated the compiled patch and exact legacy metadata. Subsequent
+builds fail unless they reproduce this exact accepted artifact.
+
 If reproducibility or metadata compatibility cannot be achieved with the
 locked source and toolchain, the builder stops. A locally successful but
 variable build is not deployable.
@@ -348,7 +355,8 @@ chooses one of two inconsistent copies.
   `BepInEx/.ssr-oracle-backup` and `BepInEx/.ssr-oracle-compat` are absent
   without following symlinks.
 - `patched` means the active, backup, provenance, committed-input hashes, and
-  manifest entries agree.
+  manifest entries agree, and the provenance plus active bytes equal the
+  reviewed Task 4 patched-preloader hash.
 - `invalid` covers every other state and makes overall `healthy` false.
 
 Status never repairs a state, trusts provenance without hashing its referenced
