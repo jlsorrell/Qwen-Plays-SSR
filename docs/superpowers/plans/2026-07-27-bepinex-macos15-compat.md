@@ -1041,15 +1041,17 @@ Constrain restore transaction code to direct calls between module-level local
 functions. Do not put transaction mutation in class/instance methods; do not
 use local callable aliases, callbacks, lambdas, `functools.partial`,
 `getattr`, `globals`, `locals`, `eval`, `exec`, or dynamic lookup. Passive
-data-class construction and explicitly listed value/descriptor-lifecycle
-methods are permitted, but filesystem mutation remains in direct module-level
-helpers.
+data-class construction is permitted for `@dataclass` and `@dataclass(...)`
+classes with no explicit `__init__`, but filesystem mutation remains in direct
+module-level helpers. Opaque imported helpers and shell/process launch are
+forbidden from the restore-reachable graph.
 
 Add this conservative call-graph test to
 `tests/test_oracle_install_compat.py`:
 
 ```python
 import ast
+import builtins
 from pathlib import Path
 
 def test_restore_transaction_static_graph_has_no_terminal_deletion(
@@ -1066,58 +1068,106 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
     class_nodes = {
         node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
     }
-    passive_classes = {
+
+    def is_dataclass_decorator(decorator: ast.expr) -> bool:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        return isinstance(target, ast.Name) and target.id == "dataclass"
+
+    passive_dataclasses = {
         name
         for name, node in class_nodes.items()
         if (
-            any(
-                isinstance(decorator, ast.Name)
-                and decorator.id == "dataclass"
-                for decorator in node.decorator_list
-            )
+            any(is_dataclass_decorator(item) for item in node.decorator_list)
             and not any(
                 isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and child.name == "__init__"
                 for child in node.body
             )
         )
-        or name.endswith(("Error", "Exception"))
     }
-    imported_modules: set[str] = set()
+    allowed_local_exception_constructors = {
+        "InstallError", "_RenameAtError", "_RetainedDirectoryCollision",
+    }
+    imported_modules: dict[str, str] = {}
     imported_callables: dict[str, str] = {}
+    import_aliases: set[str] = set()
     for node in tree.body:
         if isinstance(node, ast.Import):
-            imported_modules.update(
-                alias.asname or alias.name.split(".", 1)[0]
-                for alias in node.names
-            )
+            for alias in node.names:
+                local_name = alias.asname or alias.name.split(".", 1)[0]
+                imported_modules[local_name] = alias.name
+                if alias.asname is not None:
+                    import_aliases.add(local_name)
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 local_name = alias.asname or alias.name
                 imported_callables[local_name] = (
                     f"{node.module}.{alias.name}"
                 )
+                if alias.asname is not None:
+                    import_aliases.add(local_name)
 
     terminal = {"unlink", "remove", "rmdir", "removedirs", "rmtree"}
     forbidden_dynamic = {
         "eval", "exec", "getattr", "globals", "locals", "__import__",
         "attrgetter", "methodcaller", "partial",
     }
-    safe_builtins = {
-        "bool", "bytes", "bytearray", "dict", "enumerate", "frozenset",
-        "int", "isinstance", "len", "list", "max", "min", "OSError",
-        "range", "reversed", "RuntimeError", "set", "sorted", "str",
-        "tuple", "ValueError", "zip",
+    allowed_builtin_calls = {
+        "builtins.bool", "builtins.bytes", "builtins.bytearray",
+        "builtins.dict", "builtins.enumerate", "builtins.frozenset",
+        "builtins.int", "builtins.isinstance", "builtins.len",
+        "builtins.list", "builtins.max", "builtins.min",
+        "builtins.range", "builtins.reversed", "builtins.set",
+        "builtins.sorted", "builtins.str", "builtins.tuple",
+        "builtins.zip",
     }
-    safe_value_methods = {
-        "append", "close", "decode", "encode", "endswith", "get",
-        "hexdigest", "items", "keys", "read_bytes", "resolve",
-        "startswith", "values",
+    allowed_external_calls = {
+        "ctypes.get_errno",
+        "datetime.datetime.now",
+        "hashlib.sha256",
+        "json.dumps",
+        "json.loads",
+        "os.close",
+        "os.fchmod",
+        "os.fstat",
+        "os.fsync",
+        "os.fsencode",
+        "os.open",
+        "os.read",
+        "os.scandir",
+        "os.stat",
+        "os.strerror",
+        "os.write",
+        "pathlib.Path",
+        "secrets.token_hex",
+        "stat.S_ISDIR",
+        "stat.S_ISLNK",
+        "stat.S_ISREG",
+    }
+    allowed_transaction_primitives = {
+        "module_global._RENAMEATX_NP",
+    }
+    forbidden_external_prefixes = {
+        "asyncio.create_subprocess", "multiprocessing", "os.exec",
+        "os.fork", "os.forkpty", "os.popen", "os.posix_spawn",
+        "os.spawn", "os.system", "pty", "subprocess",
     }
 
     pending = ["restore_preloader"]
     reachable: set[str] = set()
+    observed_builtins: set[str] = set()
+    observed_external: set[str] = set()
+    observed_primitives: set[str] = set()
     violations: list[tuple[str, int, str]] = []
+
+    def dotted_name(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            return None if prefix is None else f"{prefix}.{node.attr}"
+        return None
+
     while pending:
         function_name = pending.pop()
         if function_name in reachable:
@@ -1161,27 +1211,30 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
                 elif name in terminal or name in forbidden_dynamic:
                     violations.append((function_name, node.lineno, name))
                 elif (
-                    name not in imported_callables
-                    and name not in passive_classes
-                    and name not in safe_builtins
+                    name in passive_dataclasses
+                    or name in allowed_local_exception_constructors
                 ):
+                    pass
+                elif name in import_aliases:
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            f"import alias forbidden: {name}",
+                        )
+                    )
+                elif name in imported_callables:
+                    observed_external.add(imported_callables[name])
+                elif name in dir(builtins):
+                    observed_builtins.add(f"builtins.{name}")
+                elif f"module_global.{name}" in allowed_transaction_primitives:
+                    observed_primitives.add(f"module_global.{name}")
+                else:
                     violations.append(
                         (
                             function_name,
                             node.lineno,
                             f"unresolved bare callable: {name}",
-                        )
-                    )
-                elif (
-                    name in imported_callables
-                    and imported_callables[name].rsplit(".", 1)[-1]
-                    in terminal | forbidden_dynamic
-                ):
-                    violations.append(
-                        (
-                            function_name,
-                            node.lineno,
-                            imported_callables[name],
                         )
                     )
             elif isinstance(callee, ast.Attribute):
@@ -1190,31 +1243,73 @@ def test_restore_transaction_static_graph_has_no_terminal_deletion(
                         (function_name, node.lineno, callee.attr)
                     )
                     continue
-                base = callee.value
-                while isinstance(base, ast.Attribute):
-                    base = base.value
-                if isinstance(base, ast.Name) and base.id in imported_modules:
-                    pass
-                elif callee.attr not in safe_value_methods:
+                raw = dotted_name(callee)
+                if raw is None:
                     violations.append(
                         (
                             function_name,
                             node.lineno,
-                            f"unresolved object dispatch: {callee.attr}",
+                            "dynamic attribute dispatch",
+                        )
+                    )
+                    continue
+                root, dot, suffix = raw.partition(".")
+                if root in import_aliases:
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            f"import alias forbidden: {root}",
+                        )
+                    )
+                elif root in imported_modules and dot:
+                    observed_external.add(
+                        f"{imported_modules[root]}.{suffix}"
+                    )
+                elif root in imported_callables and dot:
+                    observed_external.add(
+                        f"{imported_callables[root]}.{suffix}"
+                    )
+                else:
+                    violations.append(
+                        (
+                            function_name,
+                            node.lineno,
+                            f"unresolved object dispatch: {raw}",
                         )
                     )
             else:
                 violations.append(
                     (function_name, node.lineno, "indirect call expression")
                 )
+    unlisted_builtins = observed_builtins - allowed_builtin_calls
+    unlisted_external = observed_external - allowed_external_calls
+    unlisted_primitives = observed_primitives - allowed_transaction_primitives
+    launched_processes = {
+        edge
+        for edge in observed_external
+        if any(
+            edge == prefix or edge.startswith(prefix + ".")
+            for prefix in forbidden_external_prefixes
+        )
+    }
+    assert not unlisted_builtins, unlisted_builtins
+    assert not unlisted_external, unlisted_external
+    assert not unlisted_primitives, unlisted_primitives
+    assert not launched_processes, launched_processes
     assert not violations, violations
 ```
 
 This test traverses every permitted module-local helper reachable from
 `restore_preloader`, rejects any local function reference that is not a direct
 callee, fails closed on unresolved bare/indirect call edges, and rejects
-terminal deletion throughout the graph. Do not expand `safe_value_methods` to
-admit filesystem mutation; add a direct module-level helper instead.
+terminal deletion throughout the graph. The builtin, external, and transaction
+primitive sets are literal qualified-name allowlists, never module wildcards.
+An implementation edge not already listed must route through a reviewed
+module-level local wrapper or receive an explicit literal entry after its
+non-mutating contract is verified. Opaque imported helpers remain forbidden;
+the separately listed `_RENAMEATX_NP` boundary is the sole reviewed
+non-deleting external mutation primitive.
 
 Also add a raising runtime spy and use it around restore success and every
 forward failure, rollback failure, fsync failure, destination collision, and

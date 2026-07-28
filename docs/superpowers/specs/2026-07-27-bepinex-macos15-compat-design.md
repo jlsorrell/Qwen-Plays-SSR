@@ -412,14 +412,25 @@ instance methods, local callable aliases, callbacks, `functools.partial`,
 starts at `restore_preloader`, traverses every directly called module-level
 local helper, rejects any local function reference that is not the direct
 callee of a call, and fails closed on an unresolved or indirect call edge in
-transaction logic. It rejects terminal deletion calls in the complete
-reachable graph. Independently, runtime tests replace the `os`, `pathlib`, and
-`shutil` terminal-deletion primitives with raising spies while exercising
-restore success and every forward failure, rollback failure, fsync failure,
-destination collision, and substitution case; all spies must record zero
-calls. An external crash may leave the deliberately fail-closed `invalid` state
-with all copies preserved; status reports stable recovery guidance and no
-command claims success.
+transaction logic. It resolves every builtin, imported callable, and imported
+module-attribute call to a qualified name and requires an exact entry in a
+literal, hand-reviewed allowlist; module wildcards and blanket imported-callable
+allowance are forbidden. Import aliases, opaque imported helpers,
+class/instance dispatch, shell/process launch, and unresolved external calls
+are rejected. A new edge must instead use reviewed module-level local wrappers
+or receive an explicit qualified allowlist entry whose non-mutating contract
+has been verified. The one exact `renameatx_np` FFI transaction primitive is
+listed separately as a reviewed non-deleting mutation boundary.
+
+The audit recognizes passive data carriers decorated as either `@dataclass` or
+`@dataclass(...)`, but only when they define no explicit `__init__`. It rejects
+terminal deletion calls in the complete reachable graph. Independently,
+runtime tests replace the `os`, `pathlib`, and `shutil` terminal-deletion
+primitives with raising spies while exercising restore success and every
+forward failure, rollback failure, fsync failure, destination collision, and
+substitution case; all spies must record zero calls. An external crash may
+leave the deliberately fail-closed `invalid` state with all copies preserved;
+status reports stable recovery guidance and no command claims success.
 
 The command verifies the restored DLL hash, mode, manifest health, absence of
 live compatibility entries, and retained recovery contents before reporting
