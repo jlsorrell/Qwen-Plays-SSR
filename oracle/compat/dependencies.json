@@ -1,0 +1,85 @@
+{
+  "packages": [
+    {
+      "content_hash": "ORRsD1j8Zw/yCupRT3fD7/k19YHL0Qf70O8mcYDXggiEgzVuPmDf1jHoa3nsSAEXVua+7jmM1RuDgWI05Q/owQ==",
+      "filename": "harmonyx.2.0.6.nupkg",
+      "package_id": "HarmonyX",
+      "sha256": "cf65037064621575bf098172d30c3cf138266d73ab5be62d849e25a78cce732e",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "2.0.6"
+    },
+    {
+      "content_hash": "vB03a0lJJefzSnPP8VJSzyTtgSx81dnxU2olfirHTBnbXY8Uc2BMoxCODPK1nzg4C53lQR0NOi+bp9170sYVFA==",
+      "filename": "harmonyx.2.9.0.nupkg",
+      "package_id": "HarmonyX",
+      "sha256": "290cdc58b664c2d40e8b86faf455d1a31e53fb7f1960079330daa7122e5aa18f",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "2.9.0"
+    },
+    {
+      "content_hash": "vUc9Npcs14QsyOD01tnv/m8sQUnGTGOw1BCmKcv77LBJY7OxhJ+zJF7UD/sCL3lYNFuqmQEVlkfS4Quif6FyYg==",
+      "filename": "microsoft.netframework.referenceassemblies.1.0.3.nupkg",
+      "package_id": "Microsoft.NETFramework.ReferenceAssemblies",
+      "sha256": "141a093f90c7645d101ccd312e6f727781c965540eb92a52280f95411a698441",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "1.0.3"
+    },
+    {
+      "content_hash": "Mhbr13IGgsW4AHj50uAiVNMPWdvUPWePRsI4x1NiTkhHUc4rqi9XvY5xxBC4d56bJypQbxAZ8bPuZIpz+TjBVQ==",
+      "filename": "microsoft.netframework.referenceassemblies.net35.1.0.3.nupkg",
+      "package_id": "Microsoft.NETFramework.ReferenceAssemblies.net35",
+      "sha256": "b16156111a88670d91a757fbd465fcb4856e034b1a4d523ae2c41a470f3578f9",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "1.0.3"
+    },
+    {
+      "content_hash": "BHukPf7zfXu+akTcFEAWvU4x3hVMMIDC+ihGAl/+8OozrY0f/ajrpuaSUf2Q3Xvgsge5NryvOkjtyhV5TNXoSg==",
+      "filename": "mono.cecil.0.10.4.nupkg",
+      "package_id": "Mono.Cecil",
+      "sha256": "3451a4a112a81be0bf76b8dc2bca396acdf0455d80c8961e7903ce1fb35c2a9a",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "0.10.4"
+    },
+    {
+      "content_hash": "7ckBd11ICz2jD3fzlJ+PPaTrmckyYf8yWkQDHhzRf5JGW0Qijk526JUT/0qjNvNKRJXdeJDt80xR+D5Y3Z1AQg==",
+      "filename": "monomod.runtimedetour.20.5.21.5.nupkg",
+      "package_id": "MonoMod.RuntimeDetour",
+      "sha256": "c19a5354df13d6f21f70673bb269a745f6670f9013a11dfd4cf3a3ace6d4397f",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "20.5.21.5"
+    },
+    {
+      "content_hash": "CksRFEGCPs8VGKe6pc3zsOPd2Jik+FMlmx5HDxWVTxz9JlAmWDk1+0PCwAVw4iGDuDZmIUjZDjhSACasyw9y/Q==",
+      "filename": "monomod.runtimedetour.22.1.29.1.nupkg",
+      "package_id": "MonoMod.RuntimeDetour",
+      "sha256": "8224e82b4a473f9c66b43ae7bdd6202a26210ef9b6403e0837f443b095d43a2a",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "22.1.29.1"
+    },
+    {
+      "content_hash": "P+pBudd5stDFVkA28sVAtmFizlj4Oqs3M3IRmgzV0vz8UlGINhN/DLS4ghKAe1dqgVxmEvn6CrmFguMXmMc8HA==",
+      "filename": "monomod.utils.20.5.21.5.nupkg",
+      "package_id": "MonoMod.Utils",
+      "sha256": "6298cdccdae0fa50ac2f108f9affd8c2f62c4e7ff361dd7cbae4efe03d0666ff",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "20.5.21.5"
+    },
+    {
+      "content_hash": "qKyM/JXIA3hr2BpE5LTtYfZvIFlcLB62pkORARRv0bXKSk1n23Nl3oAdYymQMjNfrhn/jCPZRqKDFftrYa1K2Q==",
+      "filename": "monomod.utils.22.1.29.1.nupkg",
+      "package_id": "MonoMod.Utils",
+      "sha256": "6f9c48ad7ed8fd862ac7b89df653245c97a046d9de3cd7256e3a3603c5a715ee",
+      "source_index": "https://api.nuget.org/v3/index.json",
+      "version": "22.1.29.1"
+    },
+    {
+      "content_hash": "uAhM+pBtZH7CvGCBQyT9CaksT9M4fzTCIMetYjOEocuFiQGF38uGgS8q5xUd1HddaeXwDG9VrMARHGz5IXhQLw==",
+      "filename": "unityengine.5.6.1.nupkg",
+      "package_id": "UnityEngine",
+      "sha256": "350ab9017bfece555e9479949cff68a50aaca0d86075f426ae0acb132d057096",
+      "source_index": "https://nuget.bepinex.dev/v3/index.json",
+      "version": "5.6.1"
+    }
+  ],
+  "schema_version": 1
+}

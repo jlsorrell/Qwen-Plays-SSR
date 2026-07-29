@@ -1,0 +1,7 @@
+{
+  "dependencies_sha256": "d58293afdc866819517bd629440b77f93b2d71499bc55676cad8f097f38d2f5b",
+  "nuget_lock_tree_sha256": "20ac3376e583be5088c4c565a9f9613a2f2c5e6e3c9dc55022e1d82cb6d529eb",
+  "patch_sha256": "5d37abb8711650a7f7584988830bbba8849344e24630a0bc970930e4fa5726da",
+  "schema_version": 1,
+  "toolchain_sha256": "cebe2e9b504f7a281dbbe0cd65c4e3191010c37ebcc703ee8d3518be5f7c13d8"
+}

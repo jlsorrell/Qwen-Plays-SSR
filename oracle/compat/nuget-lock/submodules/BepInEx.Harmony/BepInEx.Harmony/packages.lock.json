@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "dependencies": {
+    ".NETFramework,Version=v3.5": {
+      "HarmonyX": {
+        "type": "Direct",
+        "requested": "[2.0.6, )",
+        "resolved": "2.0.6",
+        "contentHash": "ORRsD1j8Zw/yCupRT3fD7/k19YHL0Qf70O8mcYDXggiEgzVuPmDf1jHoa3nsSAEXVua+7jmM1RuDgWI05Q/owQ==",
+        "dependencies": {
+          "MonoMod.RuntimeDetour": "20.5.21.5"
+        }
+      },
+      "Microsoft.NETFramework.ReferenceAssemblies": {
+        "type": "Direct",
+        "requested": "[1.0.3, )",
+        "resolved": "1.0.3",
+        "contentHash": "vUc9Npcs14QsyOD01tnv/m8sQUnGTGOw1BCmKcv77LBJY7OxhJ+zJF7UD/sCL3lYNFuqmQEVlkfS4Quif6FyYg==",
+        "dependencies": {
+          "Microsoft.NETFramework.ReferenceAssemblies.net35": "1.0.3"
+        }
+      },
+      "Microsoft.NETFramework.ReferenceAssemblies.net35": {
+        "type": "Transitive",
+        "resolved": "1.0.3",
+        "contentHash": "Mhbr13IGgsW4AHj50uAiVNMPWdvUPWePRsI4x1NiTkhHUc4rqi9XvY5xxBC4d56bJypQbxAZ8bPuZIpz+TjBVQ=="
+      },
+      "Mono.Cecil": {
+        "type": "Transitive",
+        "resolved": "0.10.4",
+        "contentHash": "BHukPf7zfXu+akTcFEAWvU4x3hVMMIDC+ihGAl/+8OozrY0f/ajrpuaSUf2Q3Xvgsge5NryvOkjtyhV5TNXoSg=="
+      },
+      "MonoMod.RuntimeDetour": {
+        "type": "Transitive",
+        "resolved": "20.5.21.5",
+        "contentHash": "7ckBd11ICz2jD3fzlJ+PPaTrmckyYf8yWkQDHhzRf5JGW0Qijk526JUT/0qjNvNKRJXdeJDt80xR+D5Y3Z1AQg==",
+        "dependencies": {
+          "Mono.Cecil": "0.10.4",
+          "MonoMod.Utils": "20.5.21.5"
+        }
+      },
+      "MonoMod.Utils": {
+        "type": "Transitive",
+        "resolved": "20.5.21.5",
+        "contentHash": "P+pBudd5stDFVkA28sVAtmFizlj4Oqs3M3IRmgzV0vz8UlGINhN/DLS4ghKAe1dqgVxmEvn6CrmFguMXmMc8HA==",
+        "dependencies": {
+          "Mono.Cecil": "0.10.4"
+        }
+      }
+    }
+  }
+}
