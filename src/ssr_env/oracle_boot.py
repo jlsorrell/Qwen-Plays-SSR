@@ -1308,7 +1308,7 @@ def _wait_for_markers(
             add_issue(str(exc))
 
         exit_code = process.poll()
-        if not observation_stable and exit_code is not None:
+        if exit_code is not None:
             try:
                 observe()
             except _TransientLogChange:
@@ -1338,6 +1338,14 @@ def _wait_for_markers(
                 except BootProbeError as exc:
                     add_issue(str(exc))
             exit_code = process.poll()
+            try:
+                observe()
+            except _TransientLogChange:
+                add_issue(
+                    "monitored boot log remained unstable at deadline"
+                )
+            except BootProbeError as exc:
+                add_issue(str(exc))
             if errors or issue_list:
                 return outcome("error", exit_code)
             if exit_code is not None:

@@ -2090,6 +2090,97 @@ def test_observed_failure_identity_survives_process_cleanup_mutation(
         assert not path.exists()
     else:
         assert path.stat().st_ino != first.st_ino
+        assert (
+            "observed failure log identity changed during monitoring: "
+            "preloader_cleanup.log"
+        ) in outcome.issues
+
+
+def test_observed_failure_deadline_poll_identity_change_retains_first(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    relative = Path("preloader_deadline.log")
+    path = game / relative
+    path.write_bytes(b"unstable initial payload\n")
+    original_open = os.open
+    original_read = os.read
+    target_descriptor = -1
+    first_stable: os.stat_result | None = None
+
+    def track_open(open_path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal target_descriptor
+        descriptor = original_open(
+            open_path,
+            flags,
+            mode,
+            dir_fd=dir_fd,
+        )
+        if dir_fd is not None and open_path == path.name:
+            target_descriptor = descriptor
+        return descriptor
+
+    def replace_during_initial_read(descriptor: int, count: int):
+        nonlocal first_stable
+        chunk = original_read(descriptor, count)
+        if (
+            descriptor == target_descriptor
+            and chunk
+            and first_stable is None
+        ):
+            replacement = game / "deadline-first.log"
+            replacement.write_bytes(b"first stable identity\n")
+            os.replace(replacement, path)
+            first_stable = path.lstat()
+        return chunk
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "os",
+        _ModuleProxy(
+            os,
+            open=track_open,
+            read=replace_during_initial_read,
+        ),
+        raising=False,
+    )
+
+    class DeadlineMutatingProcess:
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls == 2:
+                replacement = game / "deadline-second.log"
+                replacement.write_bytes(b"second stable identity\n")
+                os.replace(replacement, path)
+            return None
+
+    outcome = oracle_boot._wait_for_markers(
+        DeadlineMutatingProcess(),
+        game,
+        (),
+        0,
+    )
+
+    assert first_stable is not None
+    assert path.stat().st_ino != first_stable.st_ino
+    assert outcome.state == "error"
+    assert outcome.observed_failures == (
+        oracle_boot._ObservedFailureLog(
+            relative_path=relative,
+            kind="preloader",
+            device=first_stable.st_dev,
+            inode=first_stable.st_ino,
+            mode=first_stable.st_mode,
+        ),
+    )
+    assert (
+        "observed failure log identity changed during monitoring: "
+        "preloader_deadline.log"
+    ) in outcome.issues
 
 
 def test_observed_failure_unsafe_entries_are_recorded_without_opening(
