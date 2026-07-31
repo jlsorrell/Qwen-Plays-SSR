@@ -205,6 +205,36 @@ class _ObservedFailureLog:
 
 
 @dataclass(frozen=True, slots=True)
+class _BootLogInventoryEntry:
+    path: Path
+    relative_path: Path
+    kind: str
+    file_type: str
+    device: int
+    inode: int
+    mode: int
+    size: int
+    mtime_ns: int
+    fingerprint: LogFingerprint | None
+
+
+@dataclass(frozen=True, slots=True)
+class _BootLogInventory:
+    entries: tuple[_BootLogInventoryEntry, ...]
+    regular_fingerprints: tuple[LogFingerprint, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "regular_fingerprints",
+            tuple(
+                entry.fingerprint
+                for entry in self.entries
+                if entry.fingerprint is not None
+            ),
+        )
+
+@dataclass(frozen=True, slots=True)
 class _MonitorOutcome:
     state: str
     markers: tuple[str, ...]
@@ -1396,6 +1426,71 @@ def _fingerprint_regular_preloader_logs(
         scan.close()
 
 
+def _capture_boot_log_inventory_from_scan(
+    game_root: Path,
+    scan: _LogScan,
+) -> _BootLogInventory:
+    entries: list[_BootLogInventoryEntry] = []
+    for entry in scan.entries:
+        fingerprint: LogFingerprint | None = None
+        if entry.file_type == "regular":
+            fingerprint = _fingerprint_scanned(entry)
+        else:
+            try:
+                named = os.stat(
+                    entry.name,
+                    dir_fd=entry.parent.fd,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise BootProbeError(
+                    f"monitored boot log changed during inventory: "
+                    f"{entry.path}: {exc}"
+                ) from exc
+            if _stat_identity(named) != _stat_identity(entry.observed):
+                raise BootProbeError(
+                    f"monitored boot log changed during inventory: "
+                    f"{entry.path}"
+                )
+        entries.append(
+            _BootLogInventoryEntry(
+                path=entry.path,
+                relative_path=entry.path.relative_to(game_root),
+                kind=entry.kind,
+                file_type=entry.file_type,
+                device=entry.observed.st_dev,
+                inode=entry.observed.st_ino,
+                mode=entry.observed.st_mode,
+                size=entry.observed.st_size,
+                mtime_ns=entry.observed.st_mtime_ns,
+                fingerprint=fingerprint,
+            )
+        )
+    return _BootLogInventory(tuple(entries))
+
+
+def _capture_boot_log_inventory(
+    game_root: Path,
+) -> _BootLogInventory:
+    game = _validate_directory(game_root, "game root")
+    scan = _scan_preloader_logs(game)
+    try:
+        inventory = _capture_boot_log_inventory_from_scan(game, scan)
+    except BaseException as primary:
+        try:
+            scan.close()
+        except BaseException as exc:
+            _note_later_error(
+                primary,
+                "boot log inventory scan close also failed",
+                exc,
+            )
+        raise
+    else:
+        scan.close()
+        return inventory
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1448,26 +1543,182 @@ def _fingerprint_matches(
     )
 
 
+def _validate_boot_log_inventory(
+    inventory: _BootLogInventory,
+    game_root: Path,
+) -> _BootLogInventory:
+    if not isinstance(inventory, _BootLogInventory):
+        raise ValueError(
+            "expected_inventory must be a _BootLogInventory"
+        )
+    if not isinstance(inventory.entries, tuple):
+        raise ValueError("boot log inventory entries must be a tuple")
+    seen: set[Path] = set()
+    prior_key: str | None = None
+    for entry in inventory.entries:
+        if not isinstance(entry, _BootLogInventoryEntry):
+            raise ValueError(
+                "boot log inventory contains an invalid entry"
+            )
+        path = _requested_path(entry.path, "boot log inventory path")
+        if path != entry.path or not path.is_relative_to(game_root):
+            raise BootProbeError(
+                f"boot log inventory path is outside game root: "
+                f"{entry.path}"
+            )
+        relative = path.relative_to(game_root)
+        if relative != entry.relative_path:
+            raise BootProbeError(
+                f"invalid boot log inventory relative path: {entry.path}"
+            )
+        key = relative.as_posix()
+        if prior_key is not None and key <= prior_key:
+            raise BootProbeError(
+                "boot log inventory entries are not uniquely sorted"
+            )
+        prior_key = key
+        if relative in seen:
+            raise BootProbeError(
+                f"duplicate boot log inventory path: {entry.path}"
+            )
+        seen.add(relative)
+        if _boot_log_kind(relative) != entry.kind:
+            raise BootProbeError(
+                f"invalid boot log inventory kind: {entry.path}"
+            )
+        if _file_type(entry.mode) != entry.file_type:
+            raise BootProbeError(
+                f"invalid boot log inventory type: {entry.path}"
+            )
+        for value in (
+            entry.device,
+            entry.inode,
+            entry.mode,
+            entry.size,
+            entry.mtime_ns,
+        ):
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(
+                    "boot log inventory contains invalid stat metadata"
+                )
+        if entry.file_type == "regular":
+            fingerprint = entry.fingerprint
+            if fingerprint is None:
+                raise BootProbeError(
+                    f"regular boot log inventory entry has no fingerprint: "
+                    f"{entry.path}"
+                )
+            validated = _validate_baseline((fingerprint,), game_root)
+            if validated != {entry.path: fingerprint} or (
+                fingerprint.inode != entry.inode
+                or fingerprint.size != entry.size
+                or fingerprint.mtime_ns != entry.mtime_ns
+            ):
+                raise BootProbeError(
+                    f"boot log inventory fingerprint mismatch: "
+                    f"{entry.path}"
+                )
+        elif entry.fingerprint is not None:
+            raise BootProbeError(
+                f"unsafe boot log inventory entry has a fingerprint: "
+                f"{entry.path}"
+            )
+    expected_fingerprints = tuple(
+        entry.fingerprint
+        for entry in inventory.entries
+        if entry.fingerprint is not None
+    )
+    if inventory.regular_fingerprints != expected_fingerprints:
+        raise BootProbeError(
+            "boot log inventory regular fingerprints are inconsistent"
+        )
+    return inventory
+
+
+def _validate_observed_failures(
+    observed_failures: tuple[_ObservedFailureLog, ...],
+    game_root: Path,
+) -> dict[Path, _ObservedFailureLog]:
+    if not isinstance(observed_failures, tuple):
+        raise ValueError(
+            "observed_failures must be a tuple of _ObservedFailureLog records"
+        )
+    validated: dict[Path, _ObservedFailureLog] = {}
+    for observed in observed_failures:
+        if not isinstance(observed, _ObservedFailureLog):
+            raise ValueError(
+                "observed_failures contains an invalid record"
+            )
+        relative = observed.relative_path
+        if not isinstance(relative, Path) or relative.is_absolute():
+            raise BootProbeError(
+                f"invalid observed failure log path: {relative}"
+            )
+        absolute = _requested_path(
+            game_root / relative,
+            "observed failure log path",
+        )
+        if (
+            not absolute.is_relative_to(game_root)
+            or absolute.relative_to(game_root) != relative
+            or relative == Path(".")
+        ):
+            raise BootProbeError(
+                f"invalid observed failure log path: {relative}"
+            )
+        if (
+            observed.kind not in {"preloader", "fallback"}
+            or _boot_log_kind(relative) != observed.kind
+        ):
+            raise BootProbeError(
+                f"invalid observed failure log kind: {relative}"
+            )
+        for value in (observed.device, observed.inode, observed.mode):
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise ValueError(
+                    "observed failure log contains invalid stat metadata"
+                )
+        if relative in validated:
+            raise BootProbeError(
+                f"duplicate observed failure log path: {relative}"
+            )
+        validated[relative] = observed
+    return validated
+
+
 def _post_shutdown_inventory_mismatches(
-    expected: dict[Path, LogFingerprint],
-    current_regular: dict[Path, LogFingerprint],
-    current_paths: set[Path],
+    expected: _BootLogInventory,
+    current: _BootLogInventory,
 ) -> tuple[str, ...]:
     mismatches: list[str] = []
-    for path in sorted(expected):
-        current = current_regular.get(path)
-        if current is None:
-            mutation = "changed" if path in current_paths else "removed"
+    expected_by_path = {
+        entry.relative_path: entry for entry in expected.entries
+    }
+    current_by_path = {
+        entry.relative_path: entry for entry in current.entries
+    }
+    for relative, expected_entry in expected_by_path.items():
+        current_entry = current_by_path.get(relative)
+        if current_entry is None:
             mismatches.append(
-                f"post-shutdown preloader log inventory {mutation}: {path}"
+                "post-shutdown monitored boot log inventory removed: "
+                f"{expected_entry.path}"
             )
-        elif not _fingerprint_matches(expected[path], current):
+        elif current_entry != expected_entry:
             mismatches.append(
-                f"post-shutdown preloader log inventory changed: {path}"
+                "post-shutdown monitored boot log inventory changed: "
+                f"{expected_entry.path}"
             )
-    for path in sorted(current_paths - expected.keys()):
+    for relative, current_entry in current_by_path.items():
+        if relative in expected_by_path:
+            continue
         mismatches.append(
-            f"post-shutdown preloader log inventory added: {path}"
+            "post-shutdown monitored boot log inventory added: "
+            f"{current_entry.path}"
         )
     return tuple(mismatches)
 
@@ -3195,22 +3446,35 @@ def _read_retained_evidence_file(
 def _capture_retained_evidence_decision(
     retained: _RetainedBootEvidence,
 ) -> _EvidenceDecision:
-    payloads: list[bytes] = []
+    canonical_payload: bytes | None = None
+    error_payloads: list[bytes] = []
     fingerprints: list[LogFingerprint] = []
     for item in retained.files:
+        kind = _boot_log_kind(item.relative_path)
+        if kind is None:
+            raise BootProbeError(
+                f"invalid retained boot log path: {item.relative_path}"
+            )
         payload, fingerprint = _read_retained_evidence_file(
             retained,
             item,
         )
-        payloads.append(payload)
+        if kind == "canonical":
+            if canonical_payload is not None:
+                raise BootProbeError(
+                    "duplicate retained canonical boot log"
+                )
+            canonical_payload = payload
+        error_payloads.append(payload)
         fingerprints.append(fingerprint)
     return _EvidenceDecision(
         markers=tuple(
             marker
             for marker in _REQUIRED_BOOT_MARKERS
-            if any(
-                _payload_contains_boot_marker(payload, marker)
-                for payload in payloads
+            if canonical_payload is not None
+            and _payload_contains_boot_marker(
+                canonical_payload,
+                marker,
             )
         ),
         errors=tuple(
@@ -3218,7 +3482,7 @@ def _capture_retained_evidence_decision(
             for marker in _BOOT_ERROR_MARKERS
             if any(
                 marker.encode("ascii") in payload
-                for payload in payloads
+                for payload in error_payloads
             )
         ),
         fingerprints=tuple(fingerprints),
@@ -3426,36 +3690,28 @@ def _collect_boot_evidence_retained(
     game_root: Path,
     evidence_root: Path,
     *,
-    expected_inventory: tuple[LogFingerprint, ...] | None,
+    expected_inventory: _BootLogInventory | None,
+    run_contract: _ValidatedBootLogContract | None = None,
+    observed_failures: tuple[_ObservedFailureLog, ...] = (),
 ) -> _RetainedBootEvidence:
     game = _validate_directory(game_root, "game root")
     baseline = _validate_baseline(before, game)
+    observed_by_path = _validate_observed_failures(
+        observed_failures,
+        game,
+    )
+    if run_contract is not None and (
+        not isinstance(run_contract, _ValidatedBootLogContract)
+        or run_contract.canonical_overwrite is not True
+    ):
+        raise BootProbeError("invalid validated boot log contract")
+    if expected_inventory is not None:
+        expected_inventory = _validate_boot_log_inventory(
+            expected_inventory,
+            game,
+        )
     evidence, evidence_exists = _validate_evidence_root(evidence_root)
-
-    initial_scan: _LogScan | None = None
-    try:
-        initial_scan = _scan_preloader_logs(game)
-        initial_issues = [
-            f"unsafe {entry.file_type} preloader log: {entry.path}"
-            for entry in initial_scan.entries
-            if entry.file_type != "regular"
-        ]
-        for entry in initial_scan.entries:
-            if entry.file_type == "regular":
-                _fingerprint_scanned(entry)
-    except BaseException as primary:
-        if initial_scan is not None:
-            try:
-                initial_scan.close()
-            except BaseException as exc:
-                _note_later_error(
-                    primary,
-                    "initial preloader scan close also failed",
-                    exc,
-                )
-        raise
-    else:
-        initial_scan.close()
+    _capture_boot_log_inventory(game)
 
     evidence_handle: _DirectoryHandle | None = None
     retained_files: list[_RetainedEvidenceFile] = []
@@ -3467,49 +3723,109 @@ def _collect_boot_evidence_retained(
         final_scan: _LogScan | None = None
         try:
             final_scan = _scan_preloader_logs(game)
-            final_regular: dict[Path, LogFingerprint] = {}
+            final_inventory = _capture_boot_log_inventory_from_scan(
+                game,
+                final_scan,
+            )
+            final_inventory = _validate_boot_log_inventory(
+                final_inventory,
+                game,
+            )
+            if expected_inventory is not None:
+                mismatches = _post_shutdown_inventory_mismatches(
+                    expected_inventory,
+                    final_inventory,
+                )
+                if mismatches:
+                    raise BootProbeError("; ".join(mismatches))
+
             final_entries = {
                 entry.path: entry
                 for entry in final_scan.entries
                 if entry.file_type == "regular"
             }
-            final_paths = {entry.path for entry in final_scan.entries}
-            final_issues = [
-                f"unsafe {entry.file_type} preloader log: {entry.path}"
-                for entry in final_scan.entries
-                if entry.file_type != "regular"
-            ]
-            issues = list(final_issues)
-            for entry in final_scan.entries:
-                if entry.file_type == "regular":
-                    final_regular[entry.path] = _fingerprint_scanned(entry)
+            final_by_relative = {
+                entry.relative_path: entry
+                for entry in final_inventory.entries
+            }
+            final_paths = {
+                entry.path for entry in final_inventory.entries
+            }
+            issues: list[str] = []
+            issue_set: set[str] = set()
 
-            if expected_inventory is not None:
-                expected = _validate_baseline(expected_inventory, game)
-                mismatches = _post_shutdown_inventory_mismatches(
-                    expected,
-                    final_regular,
-                    final_paths,
-                )
-                if mismatches:
-                    raise BootProbeError("; ".join(mismatches))
+            def add_issue(issue: str) -> None:
+                if issue not in issue_set:
+                    issue_set.add(issue)
+                    issues.append(issue)
 
-            changed: list[Path] = []
-            new: list[Path] = []
-            for path, fingerprint in final_regular.items():
+            for entry in final_inventory.entries:
+                if entry.file_type != "regular":
+                    add_issue(
+                        f"unsafe {entry.file_type} {entry.kind} boot log: "
+                        f"{entry.relative_path.as_posix()}"
+                    )
+
+            detected_changed: set[Path] = set()
+            detected_new: set[Path] = set()
+            transfer_changed: set[Path] = set()
+            transfer_new: set[Path] = set()
+            for entry in final_inventory.entries:
+                fingerprint = entry.fingerprint
+                if fingerprint is None:
+                    continue
+                path = entry.path
                 prior = baseline.get(path)
                 if prior is None:
-                    new.append(path)
+                    detected_new.add(path)
+                    transfer_new.add(path)
                 elif not _fingerprint_matches(prior, fingerprint):
-                    changed.append(path)
-                    issues.append(
-                        f"pre-existing preloader log changed: {path}"
+                    detected_changed.add(path)
+                    transfer_changed.add(path)
+                if (
+                    path in detected_new or path in detected_changed
+                ) and entry.kind in {"preloader", "fallback"}:
+                    add_issue(
+                        f"observed {entry.kind} failure log: "
+                        f"{entry.relative_path.as_posix()}"
+                    )
+                if path in detected_changed and not (
+                    run_contract is not None
+                    and entry.kind == "canonical"
+                ):
+                    add_issue(
+                        f"pre-existing monitored boot log changed: {path}"
                     )
             for path in baseline:
                 if path not in final_paths:
-                    issues.append(
-                        f"pre-existing preloader log missing: {path}"
+                    add_issue(
+                        f"pre-existing monitored boot log missing: {path}"
                     )
+
+            for relative, observed in observed_by_path.items():
+                entry = final_by_relative.get(relative)
+                if (
+                    entry is None
+                    or entry.kind != observed.kind
+                    or entry.device != observed.device
+                    or entry.inode != observed.inode
+                    or entry.mode != observed.mode
+                    or entry.file_type != "regular"
+                    or entry.fingerprint is None
+                ):
+                    add_issue(
+                        "observed failure log could not be preserved: "
+                        f"{relative.as_posix()}"
+                    )
+                    continue
+                add_issue(
+                    f"observed {entry.kind} failure log: "
+                    f"{relative.as_posix()}"
+                )
+                if entry.path in baseline:
+                    transfer_changed.add(entry.path)
+                else:
+                    transfer_new.add(entry.path)
 
             known_evidence_directories = {
                 evidence_dir: (
@@ -3519,10 +3835,19 @@ def _collect_boot_evidence_retained(
             }
             moved_logs: list[Path] = []
             copied_logs: list[Path] = []
-            for source in new:
+            canonical_current = False
+            for source in sorted(
+                transfer_new,
+                key=lambda path: path.relative_to(game).as_posix(),
+            ):
                 relative = source.relative_to(game)
                 destination = evidence_dir / relative
                 destination_parent: _DirectoryHandle | None = None
+                final_fingerprint = final_by_relative[relative].fingerprint
+                if final_fingerprint is None:
+                    raise BootProbeError(
+                        f"monitored boot log became unretainable: {source}"
+                    )
                 try:
                     destination_parent = _make_evidence_parents(
                         evidence_handle,
@@ -3534,7 +3859,7 @@ def _collect_boot_evidence_retained(
                         destination_parent,
                         relative.name,
                         destination,
-                        final_regular[source],
+                        final_fingerprint,
                     )
                     pending_retained_file.relative_path = relative
                     retained_files.append(pending_retained_file)
@@ -3553,10 +3878,24 @@ def _collect_boot_evidence_retained(
                 else:
                     destination_parent.close()
                 moved_logs.append(destination)
-            for source in changed:
+                if (
+                    run_contract is not None
+                    and relative == _CANONICAL_BOOT_LOG
+                    and source in detected_new
+                ):
+                    canonical_current = True
+            for source in sorted(
+                transfer_changed,
+                key=lambda path: path.relative_to(game).as_posix(),
+            ):
                 relative = source.relative_to(game)
                 destination = evidence_dir / relative
                 destination_parent = None
+                final_fingerprint = final_by_relative[relative].fingerprint
+                if final_fingerprint is None:
+                    raise BootProbeError(
+                        f"monitored boot log became unretainable: {source}"
+                    )
                 try:
                     destination_parent = _make_evidence_parents(
                         evidence_handle,
@@ -3568,7 +3907,7 @@ def _collect_boot_evidence_retained(
                         destination_parent,
                         relative.name,
                         destination,
-                        final_regular[source],
+                        final_fingerprint,
                     )
                     pending_retained_file.relative_path = relative
                     retained_files.append(pending_retained_file)
@@ -3587,6 +3926,16 @@ def _collect_boot_evidence_retained(
                 else:
                     destination_parent.close()
                 copied_logs.append(destination)
+                if (
+                    run_contract is not None
+                    and relative == _CANONICAL_BOOT_LOG
+                    and source in detected_changed
+                ):
+                    canonical_current = True
+            if run_contract is not None and not canonical_current:
+                add_issue(
+                    "current canonical boot log is missing or unchanged"
+                )
         except BaseException as primary:
             if final_scan is not None:
                 try:
@@ -3671,6 +4020,8 @@ def collect_boot_evidence(
             game_root,
             evidence_root,
             expected_inventory=None,
+            run_contract=None,
+            observed_failures=(),
         )
         public = retained.public
         primary: BaseException | None = None
@@ -5021,7 +5372,8 @@ def run_boot_probe(
             if _monitor_outcome.exit_code is not None
             else cleanup_exit_code
         )
-        after_logs = _fingerprint_regular_preloader_logs(game)
+        after_inventory = _capture_boot_log_inventory(game)
+        after_logs = after_inventory.regular_fingerprints
         _verify_pinned_directory_path(
             game,
             game_handle,
@@ -5031,7 +5383,7 @@ def run_boot_probe(
             before,
             game,
             evidence,
-            expected_inventory=after_logs,
+            expected_inventory=after_inventory,
         )
         decision = retained.decision
         if decision is None:
