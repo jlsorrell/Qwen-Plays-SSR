@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Deterministic>true</Deterministic>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>SsrOracle.Plugin</AssemblyName>
+    <RootNamespace>SsrOracle</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net35"
+                      Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCoreDir)/BepInEx.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCoreDir)/0Harmony.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameManagedDir)/Assembly-CSharp.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameManagedDir)/UnityEngine.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateOracleReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(GameManagedDir)' == ''" Text="GameManagedDir is required" />
+    <Error Condition="'$(BepInExCoreDir)' == ''" Text="BepInExCoreDir is required" />
+    <Error Condition="!Exists('$(GameManagedDir)/Assembly-CSharp.dll')"
+           Text="Assembly-CSharp.dll not found under GameManagedDir" />
+    <Error Condition="!Exists('$(BepInExCoreDir)/BepInEx.dll')"
+           Text="BepInEx.dll not found under BepInExCoreDir" />
+    <Error Condition="!Exists('$(BepInExCoreDir)/0Harmony.dll')"
+           Text="0Harmony.dll not found under BepInExCoreDir" />
+  </Target>
+</Project>

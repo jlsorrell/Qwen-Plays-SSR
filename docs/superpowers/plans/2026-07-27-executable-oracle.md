@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - Target macOS 15.7.3 on Apple Silicon while the game process itself runs as `x86_64` through Rosetta.
-- Target `net35`: the game has no `netstandard.dll`, its `mscorlib.dll` uses CLR `v2.0.50727`, and its embedded Mono is 2.6.5.
+- Target `net35`: `boot.config` selects the legacy scripting runtime, the game has no `netstandard.dll`, its `mscorlib.dll` uses CLR `v2.0.50727`, and its embedded Mono is 2.6.5. Mark shipped BepInEx/game references `ExternallyResolved` so MSBuild does not traverse the CLR 4-only `UnityEngine.dll` compatibility facade; the legacy Unity loader supplies the shipped assembly graph.
+- Deployable Release plugin builds must omit revision and debug/PDB metadata: set `IncludeSourceRevisionInInformationalVersion` to `false`, `DebugType` to `none`, and `DebugSymbols` to `false`; Git and artifact hashes remain external provenance and no Release PDB is produced.
 - Pin BepInEx to stable `5.4.23.5`; use the release archive's own `BepInEx.dll`, `0Harmony.dll`, and Doorstop rather than separate NuGet runtime packages.
 - Treat `886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564` as the expected SHA-256 of the installed `Assembly-CSharp.dll`.
 - Never modify `Sausage.app`, `Assembly-CSharp.dll`, or the user's normal save directories.
@@ -341,27 +342,39 @@ git commit -m "feat: add safe SSR oracle installer"
     <RootNamespace>SsrOracle</RootNamespace>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
   <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net35"
                       Version="1.0.3" PrivateAssets="all" />
     <Reference Include="BepInEx">
       <HintPath>$(BepInExCoreDir)/BepInEx.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
       <HintPath>$(BepInExCoreDir)/0Harmony.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>$(GameManagedDir)/Assembly-CSharp.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine">
       <HintPath>$(GameManagedDir)/UnityEngine.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath>
+      <ExternallyResolved>true</ExternallyResolved>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
@@ -382,6 +395,7 @@ git commit -m "feat: add safe SSR oracle installer"
 - [ ] **Step 2: Add a minimal load marker and no-op Harmony compatibility probes**
 
 ```csharp
+using System;
 using System.Reflection;
 using BepInEx;
 using HarmonyLib;
@@ -524,9 +538,13 @@ Expected `BepInEx/LogOutput.log` evidence:
 
 ```text
 BepInEx 5.4.23.5
-Unity v2018.4.25f1
+Detected Unity version: v2018.4.25f1
 SSR oracle boot probe loaded
 ```
+
+The authentic disk-log source line is
+`Detected Unity version: v2018.4.25f1`. The stable public schema-v1 marker
+derived from that exact line remains `Unity v2018.4.25f1`.
 
 After quitting, rerun:
 

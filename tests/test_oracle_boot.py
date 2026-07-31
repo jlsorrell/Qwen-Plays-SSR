@@ -1087,6 +1087,60 @@ def _probe_layout(tmp_path: Path) -> SimpleNamespace:
     )
 
 
+def _tahoe_code_signature_lines(app: Path) -> tuple[str, ...]:
+    bundle = (
+        app.resolve()
+        / "Contents"
+        / "Plugins"
+        / "Foregroundr.bundle"
+    )
+    return (
+        f"file added: {bundle / 'Contents/_CodeSignature/CodeResources'}\n",
+        f"file added: {bundle / 'Contents/_CodeSignature/CodeDirectory'}\n",
+        f"file added: {bundle / 'Contents/_CodeSignature/CodeRequirements'}\n",
+        f"file added: {bundle / 'Contents/_CodeSignature/CodeSignature'}\n",
+        f"file added: {bundle / 'Contents/MacOS/Foregroundr'}\n",
+        f"file added: {bundle / 'Contents/Info.plist'}\n",
+        f"file missing: {bundle}\n",
+    )
+
+
+def _tahoe_code_signature(
+    app: Path,
+    *,
+    stdout_lines: tuple[str, ...] | None = None,
+    stderr: str | None = None,
+    returncode: int = 1,
+) -> oracle_boot._AppSignature:
+    lines = (
+        _tahoe_code_signature_lines(app)
+        if stdout_lines is None
+        else stdout_lines
+    )
+    diagnostic = (
+        f"{app.resolve()}: a sealed resource is missing or invalid\n"
+        if stderr is None
+        else stderr
+    )
+    return oracle_boot._AppSignature(
+        returncode=returncode,
+        stdout="".join(lines),
+        stderr=diagnostic,
+    )
+
+
+def _clean_code_signature(app: Path) -> oracle_boot._AppSignature:
+    resolved = app.resolve()
+    return oracle_boot._AppSignature(
+        returncode=0,
+        stdout="",
+        stderr=(
+            f"{resolved}: valid on disk\n"
+            f"{resolved}: satisfies its Designated Requirement\n"
+        ),
+    )
+
+
 def _patch_healthy_preflight(
     monkeypatch: pytest.MonkeyPatch, layout: SimpleNamespace
 ) -> None:
@@ -1119,12 +1173,7 @@ def _patch_healthy_preflight(
     monkeypatch.setattr(
         oracle_boot,
         "_capture_app_signature",
-        lambda app: oracle_boot._AppSignature(
-            returncode=1,
-            stdout="",
-            stderr=f"{app / 'Contents/Resources/Foregroundr.bundle'}: "
-            "code object is not signed at all\n",
-        ),
+        lambda app: _tahoe_code_signature(app),
         raising=False,
     )
 
@@ -4522,34 +4571,31 @@ def test_boot_probe_pins_exact_reviewed_game_assembly_sha256():
     assert oracle_boot.EXPECTED_ASSEMBLY_SHA256 == EXPECTED_ASSEMBLY_SHA256
 
 
-@pytest.mark.parametrize(
-    ("returncode", "stdout", "stderr"),
-    [
-        (0, "", ""),
-        (
-            1,
-            "",
-            "Foregroundr.bundle: code object is not signed at all\n",
-        ),
-    ],
-)
-def test_capture_app_signature_uses_one_exact_codesign_boundary(
-    returncode: int,
-    stdout: str,
-    stderr: str,
+@pytest.mark.parametrize("result_kind", ["clean", "tahoe_reordered"])
+def test_tahoe_code_signature_capture_uses_one_verbose_command_and_preserves_raw_streams(
+    result_kind: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     layout = _probe_layout(tmp_path)
     calls: list[tuple[list[str], dict[str, object]]] = []
+    if result_kind == "clean":
+        expected = _clean_code_signature(layout.app)
+    else:
+        expected = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=tuple(
+                reversed(_tahoe_code_signature_lines(layout.app))
+            ),
+        )
 
     def fake_run(argv, **kwargs):
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(
             argv,
-            returncode,
-            stdout=stdout,
-            stderr=stderr,
+            expected.returncode,
+            stdout=expected.stdout.encode("utf-8"),
+            stderr=expected.stderr.encode("utf-8"),
         )
 
     monkeypatch.setattr(
@@ -4570,23 +4616,128 @@ def test_capture_app_signature_uses_one_exact_codesign_boundary(
                 "--verify",
                 "--deep",
                 "--strict",
+                "--verbose=1",
                 str(layout.app.resolve()),
             ],
             {
                 "capture_output": True,
-                "text": True,
+                "check": False,
+            },
+        )
+    ]
+    assert observed == expected
+    assert not hasattr(observed, "__dict__")
+    with pytest.raises((AttributeError, TypeError)):
+        observed.stderr = "mutated"
+
+
+@pytest.mark.parametrize(
+    ("raw_stdout", "raw_stderr", "expected_stdout", "expected_stderr"),
+    [
+        (
+            b"file added: first\nfile missing: second\n",
+            b"Sausage.app: a sealed resource is missing or invalid\n",
+            "file added: first\nfile missing: second\n",
+            "Sausage.app: a sealed resource is missing or invalid\n",
+        ),
+        (
+            b"file added: first\r\nfile missing: second\r\n",
+            b"Sausage.app: a sealed resource is missing or invalid\r\n",
+            "file added: first\r\nfile missing: second\r\n",
+            "Sausage.app: a sealed resource is missing or invalid\r\n",
+        ),
+    ],
+)
+def test_tahoe_code_signature_raw_capture_preserves_lf_and_crlf(
+    raw_stdout: bytes,
+    raw_stderr: bytes,
+    expected_stdout: str,
+    expected_stderr: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            stdout=raw_stdout,
+            stderr=raw_stderr,
+        )
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, run=fake_run),
+        raising=False,
+    )
+
+    observed = oracle_boot._capture_app_signature(layout.app)
+
+    assert calls == [
+        (
+            [
+                "codesign",
+                "--verify",
+                "--deep",
+                "--strict",
+                "--verbose=1",
+                str(layout.app.resolve()),
+            ],
+            {
+                "capture_output": True,
                 "check": False,
             },
         )
     ]
     assert observed == oracle_boot._AppSignature(
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
+        returncode=1,
+        stdout=expected_stdout,
+        stderr=expected_stderr,
     )
-    assert not hasattr(observed, "__dict__")
-    with pytest.raises((AttributeError, TypeError)):
-        observed.stderr = "mutated"
+
+
+@pytest.mark.parametrize(
+    ("invalid_stream", "raw_stdout", "raw_stderr"),
+    [
+        ("stdout", b"valid line\n\xff", b""),
+        ("stderr", b"", b"valid line\n\xff"),
+    ],
+)
+def test_tahoe_code_signature_raw_capture_rejects_invalid_utf8(
+    invalid_stream: str,
+    raw_stdout: bytes,
+    raw_stderr: bytes,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+
+    def fake_run(argv, **_kwargs):
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            stdout=raw_stdout,
+            stderr=raw_stderr,
+        )
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, run=fake_run),
+        raising=False,
+    )
+
+    with pytest.raises(
+        oracle_boot.BootProbeError,
+        match=rf"codesign {invalid_stream} is not valid UTF-8",
+    ) as raised:
+        oracle_boot._capture_app_signature(layout.app)
+
+    assert isinstance(raised.value.__cause__, UnicodeDecodeError)
 
 
 @pytest.mark.parametrize(
@@ -4668,13 +4819,9 @@ def test_capture_boot_snapshot_hashes_real_paths_and_exact_boundaries(
 
 def _boot_signature(layout: SimpleNamespace, kind: str):
     if kind == "clean":
-        return oracle_boot._AppSignature(0, "", "")
-    foreground = (
-        f"{layout.app.resolve() / 'Contents/Resources/Foregroundr.bundle'}: "
-        "code object is not signed at all\n"
-    )
+        return _clean_code_signature(layout.app)
     if kind == "foreground":
-        return oracle_boot._AppSignature(1, "", foreground)
+        return _tahoe_code_signature(layout.app)
     if kind == "other":
         return oracle_boot._AppSignature(
             1,
@@ -4683,18 +4830,22 @@ def _boot_signature(layout: SimpleNamespace, kind: str):
             "code object is not signed at all\n",
         )
     if kind == "foreground_plus_other":
+        signature = _tahoe_code_signature(layout.app)
         return oracle_boot._AppSignature(
-            1,
-            "",
-            foreground
-            + f"{layout.app.resolve() / 'Contents/Resources/Other.bundle'}: "
-            "code object is not signed at all\n",
+            signature.returncode,
+            signature.stdout
+            + f"file added: "
+            f"{layout.app.resolve() / 'Contents/Resources/Other.bundle'}\n",
+            signature.stderr,
         )
     if kind == "foreground_changed":
-        return oracle_boot._AppSignature(
-            1,
-            "",
-            foreground.replace("not signed at all", "invalid resource envelope"),
+        lines = _tahoe_code_signature_lines(layout.app)
+        return _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(
+                lines[0].replace("CodeResources", "CodeResources.changed"),
+                *lines[1:],
+            ),
         )
     raise AssertionError(kind)
 
@@ -4706,14 +4857,334 @@ def _boot_snapshot(
     healthy: bool = True,
     assembly_sha256: str = EXPECTED_ASSEMBLY_SHA256,
     preloader_sha256: str = "a" * 64,
-    signature: str = "clean",
+    signature: str | oracle_boot._AppSignature = "clean",
 ):
+    app_signature = (
+        _boot_signature(layout, signature)
+        if isinstance(signature, str)
+        else signature
+    )
     return oracle_boot._BootSnapshot(
         assembly_sha256=assembly_sha256,
         active_preloader_sha256=preloader_sha256,
         installer_healthy=healthy,
         compatibility_state=state,
-        app_signature=_boot_signature(layout, signature),
+        app_signature=app_signature,
+    )
+
+
+@pytest.mark.parametrize(
+    "signature_kind",
+    ["clean", "tahoe_original_order", "tahoe_reverse_order"],
+)
+def test_tahoe_code_signature_preflight_accepts_only_reviewed_identity_orders(
+    signature_kind: str,
+    tmp_path: Path,
+):
+    layout = _probe_layout(tmp_path)
+    if signature_kind == "clean":
+        signature = _clean_code_signature(layout.app)
+    else:
+        lines = _tahoe_code_signature_lines(layout.app)
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(
+                lines
+                if signature_kind == "tahoe_original_order"
+                else tuple(reversed(lines))
+            ),
+        )
+    snapshot = _boot_snapshot(layout, signature=signature)
+
+    assert oracle_boot._preflight_issues(
+        snapshot,
+        layout.app.resolve(),
+    ) == ()
+
+
+def test_tahoe_code_signature_probe_accepts_order_only_delta_and_preserves_raw_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    launcher = _launcher(
+        tmp_path,
+        log_text="\n".join(REQUIRED_MARKERS),
+    )
+    lines = _tahoe_code_signature_lines(layout.app)
+    before_signature = _tahoe_code_signature(
+        layout.app,
+        stdout_lines=lines,
+    )
+    after_signature = _tahoe_code_signature(
+        layout.app,
+        stdout_lines=tuple(reversed(lines)),
+    )
+    snapshots = iter(
+        (
+            _boot_snapshot(layout, signature=before_signature),
+            _boot_snapshot(layout, signature=after_signature),
+        )
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_capture_boot_snapshot",
+        lambda _game_root: next(snapshots),
+        raising=False,
+    )
+
+    result = oracle_boot.run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    assert result.success is True
+    assert result.markers == REQUIRED_MARKERS
+    assert result.issues == ()
+    payload = json.loads(
+        (result.evidence_dir / "probe.json").read_text(encoding="utf-8")
+    )
+    assert payload["before"]["app_signature"] == {
+        "returncode": 1,
+        "stdout": before_signature.stdout,
+        "stderr": before_signature.stderr,
+    }
+    assert payload["after"]["app_signature"] == {
+        "returncode": 1,
+        "stdout": after_signature.stdout,
+        "stderr": after_signature.stderr,
+    }
+    assert before_signature.stdout != after_signature.stdout
+
+
+@pytest.mark.parametrize(
+    "unreviewed_case",
+    [
+        "missing_line",
+        "duplicate_replacing_line",
+        "duplicate_extra_expected_line",
+        "changed_line",
+        "outside_bundle_line",
+        "modified_inside_bundle",
+        "extra_stderr",
+        "unattributed_nonverbose",
+        "wrong_returncode",
+        "missing_final_newline",
+        "crlf_line_endings",
+        "stderr_missing_final_newline",
+        "stderr_crlf_line_ending",
+        "stdout_finding_moved_to_stderr",
+        "stale_resources_location",
+        "clean_empty_stderr",
+        "clean_stdout_diagnostic",
+        "clean_stderr_diagnostic",
+    ],
+)
+def test_tahoe_code_signature_preflight_rejects_every_unreviewed_result_before_launch(
+    unreviewed_case: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+    launcher = _launcher(
+        tmp_path,
+        log_text="\n".join(REQUIRED_MARKERS),
+    )
+    lines = _tahoe_code_signature_lines(layout.app)
+    exact = _tahoe_code_signature(layout.app)
+    if unreviewed_case == "missing_line":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=lines[:-1],
+        )
+    elif unreviewed_case == "duplicate_replacing_line":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(*lines[:-1], lines[0]),
+        )
+    elif unreviewed_case == "duplicate_extra_expected_line":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(*lines, lines[0]),
+        )
+    elif unreviewed_case == "changed_line":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(
+                lines[0].replace(
+                    "CodeResources",
+                    "CodeResources.changed",
+                ),
+                *lines[1:],
+            ),
+        )
+    elif unreviewed_case == "outside_bundle_line":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(
+                *lines,
+                f"file added: "
+                f"{layout.app.resolve() / 'Contents/Resources/Other.bundle'}\n",
+            ),
+        )
+    elif unreviewed_case == "modified_inside_bundle":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stdout_lines=(
+                lines[0].replace("file added:", "file modified:"),
+                *lines[1:],
+            ),
+        )
+    elif unreviewed_case == "extra_stderr":
+        signature = _tahoe_code_signature(
+            layout.app,
+            stderr=exact.stderr + "unexpected diagnostic\n",
+        )
+    elif unreviewed_case == "unattributed_nonverbose":
+        signature = oracle_boot._AppSignature(1, "", exact.stderr)
+    elif unreviewed_case == "wrong_returncode":
+        signature = _tahoe_code_signature(layout.app, returncode=2)
+    elif unreviewed_case == "missing_final_newline":
+        signature = oracle_boot._AppSignature(
+            exact.returncode,
+            exact.stdout[:-1],
+            exact.stderr,
+        )
+    elif unreviewed_case == "crlf_line_endings":
+        signature = oracle_boot._AppSignature(
+            exact.returncode,
+            exact.stdout.replace("\n", "\r\n"),
+            exact.stderr,
+        )
+    elif unreviewed_case == "stderr_missing_final_newline":
+        signature = oracle_boot._AppSignature(
+            exact.returncode,
+            exact.stdout,
+            exact.stderr[:-1],
+        )
+    elif unreviewed_case == "stderr_crlf_line_ending":
+        signature = oracle_boot._AppSignature(
+            exact.returncode,
+            exact.stdout,
+            exact.stderr.replace("\n", "\r\n"),
+        )
+    elif unreviewed_case == "stdout_finding_moved_to_stderr":
+        signature = oracle_boot._AppSignature(
+            exact.returncode,
+            "".join(lines[1:]),
+            lines[0] + exact.stderr,
+        )
+    elif unreviewed_case == "stale_resources_location":
+        signature = oracle_boot._AppSignature(
+            1,
+            "",
+            f"{layout.app.resolve() / 'Contents/Resources/Foregroundr.bundle'}: "
+            "code object is not signed at all\n",
+        )
+    elif unreviewed_case == "clean_empty_stderr":
+        signature = oracle_boot._AppSignature(0, "", "")
+    elif unreviewed_case == "clean_stdout_diagnostic":
+        signature = oracle_boot._AppSignature(0, "diagnostic\n", "")
+    elif unreviewed_case == "clean_stderr_diagnostic":
+        signature = oracle_boot._AppSignature(0, "", "diagnostic\n")
+    else:
+        raise AssertionError(unreviewed_case)
+    snapshot = _boot_snapshot(layout, signature=signature)
+    popen_calls = 0
+
+    def capture_snapshot(_game_root: Path):
+        return snapshot
+
+    def forbidden_popen(*_args, **_kwargs):
+        nonlocal popen_calls
+        popen_calls += 1
+        raise AssertionError("unreviewed signature must fail before launch")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_capture_boot_snapshot",
+        capture_snapshot,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, Popen=forbidden_popen),
+        raising=False,
+    )
+
+    result = oracle_boot.run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    assert result.success is False
+    assert result.markers == ()
+    assert (
+        "game app code signature is not an accepted exact result"
+        in result.issues
+    )
+    assert popen_calls == 0
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+
+
+def test_tahoe_code_signature_postflight_semantic_delta_fails_despite_all_markers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    launcher = _launcher(
+        tmp_path,
+        log_text="\n".join(REQUIRED_MARKERS),
+    )
+    lines = _tahoe_code_signature_lines(layout.app)
+    before_signature = _tahoe_code_signature(layout.app)
+    after_signature = _tahoe_code_signature(
+        layout.app,
+        stdout_lines=(
+            lines[0].replace("CodeResources", "CodeResources.changed"),
+            *lines[1:],
+        ),
+    )
+    snapshots = iter(
+        (
+            _boot_snapshot(layout, signature=before_signature),
+            _boot_snapshot(layout, signature=after_signature),
+        )
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_capture_boot_snapshot",
+        lambda _game_root: next(snapshots),
+        raising=False,
+    )
+
+    result = oracle_boot.run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    assert result.success is False
+    assert result.markers == REQUIRED_MARKERS
+    assert any(
+        "code-signature result changed during boot probe" in issue
+        for issue in result.issues
+    )
+    assert all(
+        process.poll() is not None
+        for process, _, _ in tracked_probe_popen.tracked
     )
 
 
