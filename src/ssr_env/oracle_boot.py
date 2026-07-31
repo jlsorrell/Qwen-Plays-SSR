@@ -4156,7 +4156,14 @@ def _preflight_issues(
             "game assembly SHA-256 does not match the reviewed build"
         )
 
-    clean_signature = _AppSignature(0, "", "")
+    clean_signature = _AppSignature(
+        0,
+        "",
+        (
+            f"{app}: valid on disk\n"
+            f"{app}: satisfies its Designated Requirement\n"
+        ),
+    )
     foreground_bundle = app / "Contents/Plugins/Foregroundr.bundle"
     foreground_only_signature = _AppSignature(
         1,

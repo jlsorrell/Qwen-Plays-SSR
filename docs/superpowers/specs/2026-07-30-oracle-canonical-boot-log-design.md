@@ -2,13 +2,13 @@
 
 **Date:** 2026-07-30
 
-**Status:** Approved direction; written specification pending user review
+**Status:** Approved; implementation and review pending
 
 ## Context
 
-The first approval-gated Tahoe 26.6 boot used the reviewed patched BepInEx
-preloader, rebuilt SSR oracle plugin, and `Mode = off` configuration. The
-automated probe timed out after 120 seconds and reported no boot markers.
+Exactly one approval-gated initial Tahoe 26.6 boot used the reviewed patched
+BepInEx preloader, rebuilt SSR oracle plugin, and `Mode = off` configuration.
+The automated probe timed out after 120 seconds and reported no boot markers.
 Its failure evidence is retained below:
 
 ```text
@@ -19,7 +19,8 @@ data/oracle/boot-probe/
 
 The installed game was then returned transactionally to healthy `official`
 preloader state. The game assembly, oracle configuration, and rebuilt plugin
-retained their reviewed hashes. No second launch occurred.
+retained their reviewed hashes. No corrected second launch or re-deploy
+occurred.
 
 Read-only investigation demonstrated that the runtime boot itself succeeded.
 `BepInEx/LogOutput.log`, created during the approved launch, records:

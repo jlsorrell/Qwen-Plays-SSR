@@ -538,9 +538,13 @@ Expected `BepInEx/LogOutput.log` evidence:
 
 ```text
 BepInEx 5.4.23.5
-Unity v2018.4.25f1
+Detected Unity version: v2018.4.25f1
 SSR oracle boot probe loaded
 ```
+
+The authentic disk-log source line is
+`Detected Unity version: v2018.4.25f1`. The stable public schema-v1 marker
+derived from that exact line remains `Unity v2018.4.25f1`.
 
 After quitting, rerun:
 

@@ -1129,6 +1129,18 @@ def _tahoe_code_signature(
     )
 
 
+def _clean_code_signature(app: Path) -> oracle_boot._AppSignature:
+    resolved = app.resolve()
+    return oracle_boot._AppSignature(
+        returncode=0,
+        stdout="",
+        stderr=(
+            f"{resolved}: valid on disk\n"
+            f"{resolved}: satisfies its Designated Requirement\n"
+        ),
+    )
+
+
 def _patch_healthy_preflight(
     monkeypatch: pytest.MonkeyPatch, layout: SimpleNamespace
 ) -> None:
@@ -4568,7 +4580,7 @@ def test_tahoe_code_signature_capture_uses_one_verbose_command_and_preserves_raw
     layout = _probe_layout(tmp_path)
     calls: list[tuple[list[str], dict[str, object]]] = []
     if result_kind == "clean":
-        expected = oracle_boot._AppSignature(0, "", "")
+        expected = _clean_code_signature(layout.app)
     else:
         expected = _tahoe_code_signature(
             layout.app,
@@ -4807,7 +4819,7 @@ def test_capture_boot_snapshot_hashes_real_paths_and_exact_boundaries(
 
 def _boot_signature(layout: SimpleNamespace, kind: str):
     if kind == "clean":
-        return oracle_boot._AppSignature(0, "", "")
+        return _clean_code_signature(layout.app)
     if kind == "foreground":
         return _tahoe_code_signature(layout.app)
     if kind == "other":
@@ -4871,7 +4883,7 @@ def test_tahoe_code_signature_preflight_accepts_only_reviewed_identity_orders(
 ):
     layout = _probe_layout(tmp_path)
     if signature_kind == "clean":
-        signature = oracle_boot._AppSignature(0, "", "")
+        signature = _clean_code_signature(layout.app)
     else:
         lines = _tahoe_code_signature_lines(layout.app)
         signature = _tahoe_code_signature(
@@ -4967,6 +4979,7 @@ def test_tahoe_code_signature_probe_accepts_order_only_delta_and_preserves_raw_e
         "stderr_crlf_line_ending",
         "stdout_finding_moved_to_stderr",
         "stale_resources_location",
+        "clean_empty_stderr",
         "clean_stdout_diagnostic",
         "clean_stderr_diagnostic",
     ],
@@ -5072,6 +5085,8 @@ def test_tahoe_code_signature_preflight_rejects_every_unreviewed_result_before_l
             f"{layout.app.resolve() / 'Contents/Resources/Foregroundr.bundle'}: "
             "code object is not signed at all\n",
         )
+    elif unreviewed_case == "clean_empty_stderr":
+        signature = oracle_boot._AppSignature(0, "", "")
     elif unreviewed_case == "clean_stdout_diagnostic":
         signature = oracle_boot._AppSignature(0, "diagnostic\n", "")
     elif unreviewed_case == "clean_stderr_diagnostic":

@@ -12,8 +12,21 @@ marker. It does not patch the game assembly or implement later oracle behavior.
 
 The current controlled-boot target is **macOS Tahoe 26.6**. macOS 15.7.3 is
 historical context only: it is where the original obsolete-platform-probe
-failure was recorded. A successful build is not a Tahoe boot result, and this
-runbook does not claim that a Tahoe boot, restore, or re-deploy has occurred.
+failure was recorded. Exactly one approved initial Tahoe boot occurred. The
+runtime started successfully, but the automated observer produced a known
+false negative; the official preloader was then restored transactionally and
+its healthy `official` state verified. No corrected second launch or re-deploy
+has occurred.
+
+## Current stop gate
+
+Offline rebuilds, tests, and the read-only status and preflight commands remain
+usable. Do **not** deploy or re-deploy either oracle artifact, run the boot
+probe, or request another game launch until the canonical `LogOutput.log`
+observer correction is implemented, tested, and independently reviewed. After
+those gates, any corrected launch still requires separate authorization. The
+mutation, boot, restore, and re-deploy commands below document the controlled
+sequence but are not currently runnable.
 
 Run all repository commands below from the root of the
 `ssr-executable-oracle` worktree. Networked acquisition and installed-game
@@ -376,10 +389,22 @@ pre/post comparison treat stdout as an order-insensitive exact multiset while
 preserving every line ending and duplicate. Stderr remains byte-exact and
 separate from stdout.
 
-In addition to the exact clean result—return code 0 with empty stdout and
-stderr—the only accepted nonzero Tahoe result has return code 1, generic
-app-root stderr, and exactly this seven-line stdout multiset (each line
-includes its trailing newline):
+The exact clean Tahoe result has return code 0, empty stdout, and exactly these
+two path-derived stderr lines (each includes its trailing newline):
+
+```text
+/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app: valid on disk
+/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app: satisfies its Designated Requirement
+```
+
+This identity was captured with the production
+`codesign --verify --deep --strict --verbose=1 APP` command against a safe
+locally ad-hoc-signed temporary app on Tahoe 26.6. The former empty-stderr
+success identity came from non-verbose semantics and is not accepted.
+
+The only accepted nonzero Tahoe result has return code 1, generic app-root
+stderr, and exactly this seven-line stdout multiset (each line includes its
+trailing newline):
 
 ```text
 file added: /Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Plugins/Foregroundr.bundle/Contents/_CodeSignature/CodeResources
@@ -495,15 +520,17 @@ the first mutation must all print `OK`; otherwise stop.
 
 ## Transactional deploy and controlled boot
 
+> **STOP:** the current canonical-log observer is known to report a false
+> negative. Do not run any command in this section until the correction has
+> been implemented, tested, independently reviewed, and separately authorized.
+
 For this checkpoint, transactionally deploy the hash-verified rebuilt plugin
 and Mode-off config unconditionally. Healthy `official` status proves that the
 installed plugin matches its existing manifest; it does not prove that it
-matches this rebuild. The current installed plugin hash is
-`87daa64021eb116344274bc8dab6f900966763bc8776c2ee56d199f19a78aaa9`;
-the required rebuild hash is
+matches this rebuild. The installed plugin remains
+`6d06583d75bfdc5a677668c3c7b0bd88f9eec49be0d169cf6f357ccac4cc7de4`;
+the required reproducible rebuild hash is
 `73003a18348970edf3157fdc3865feb275eb254c8f6fd12ddcfa88b64135754b`.
-The historical currently installed plugin hash is
-`6d06583d75bfdc5a677668c3c7b0bd88f9eec49be0d169cf6f357ccac4cc7de4`.
 Deploy both artifacts only through the installer:
 
 ```bash
