@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import errno
 import hashlib
@@ -192,6 +192,7 @@ class _ConfigSnapshot:
     device: int
     inode: int
     size: int
+    mtime_ns: int = field(compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +247,57 @@ class _ConfigGuard:
                 )
         if primary is not None:
             raise primary
+
+
+@dataclass(slots=True)
+class _DiskLoggingConfigGuard:
+    bepinex_path: Path
+    bepinex: _DirectoryHandle
+    config: _DirectoryHandle | None
+    path: Path
+    name: str
+    fd: int
+    original: _ConfigSnapshot | None
+
+    def close(self) -> None:
+        primary: BaseException | None = None
+        if self.fd >= 0:
+            descriptor = self.fd
+            self.fd = -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                primary = exc
+        if self.config is not None:
+            try:
+                self.config.close()
+            except BaseException as exc:
+                if primary is None:
+                    primary = exc
+                else:
+                    _note_later_error(
+                        primary,
+                        "BepInEx config directory close also failed",
+                        exc,
+                    )
+        try:
+            self.bepinex.close()
+        except BaseException as exc:
+            if primary is None:
+                primary = exc
+            else:
+                _note_later_error(
+                    primary,
+                    "BepInEx directory close also failed",
+                    exc,
+                )
+        if primary is not None:
+            raise primary
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedBootLogContract:
+    canonical_overwrite: bool
 
 
 @dataclass(slots=True)
@@ -1551,6 +1603,7 @@ def _read_retained_config_snapshot(
         device=observed.st_dev,
         inode=observed.st_ino,
         size=observed.st_size,
+        mtime_ns=observed.st_mtime_ns,
     )
 
 
@@ -1566,6 +1619,388 @@ def _read_config_snapshot(
     if _stat_identity(named) != _stat_identity(observed):
         raise BootProbeError(f"config changed after being read: {path}")
     return snapshot
+
+
+def _parse_bepinex_disk_logging(payload: bytes, path: Path) -> None:
+    def reject(detail: str) -> None:
+        raise BootProbeError(
+            f"invalid BepInEx disk logging config: {path}: {detail}"
+        )
+
+    if payload.startswith(b"\xef\xbb\xbf"):
+        payload = payload[3:]
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BootProbeError(
+            f"invalid BepInEx disk logging config UTF-8: {path}"
+        ) from exc
+    if "\x00" in text:
+        reject("NUL byte")
+    text = text.replace("\r\n", "\n")
+    if "\r" in text:
+        reject("bare carriage return")
+    if "\ufeff" in text:
+        reject("embedded UTF-8 BOM")
+
+    disk_section_count = 0
+    console_section_count = 0
+    disk_values: dict[str, str] = {}
+    console_levels: str | None = None
+    current_section: str | None = None
+    section_targets = {
+        "logging.disk": "Logging.Disk",
+        "logging.console": "Logging.Console",
+    }
+    disk_key_targets = {
+        "enabled": "Enabled",
+        "appendlog": "AppendLog",
+        "loglevels": "LogLevels",
+    }
+
+    for line_number, line in enumerate(text.split("\n"), 1):
+        trimmed = line.strip()
+        if not trimmed or trimmed.startswith("#"):
+            continue
+        if "#" in trimmed:
+            reject(f"inline comment on line {line_number}")
+        if trimmed.startswith("[") or trimmed.endswith("]"):
+            if (
+                not trimmed.startswith("[")
+                or not trimmed.endswith("]")
+                or trimmed.count("[") != 1
+                or trimmed.count("]") != 1
+            ):
+                reject(f"malformed section on line {line_number}")
+            section_name = trimmed[1:-1]
+            if not section_name:
+                reject(f"empty section on line {line_number}")
+            normalized = re.sub(r"\s+", "", section_name).casefold()
+            target = section_targets.get(normalized)
+            if target is not None and section_name != target:
+                reject(f"section-name lookalike on line {line_number}")
+            current_section = section_name
+            if current_section == "Logging.Disk":
+                disk_section_count += 1
+                if disk_section_count != 1:
+                    reject("duplicate [Logging.Disk] section")
+            elif current_section == "Logging.Console":
+                console_section_count += 1
+                if console_section_count != 1:
+                    reject("duplicate [Logging.Console] section")
+            continue
+
+        if "=" not in trimmed:
+            reject(f"malformed key line {line_number}")
+        raw_key, value = trimmed.split("=", 1)
+        key = raw_key.strip()
+        if not key:
+            reject(f"empty key on line {line_number}")
+        relevant_targets = (
+            disk_key_targets
+            if current_section == "Logging.Disk"
+            else {"loglevels": "LogLevels"}
+            if current_section == "Logging.Console"
+            else {}
+        )
+        normalized_key = re.sub(r"\s+", "", key).casefold()
+        target_key = relevant_targets.get(normalized_key)
+        if target_key is not None and key != target_key:
+            reject(f"key-name lookalike on line {line_number}")
+        if (
+            current_section == "Logging.Disk"
+            and key in disk_key_targets.values()
+        ):
+            if key in disk_values:
+                reject(f"duplicate [Logging.Disk] {key} key")
+            disk_values[key] = value.strip()
+        elif current_section == "Logging.Console" and key == "LogLevels":
+            if console_levels is not None:
+                reject("duplicate [Logging.Console] LogLevels key")
+            console_levels = value.strip()
+
+    if disk_section_count != 1:
+        reject("requires exactly one [Logging.Disk] section")
+    if set(disk_values) != {"Enabled", "AppendLog", "LogLevels"}:
+        reject(
+            "requires exactly one Enabled, AppendLog, and LogLevels "
+            "disk key"
+        )
+    if disk_values["Enabled"].casefold() != "true":
+        reject("[Logging.Disk] Enabled must be true")
+    if disk_values["AppendLog"].casefold() != "false":
+        reject("[Logging.Disk] AppendLog must be false")
+
+    required_levels = {"fatal", "error", "warning", "message", "info"}
+    allowed_levels = required_levels | {"debug"}
+
+    def validate_levels(value: str, section: str) -> None:
+        levels = [level.strip().casefold() for level in value.split(",")]
+        if (
+            any(not level for level in levels)
+            or len(set(levels)) != len(levels)
+            or (
+                levels != ["all"]
+                and (
+                    not set(levels).issubset(allowed_levels)
+                    or not required_levels.issubset(levels)
+                )
+            )
+        ):
+            reject(f"invalid {section} LogLevels")
+
+    validate_levels(disk_values["LogLevels"], "[Logging.Disk]")
+    if console_levels is not None:
+        validate_levels(console_levels, "[Logging.Console]")
+
+
+def _open_bepinex_disk_logging_guard(
+    game_root: Path,
+) -> _DiskLoggingConfigGuard:
+    game = _requested_path(game_root, "game root")
+    bepinex_path = game / "BepInEx"
+    config_path = bepinex_path / "config"
+    path = config_path / "BepInEx.cfg"
+    bepinex: _DirectoryHandle | None = None
+    config: _DirectoryHandle | None = None
+    descriptor = -1
+    guard: _DiskLoggingConfigGuard | None = None
+    try:
+        bepinex = _open_absolute_directory(bepinex_path, "BepInEx directory")
+        try:
+            config_observed = os.stat(
+                "config",
+                dir_fd=bepinex.fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            if exc.errno != errno.ENOENT:
+                raise BootProbeError(
+                    "cannot inspect BepInEx config directory: "
+                    f"{config_path}: {exc}"
+                ) from exc
+            guard = _DiskLoggingConfigGuard(
+                bepinex_path,
+                bepinex,
+                None,
+                path,
+                path.name,
+                -1,
+                None,
+            )
+            bepinex = None
+            return guard
+        if not stat.S_ISDIR(config_observed.st_mode):
+            raise BootProbeError(
+                f"BepInEx config path is not a directory: {config_path}"
+            )
+        config = _open_child_directory(
+            bepinex,
+            "config",
+            config_path,
+            config_observed,
+        )
+        try:
+            leaf_observed = os.stat(
+                path.name,
+                dir_fd=config.fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            if exc.errno != errno.ENOENT:
+                raise BootProbeError(
+                    "cannot inspect BepInEx disk logging config: "
+                    f"{path}: {exc}"
+                ) from exc
+            guard = _DiskLoggingConfigGuard(
+                bepinex_path,
+                bepinex,
+                config,
+                path,
+                path.name,
+                -1,
+                None,
+            )
+            bepinex = None
+            config = None
+            return guard
+        if not stat.S_ISREG(leaf_observed.st_mode):
+            raise BootProbeError(
+                f"BepInEx disk logging config is not a regular file: {path}"
+            )
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=config.fd,
+        )
+        original = _read_config_snapshot(
+            descriptor,
+            config,
+            path.name,
+            path,
+        )
+        _parse_bepinex_disk_logging(original.payload, path)
+        guard = _DiskLoggingConfigGuard(
+            bepinex_path,
+            bepinex,
+            config,
+            path,
+            path.name,
+            descriptor,
+            original,
+        )
+        descriptor = -1
+        bepinex = None
+        config = None
+        return guard
+    except BaseException as primary:
+        if guard is not None:
+            try:
+                guard.close()
+            except BaseException as close_error:
+                _note_later_error(
+                    primary,
+                    "BepInEx disk logging guard close also failed",
+                    close_error,
+                )
+        else:
+            if descriptor >= 0:
+                owned_descriptor = descriptor
+                descriptor = -1
+                try:
+                    os.close(owned_descriptor)
+                except BaseException as close_error:
+                    _note_later_error(
+                        primary,
+                        "BepInEx config descriptor close also failed",
+                        close_error,
+                    )
+            if config is not None:
+                owned_config = config
+                config = None
+                try:
+                    owned_config.close()
+                except BaseException as close_error:
+                    _note_later_error(
+                        primary,
+                        "BepInEx config directory close also failed",
+                        close_error,
+                    )
+            if bepinex is not None:
+                owned_bepinex = bepinex
+                bepinex = None
+                try:
+                    owned_bepinex.close()
+                except BaseException as close_error:
+                    _note_later_error(
+                        primary,
+                        "BepInEx directory close also failed",
+                        close_error,
+                    )
+        if isinstance(primary, OSError):
+            raise BootProbeError(
+                "cannot open BepInEx disk logging config without following "
+                f"symlinks: {path}: {primary}"
+            ) from primary
+        raise
+
+
+def _verify_and_close_bepinex_disk_logging_guard(
+    guard: _DiskLoggingConfigGuard,
+) -> _ValidatedBootLogContract:
+    try:
+        _verify_pinned_directory_path(
+            guard.bepinex_path,
+            guard.bepinex,
+            "BepInEx directory before launch",
+        )
+        if guard.config is None:
+            try:
+                os.stat(
+                    "config",
+                    dir_fd=guard.bepinex.fd,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                if exc.errno != errno.ENOENT:
+                    raise BootProbeError(
+                        "cannot revalidate absent BepInEx config directory: "
+                        f"{guard.path.parent}: {exc}"
+                    ) from exc
+            else:
+                raise BootProbeError(
+                    "BepInEx config directory appeared before launch: "
+                    f"{guard.path.parent}"
+                )
+        else:
+            config_named = os.stat(
+                "config",
+                dir_fd=guard.bepinex.fd,
+                follow_symlinks=False,
+            )
+            config_retained = os.fstat(guard.config.fd)
+            if (
+                not stat.S_ISDIR(config_named.st_mode)
+                or (config_named.st_dev, config_named.st_ino)
+                != (guard.config.device, guard.config.inode)
+                or (config_retained.st_dev, config_retained.st_ino)
+                != (guard.config.device, guard.config.inode)
+            ):
+                raise BootProbeError(
+                    "BepInEx config directory changed before launch: "
+                    f"{guard.path.parent}"
+                )
+            _verify_pinned_directory_path(
+                guard.path.parent,
+                guard.config,
+                "BepInEx config directory before launch",
+            )
+            if guard.original is None:
+                try:
+                    os.stat(
+                        guard.name,
+                        dir_fd=guard.config.fd,
+                        follow_symlinks=False,
+                    )
+                except OSError as exc:
+                    if exc.errno != errno.ENOENT:
+                        raise BootProbeError(
+                            "cannot revalidate absent BepInEx disk logging "
+                            f"config: {guard.path}: {exc}"
+                        ) from exc
+                else:
+                    raise BootProbeError(
+                        "BepInEx disk logging config appeared before launch: "
+                        f"{guard.path}"
+                    )
+            else:
+                reread = _read_config_snapshot(
+                    guard.fd,
+                    guard.config,
+                    guard.name,
+                    guard.path,
+                )
+                original = guard.original
+                if (
+                    reread.payload != original.payload
+                    or reread.mode != original.mode
+                    or reread.device != original.device
+                    or reread.inode != original.inode
+                    or reread.size != original.size
+                    or reread.mtime_ns != original.mtime_ns
+                ):
+                    raise BootProbeError(
+                        "BepInEx disk logging config changed before launch: "
+                        f"{guard.path}"
+                    )
+                _parse_bepinex_disk_logging(reread.payload, guard.path)
+    except OSError as exc:
+        raise BootProbeError(
+            "cannot revalidate BepInEx disk logging config: "
+            f"{guard.path}: {exc}"
+        ) from exc
+    guard.close()
+    return _ValidatedBootLogContract(canonical_overwrite=True)
 
 
 def _open_config_guard(config_path: Path) -> _ConfigGuard:
@@ -4365,6 +4800,7 @@ def run_boot_probe(
         )
     )
     config_guard: _ConfigGuard | None = None
+    disk_logging_guard: _DiskLoggingConfigGuard | None = None
     restore_required = False
     game_handle: _DirectoryHandle | None = None
     launcher_guard: _LauncherGuard | None = None
@@ -4375,6 +4811,7 @@ def run_boot_probe(
         config_guard = _open_config_guard(config_path)
         _require_initial_off_config(config_guard)
         restore_required = True
+        disk_logging_guard = _open_bepinex_disk_logging_guard(game)
         game_handle = _open_absolute_directory(game, "game root")
         launcher_guard = _open_launcher_guard(launcher_path)
         before = fingerprint_preloader_logs(game)
@@ -4400,6 +4837,13 @@ def run_boot_probe(
         )
         _verify_launcher_guard(launcher_guard)
         _verify_config_guard_unchanged(config_guard)
+        _boot_log_contract = (
+            _verify_and_close_bepinex_disk_logging_guard(
+                disk_logging_guard
+            )
+        )
+        disk_logging_guard = None
+        before = fingerprint_preloader_logs(game)
         process: subprocess.Popen[bytes] | None = None
         spawned_pgid: int | None = None
         cleanup_exit_code: int | None = None
@@ -4562,6 +5006,13 @@ def run_boot_probe(
                 launcher_guard.close()
             except BaseException as exc:
                 cleanup_errors.append(("launcher guard close failed", exc))
+        if disk_logging_guard is not None:
+            try:
+                disk_logging_guard.close()
+            except BaseException as exc:
+                cleanup_errors.append(
+                    ("BepInEx disk logging guard close failed", exc)
+                )
         if game_handle is not None:
             try:
                 game_handle.close()

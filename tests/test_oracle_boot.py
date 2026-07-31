@@ -35,6 +35,12 @@ REQUIRED_MARKERS = (
     "SSR oracle boot probe loaded",
 )
 ORIGINAL_CONFIG = b"; preserve this comment\r\n[Oracle]\r\nMode=off\r\n"
+BEPINEX_DISK_CONFIG = (
+    b"[Logging.Disk]\n"
+    b"Enabled = true\n"
+    b"AppendLog = false\n"
+    b"LogLevels = Fatal, Error, Warning, Message, Info\n"
+)
 
 
 class _AlreadyExitedProcess:
@@ -1100,6 +1106,327 @@ def _probe_layout(tmp_path: Path) -> SimpleNamespace:
             bepinex / f"LogOutput.log.{index}" for index in range(1, 5)
         ),
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"[Logging.Disk]\nEnabled = true\nAppendLog = false\nLogLevels = Fatal, Error, Warning, Message, Info\n",
+        b"\xef\xbb\xbf [Logging.Disk] \r\n Enabled = TRUE \r\n AppendLog = False \r\n LogLevels = All \r\n",
+        b"[Other]\nValue = okay\n[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=debug,info,message,warning,error,fatal\n",
+        b"[Logging.Console]\nLogLevels = Fatal, Error, Warning, Message, Info\n[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n",
+        b"[Logging.Console]\nOther = value\n[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n",
+    ],
+    ids=(
+        "required-levels",
+        "leading-bom-and-outer-whitespace",
+        "unrelated-section-and-debug",
+        "configured-console",
+        "pinned-console-defaults",
+    ),
+)
+def test_bepinex_disk_config_parser_accepts_pinned_contracts(
+    payload: bytes,
+    tmp_path: Path,
+):
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+
+    assert oracle_boot._parse_bepinex_disk_logging(payload, path) is None
+
+
+@pytest.mark.parametrize(
+    ("case", "payload"),
+    [
+        ("disabled", b"[Logging.Disk]\nEnabled=false\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("append", b"[Logging.Disk]\nEnabled=true\nAppendLog=true\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("too-few-levels", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Message,Info\n"),
+        ("missing-enabled", b"[Logging.Disk]\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("missing-append", b"[Logging.Disk]\nEnabled=true\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("missing-levels", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\n"),
+        ("duplicate-disk-section", BEPINEX_DISK_CONFIG + BEPINEX_DISK_CONFIG),
+        ("duplicate-enabled", b"[Logging.Disk]\nEnabled=true\nEnabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("lowercase-section", b"[logging.disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("section-whitespace-lookalike", b"[Logging. Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("lowercase-key", b"[Logging.Disk]\nenabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("key-whitespace-lookalike", b"[Logging.Disk]\nEnabled=true\nAppend Log=false\nLogLevels=All\n"),
+        ("unknown-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Trace\n"),
+        ("numeric-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,1\n"),
+        ("duplicate-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Info,Info\n"),
+        ("none-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=None\n"),
+        ("all-plus-debug", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All,Debug\n"),
+        ("nul", BEPINEX_DISK_CONFIG + b"\x00"),
+        ("invalid-utf8", BEPINEX_DISK_CONFIG + b"\xff"),
+        ("embedded-bom", BEPINEX_DISK_CONFIG + b"\xef\xbb\xbf"),
+        ("bare-cr", b"[Logging.Disk]\nEnabled=true\rAppendLog=false\nLogLevels=All\n"),
+        ("inline-comment", b"[Logging.Disk]\nEnabled=true # required\nAppendLog=false\nLogLevels=All\n"),
+        ("malformed-line", BEPINEX_DISK_CONFIG + b"malformed\n"),
+        ("incomplete-section", BEPINEX_DISK_CONFIG + b"[Other\n"),
+        ("extra-section-syntax", BEPINEX_DISK_CONFIG + b"[Other] trailing\n"),
+        ("console-levels-do-not-count-for-disk", b"[Logging.Console]\nLogLevels=All\n[Logging.Disk]\nEnabled=true\nAppendLog=false\n"),
+    ],
+)
+def test_bepinex_disk_config_parser_rejects_invalid_disk_contract(
+    case: str,
+    payload: bytes,
+    tmp_path: Path,
+):
+    del case
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._parse_bepinex_disk_logging(payload, path)
+
+    assert str(path) in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("case", "console"),
+    [
+        ("missing-fatal", b"LogLevels=Error,Warning,Message,Info\n"),
+        ("missing-error", b"LogLevels=Fatal,Warning,Message,Info\n"),
+        ("missing-warning", b"LogLevels=Fatal,Error,Message,Info\n"),
+        ("missing-message", b"LogLevels=Fatal,Error,Warning,Info\n"),
+        ("missing-info", b"LogLevels=Fatal,Error,Warning,Message\n"),
+        ("duplicate-key", b"LogLevels=All\nLogLevels=All\n"),
+        ("none", b"LogLevels=None\n"),
+        ("all-plus-debug", b"LogLevels=All, Debug\n"),
+        ("lowercase-key", b"loglevels=All\n"),
+        ("whitespace-key", b"Log Levels=All\n"),
+    ],
+)
+def test_bepinex_disk_config_parser_rejects_invalid_console_contract(
+    case: str,
+    console: bytes,
+    tmp_path: Path,
+):
+    del case
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+    payload = b"[Logging.Console]\n" + console + BEPINEX_DISK_CONFIG
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._parse_bepinex_disk_logging(payload, path)
+
+    assert str(path) in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"[Logging.Console]\nOther=value\n[Logging.Console]\nOther=value\n" + BEPINEX_DISK_CONFIG,
+        b"[logging.console]\nLogLevels=All\n" + BEPINEX_DISK_CONFIG,
+        b"[Logging. Console]\nLogLevels=All\n" + BEPINEX_DISK_CONFIG,
+    ],
+    ids=("duplicate-console-section", "lowercase-console-section", "console-section-whitespace"),
+)
+def test_bepinex_disk_config_parser_rejects_invalid_console_sections(
+    payload: bytes,
+    tmp_path: Path,
+):
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._parse_bepinex_disk_logging(payload, path)
+
+    assert str(path) in str(raised.value)
+
+
+def test_bepinex_disk_config_guard_records_absent_leaf(
+    tmp_path: Path,
+):
+    bepinex = tmp_path / "game/BepInEx"
+    (bepinex / "config").mkdir(parents=True)
+
+    guard = oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+    try:
+        assert guard.bepinex is not None
+        assert guard.config is not None
+        assert guard.fd == -1
+        assert guard.original is None
+    finally:
+        guard.close()
+
+
+def test_bepinex_disk_config_guard_records_absent_config_directory(
+    tmp_path: Path,
+):
+    bepinex = tmp_path / "game/BepInEx"
+    bepinex.mkdir(parents=True)
+
+    guard = oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+    try:
+        assert guard.bepinex is not None
+        assert guard.config is None
+        assert guard.fd == -1
+        assert guard.original is None
+    finally:
+        guard.close()
+
+
+def test_bepinex_disk_config_guard_consumes_valid_existing_config(
+    tmp_path: Path,
+):
+    path = tmp_path / "game/BepInEx/config/BepInEx.cfg"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(BEPINEX_DISK_CONFIG)
+    path.chmod(0o640)
+    guard = oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+
+    assert guard.config is not None
+    assert guard.original is not None
+    assert guard.original.payload == BEPINEX_DISK_CONFIG
+    contract = oracle_boot._verify_and_close_bepinex_disk_logging_guard(guard)
+
+    assert contract.canonical_overwrite is True
+    assert guard.fd == -1
+    assert guard.config.fd == -1
+    assert guard.bepinex.fd == -1
+
+
+@pytest.mark.parametrize("entry_kind", ["symlink", "fifo"])
+def test_bepinex_disk_config_guard_rejects_unsafe_leaf_without_following(
+    entry_kind: str,
+    tmp_path: Path,
+):
+    path = tmp_path / "game/BepInEx/config/BepInEx.cfg"
+    path.parent.mkdir(parents=True)
+    if entry_kind == "symlink":
+        target = tmp_path / "target.cfg"
+        target.write_bytes(BEPINEX_DISK_CONFIG)
+        path.symlink_to(target)
+    else:
+        os.mkfifo(path)
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+
+    assert str(path) in str(raised.value)
+
+
+def test_bepinex_disk_config_guard_rejects_symlinked_config_parent(
+    tmp_path: Path,
+):
+    bepinex = tmp_path / "game/BepInEx"
+    bepinex.mkdir(parents=True)
+    real_config = tmp_path / "real-config"
+    real_config.mkdir()
+    (bepinex / "config").symlink_to(real_config, target_is_directory=True)
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+
+    assert str(bepinex / "config") in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "content",
+        "same-bytes-new-inode",
+        "absent-leaf-invalid",
+        "absent-leaf-valid",
+        "absent-config-directory",
+        "replace-config-directory",
+        "replace-bepinex-directory",
+    ],
+)
+def test_bepinex_disk_config_prelaunch_revalidation_blocks_changed_state(
+    mutation: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    if mutation not in {
+        "absent-leaf-invalid",
+        "absent-leaf-valid",
+        "absent-config-directory",
+    }:
+        layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+        layout.bepinex_config.chmod(0o640)
+    if mutation == "absent-config-directory":
+        layout.bepinex_config.parent.rmdir()
+
+    launcher = _launcher(
+        tmp_path,
+        log_text="\n".join(REQUIRED_MARKERS),
+        exit_code=0,
+    )
+    original_verify = oracle_boot._verify_config_guard_unchanged
+    verify_calls = 0
+    popen_calls = 0
+
+    def mutate_after_last_oracle_config_verification(guard):
+        nonlocal verify_calls
+        original_verify(guard)
+        verify_calls += 1
+        if verify_calls != 2:
+            return
+        if mutation == "content":
+            layout.bepinex_config.write_bytes(
+                BEPINEX_DISK_CONFIG.replace(b"false", b"true")
+            )
+        elif mutation == "same-bytes-new-inode":
+            replacement = layout.bepinex_config.with_suffix(".new")
+            replacement.write_bytes(BEPINEX_DISK_CONFIG)
+            replacement.chmod(0o640)
+            os.replace(replacement, layout.bepinex_config)
+        elif mutation == "absent-leaf-invalid":
+            layout.bepinex_config.write_bytes(b"invalid\n")
+        elif mutation == "absent-leaf-valid":
+            layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+        elif mutation == "absent-config-directory":
+            layout.bepinex_config.parent.mkdir()
+        elif mutation == "replace-config-directory":
+            displaced = layout.bepinex / "config.displaced"
+            layout.bepinex_config.parent.rename(displaced)
+            layout.bepinex_config.parent.mkdir()
+            layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+        else:
+            displaced = layout.game / "BepInEx.displaced"
+            layout.bepinex.rename(displaced)
+            layout.bepinex_config.parent.mkdir(parents=True)
+            layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+
+    class ForbiddenLaunch(AssertionError):
+        pass
+
+    def forbidden_popen(*_args, **_kwargs):
+        nonlocal popen_calls
+        popen_calls += 1
+        raise ForbiddenLaunch("changed BepInEx config state reached Popen")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_verify_config_guard_unchanged",
+        mutate_after_last_oracle_config_verification,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, Popen=forbidden_popen),
+        raising=False,
+    )
+
+    raised: BaseException | None = None
+    try:
+        oracle_boot.run_boot_probe(
+            layout.game,
+            launcher,
+            layout.config,
+            layout.evidence,
+            2,
+        )
+    except BaseException as exc:
+        raised = exc
+
+    assert isinstance(raised, oracle_boot.BootProbeError)
+    assert verify_calls == 2
+    assert popen_calls == 0
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    assert not (layout.game / "spawned.pid").exists()
+    assert not (layout.game / "spawned.pgid").exists()
+    _assert_no_canonical_probe_json(layout.evidence)
 
 
 def _tahoe_code_signature_lines(app: Path) -> tuple[str, ...]:
