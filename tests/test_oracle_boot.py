@@ -34,7 +34,21 @@ REQUIRED_MARKERS = (
     "Unity v2018.4.25f1",
     "SSR oracle boot probe loaded",
 )
+AUTHENTIC_UNITY_LOG_LINE = "Detected Unity version: v2018.4.25f1"
 ORIGINAL_CONFIG = b"; preserve this comment\r\n[Oracle]\r\nMode=off\r\n"
+BEPINEX_DISK_CONFIG = (
+    b"[Logging.Disk]\n"
+    b"Enabled = true\n"
+    b"AppendLog = false\n"
+    b"LogLevels = Fatal, Error, Warning, Message, Info\n"
+)
+_AUTHENTIC_CANONICAL_BOOT_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures/oracle_boot/BepInEx-LogOutput-5.4.23.5.log"
+)
+_AUTHENTIC_CANONICAL_BOOT_TEXT = (
+    _AUTHENTIC_CANONICAL_BOOT_FIXTURE.read_text(encoding="utf-8")
+)
 
 
 class _AlreadyExitedProcess:
@@ -478,7 +492,10 @@ def test_guard_opener_preserves_primary_and_notes_both_close_failures(
                 assert exc.errno == errno.EBADF
 
 
-@pytest.mark.parametrize("guard_kind", ["config", "launcher"])
+@pytest.mark.parametrize(
+    "guard_kind",
+    ["config", "disk_logging", "launcher"],
+)
 def test_run_boot_probe_interrupt_after_guard_helper_return_closes_guards(
     guard_kind: str,
     tmp_path: Path,
@@ -490,6 +507,9 @@ def test_run_boot_probe_interrupt_after_guard_helper_return_closes_guards(
         "raise SystemExit(0)\n",
     )
     original_open_config = oracle_boot._open_config_guard
+    original_open_disk_logging = (
+        oracle_boot._open_bepinex_disk_logging_guard
+    )
     original_open_launcher = oracle_boot._open_launcher_guard
     returned_guards = []
     returned_descriptors: list[int] = []
@@ -515,6 +535,19 @@ def test_run_boot_probe_interrupt_after_guard_helper_return_closes_guards(
         returned_guards.append(guard)
         returned_descriptors.extend((guard.fd, guard.parent.fd))
         if guard_kind == "launcher":
+            armed = True
+        return guard
+
+    def capture_disk_logging(path):
+        nonlocal armed
+        guard = original_open_disk_logging(path)
+        returned_guards.append(guard)
+        returned_descriptors.append(guard.bepinex.fd)
+        if guard.config is not None:
+            returned_descriptors.append(guard.config.fd)
+        if guard.fd >= 0:
+            returned_descriptors.append(guard.fd)
+        if guard_kind == "disk_logging":
             armed = True
         return guard
 
@@ -544,6 +577,11 @@ def test_run_boot_probe_interrupt_after_guard_helper_return_closes_guards(
         oracle_boot,
         "_open_launcher_guard",
         capture_launcher,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_open_bepinex_disk_logging_guard",
+        capture_disk_logging,
     )
     monkeypatch.setattr(
         oracle_boot,
@@ -581,15 +619,24 @@ def test_run_boot_probe_interrupt_after_guard_helper_return_closes_guards(
             sys.settrace(previous_trace)
 
         assert raised.value is interrupt
-        assert len(returned_guards) == (
-            1 if guard_kind == "config" else 2
-        )
-        assert len(returned_descriptors) == (
-            2 if guard_kind == "config" else 4
+        expected_guard_counts = {
+            "config": 1,
+            "disk_logging": 2,
+            "launcher": 3,
+        }
+        expected_descriptor_counts = {
+            "config": 2,
+            "disk_logging": 4,
+            "launcher": 6,
+        }
+        assert len(returned_guards) == expected_guard_counts[guard_kind]
+        assert (
+            len(returned_descriptors)
+            == expected_descriptor_counts[guard_kind]
         )
         _assert_acquired_descriptors_closed(returned_descriptors)
         assert launcher_open_calls == (
-            0 if guard_kind == "config" else 1
+            1 if guard_kind == "launcher" else 0
         )
         assert process_calls == 0
         assert stage_calls == 0
@@ -960,6 +1007,8 @@ def _launcher(
     tmp_path: Path,
     *,
     log_text: str,
+    log_relative: str = "BepInEx/LogOutput.log",
+    additional_logs: tuple[tuple[str, str], ...] = (),
     linger_seconds: float = 60.0,
     ignore_term: bool = False,
     spawn_descendant: bool = False,
@@ -1050,8 +1099,12 @@ def _launcher(
         {config_setup}
         {changed_log_setup}
         {descendant_setup}
-        log = root / "nested" / "preloader_probe.log"
+        log = root / {log_relative!r}
         log.parent.mkdir(parents=True, exist_ok=True)
+        for relative, text in {additional_logs!r}:
+            additional_log = root / relative
+            additional_log.parent.mkdir(parents=True, exist_ok=True)
+            additional_log.write_text(text, encoding="utf-8")
 {termination_setup}
         log.write_text({log_text!r}, encoding="utf-8")
         {("raise SystemExit(" + str(exit_code) + ")" if exit_code is not None else "time.sleep(" + repr(linger_seconds) + ")")}
@@ -1077,6 +1130,9 @@ def _probe_layout(tmp_path: Path) -> SimpleNamespace:
     preloader = game / "BepInEx/core/BepInEx.Preloader.dll"
     preloader.parent.mkdir(parents=True)
     preloader.write_bytes(b"controlled patched preloader")
+    bepinex = game / "BepInEx"
+    bepinex_config = bepinex / "config/BepInEx.cfg"
+    bepinex_config.parent.mkdir()
     return SimpleNamespace(
         game=game,
         app=app,
@@ -1084,7 +1140,580 @@ def _probe_layout(tmp_path: Path) -> SimpleNamespace:
         evidence=evidence,
         assembly=assembly,
         preloader=preloader,
+        bepinex=bepinex,
+        bepinex_config=bepinex_config,
+        canonical_log=bepinex / "LogOutput.log",
+        fallback_logs=tuple(
+            bepinex / f"LogOutput.log.{index}" for index in range(1, 5)
+        ),
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"[Logging.Disk]\nEnabled = true\nAppendLog = false\nLogLevels = Fatal, Error, Warning, Message, Info\n",
+        b"\xef\xbb\xbf [Logging.Disk] \r\n Enabled = TRUE \r\n AppendLog = False \r\n LogLevels = All \r\n",
+        b"[Other]\nValue = okay\n[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=debug,info,message,warning,error,fatal\n",
+        b"[Logging.Console]\nLogLevels = Fatal, Error, Warning, Message, Info\n[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n",
+        b"[Logging.Console]\nOther = value\n[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n",
+    ],
+    ids=(
+        "required-levels",
+        "leading-bom-and-outer-whitespace",
+        "unrelated-section-and-debug",
+        "configured-console",
+        "pinned-console-defaults",
+    ),
+)
+def test_bepinex_disk_config_parser_accepts_pinned_contracts(
+    payload: bytes,
+    tmp_path: Path,
+):
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+
+    assert oracle_boot._parse_bepinex_disk_logging(payload, path) is None
+
+
+@pytest.mark.parametrize(
+    ("case", "payload"),
+    [
+        ("disabled", b"[Logging.Disk]\nEnabled=false\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("append", b"[Logging.Disk]\nEnabled=true\nAppendLog=true\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("too-few-levels", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Message,Info\n"),
+        ("missing-enabled", b"[Logging.Disk]\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("missing-append", b"[Logging.Disk]\nEnabled=true\nLogLevels=Fatal,Error,Warning,Message,Info\n"),
+        ("missing-levels", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\n"),
+        ("duplicate-disk-section", BEPINEX_DISK_CONFIG + BEPINEX_DISK_CONFIG),
+        ("duplicate-enabled", b"[Logging.Disk]\nEnabled=true\nEnabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("lowercase-section", b"[logging.disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("section-whitespace-lookalike", b"[Logging. Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("lowercase-key", b"[Logging.Disk]\nenabled=true\nAppendLog=false\nLogLevels=All\n"),
+        ("key-whitespace-lookalike", b"[Logging.Disk]\nEnabled=true\nAppend Log=false\nLogLevels=All\n"),
+        ("unknown-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Trace\n"),
+        ("numeric-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,1\n"),
+        ("duplicate-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=Fatal,Error,Warning,Message,Info,Info\n"),
+        ("none-level", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=None\n"),
+        ("all-plus-debug", b"[Logging.Disk]\nEnabled=true\nAppendLog=false\nLogLevels=All,Debug\n"),
+        ("nul", BEPINEX_DISK_CONFIG + b"\x00"),
+        ("invalid-utf8", BEPINEX_DISK_CONFIG + b"\xff"),
+        ("embedded-bom", BEPINEX_DISK_CONFIG + b"\xef\xbb\xbf"),
+        ("bare-cr", b"[Logging.Disk]\nEnabled=true\rAppendLog=false\nLogLevels=All\n"),
+        ("inline-comment", b"[Logging.Disk]\nEnabled=true # required\nAppendLog=false\nLogLevels=All\n"),
+        ("malformed-line", BEPINEX_DISK_CONFIG + b"malformed\n"),
+        ("incomplete-section", BEPINEX_DISK_CONFIG + b"[Other\n"),
+        ("extra-section-syntax", BEPINEX_DISK_CONFIG + b"[Other] trailing\n"),
+        ("console-levels-do-not-count-for-disk", b"[Logging.Console]\nLogLevels=All\n[Logging.Disk]\nEnabled=true\nAppendLog=false\n"),
+    ],
+)
+def test_bepinex_disk_config_parser_rejects_invalid_disk_contract(
+    case: str,
+    payload: bytes,
+    tmp_path: Path,
+):
+    del case
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._parse_bepinex_disk_logging(payload, path)
+
+    assert str(path) in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("case", "console"),
+    [
+        ("missing-fatal", b"LogLevels=Error,Warning,Message,Info\n"),
+        ("missing-error", b"LogLevels=Fatal,Warning,Message,Info\n"),
+        ("missing-warning", b"LogLevels=Fatal,Error,Message,Info\n"),
+        ("missing-message", b"LogLevels=Fatal,Error,Warning,Info\n"),
+        ("missing-info", b"LogLevels=Fatal,Error,Warning,Message\n"),
+        ("duplicate-key", b"LogLevels=All\nLogLevels=All\n"),
+        ("none", b"LogLevels=None\n"),
+        ("all-plus-debug", b"LogLevels=All, Debug\n"),
+        ("lowercase-key", b"loglevels=All\n"),
+        ("whitespace-key", b"Log Levels=All\n"),
+    ],
+)
+def test_bepinex_disk_config_parser_rejects_invalid_console_contract(
+    case: str,
+    console: bytes,
+    tmp_path: Path,
+):
+    del case
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+    payload = b"[Logging.Console]\n" + console + BEPINEX_DISK_CONFIG
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._parse_bepinex_disk_logging(payload, path)
+
+    assert str(path) in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"[Logging.Console]\nOther=value\n[Logging.Console]\nOther=value\n" + BEPINEX_DISK_CONFIG,
+        b"[logging.console]\nLogLevels=All\n" + BEPINEX_DISK_CONFIG,
+        b"[Logging. Console]\nLogLevels=All\n" + BEPINEX_DISK_CONFIG,
+    ],
+    ids=("duplicate-console-section", "lowercase-console-section", "console-section-whitespace"),
+)
+def test_bepinex_disk_config_parser_rejects_invalid_console_sections(
+    payload: bytes,
+    tmp_path: Path,
+):
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._parse_bepinex_disk_logging(payload, path)
+
+    assert str(path) in str(raised.value)
+
+
+def test_bepinex_disk_config_guard_records_absent_leaf(
+    tmp_path: Path,
+):
+    bepinex = tmp_path / "game/BepInEx"
+    (bepinex / "config").mkdir(parents=True)
+
+    guard = oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+    try:
+        assert guard.bepinex is not None
+        assert guard.config is not None
+        assert guard.fd == -1
+        assert guard.original is None
+    finally:
+        guard.close()
+
+
+def test_bepinex_disk_config_guard_records_absent_config_directory(
+    tmp_path: Path,
+):
+    bepinex = tmp_path / "game/BepInEx"
+    bepinex.mkdir(parents=True)
+
+    guard = oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+    try:
+        assert guard.bepinex is not None
+        assert guard.config is None
+        assert guard.fd == -1
+        assert guard.original is None
+    finally:
+        guard.close()
+
+
+def test_bepinex_disk_config_guard_consumes_valid_existing_config(
+    tmp_path: Path,
+):
+    path = tmp_path / "game/BepInEx/config/BepInEx.cfg"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(BEPINEX_DISK_CONFIG)
+    path.chmod(0o640)
+    guard = oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+
+    assert guard.config is not None
+    assert guard.original is not None
+    assert guard.original.payload == BEPINEX_DISK_CONFIG
+    contract = oracle_boot._verify_and_close_bepinex_disk_logging_guard(guard)
+
+    assert contract.canonical_overwrite is True
+    assert guard.fd == -1
+    assert guard.config.fd == -1
+    assert guard.bepinex.fd == -1
+
+
+@pytest.mark.parametrize("entry_kind", ["symlink", "fifo"])
+def test_bepinex_disk_config_guard_rejects_unsafe_leaf_without_following(
+    entry_kind: str,
+    tmp_path: Path,
+):
+    path = tmp_path / "game/BepInEx/config/BepInEx.cfg"
+    path.parent.mkdir(parents=True)
+    if entry_kind == "symlink":
+        target = tmp_path / "target.cfg"
+        target.write_bytes(BEPINEX_DISK_CONFIG)
+        path.symlink_to(target)
+    else:
+        os.mkfifo(path)
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+
+    assert str(path) in str(raised.value)
+
+
+def test_bepinex_disk_config_guard_rejects_symlinked_config_parent(
+    tmp_path: Path,
+):
+    bepinex = tmp_path / "game/BepInEx"
+    bepinex.mkdir(parents=True)
+    real_config = tmp_path / "real-config"
+    real_config.mkdir()
+    (bepinex / "config").symlink_to(real_config, target_is_directory=True)
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        oracle_boot._open_bepinex_disk_logging_guard(tmp_path / "game")
+
+    assert str(bepinex / "config") in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "content",
+        "same-bytes-new-inode",
+        "absent-leaf-invalid",
+        "absent-leaf-valid",
+        "absent-config-directory",
+        "replace-config-directory",
+        "replace-bepinex-directory",
+    ],
+)
+def test_bepinex_disk_config_prelaunch_revalidation_blocks_changed_state(
+    mutation: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    if mutation not in {
+        "absent-leaf-invalid",
+        "absent-leaf-valid",
+        "absent-config-directory",
+    }:
+        layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+        layout.bepinex_config.chmod(0o640)
+    if mutation == "absent-config-directory":
+        layout.bepinex_config.parent.rmdir()
+
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+        exit_code=0,
+    )
+    original_verify = oracle_boot._verify_config_guard_unchanged
+    verify_calls = 0
+    popen_calls = 0
+
+    def mutate_after_last_oracle_config_verification(guard):
+        nonlocal verify_calls
+        original_verify(guard)
+        verify_calls += 1
+        if verify_calls != 2:
+            return
+        if mutation == "content":
+            layout.bepinex_config.write_bytes(
+                BEPINEX_DISK_CONFIG.replace(b"false", b"true")
+            )
+        elif mutation == "same-bytes-new-inode":
+            replacement = layout.bepinex_config.with_suffix(".new")
+            replacement.write_bytes(BEPINEX_DISK_CONFIG)
+            replacement.chmod(0o640)
+            os.replace(replacement, layout.bepinex_config)
+        elif mutation == "absent-leaf-invalid":
+            layout.bepinex_config.write_bytes(b"invalid\n")
+        elif mutation == "absent-leaf-valid":
+            layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+        elif mutation == "absent-config-directory":
+            layout.bepinex_config.parent.mkdir()
+        elif mutation == "replace-config-directory":
+            displaced = layout.bepinex / "config.displaced"
+            layout.bepinex_config.parent.rename(displaced)
+            layout.bepinex_config.parent.mkdir()
+            layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+        else:
+            displaced = layout.game / "BepInEx.displaced"
+            layout.bepinex.rename(displaced)
+            layout.bepinex_config.parent.mkdir(parents=True)
+            layout.bepinex_config.write_bytes(BEPINEX_DISK_CONFIG)
+
+    class ForbiddenLaunch(AssertionError):
+        pass
+
+    def forbidden_popen(*_args, **_kwargs):
+        nonlocal popen_calls
+        popen_calls += 1
+        raise ForbiddenLaunch("changed BepInEx config state reached Popen")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_verify_config_guard_unchanged",
+        mutate_after_last_oracle_config_verification,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, Popen=forbidden_popen),
+        raising=False,
+    )
+
+    raised: BaseException | None = None
+    try:
+        oracle_boot.run_boot_probe(
+            layout.game,
+            launcher,
+            layout.config,
+            layout.evidence,
+            2,
+        )
+    except BaseException as exc:
+        raised = exc
+
+    assert isinstance(raised, oracle_boot.BootProbeError)
+    assert verify_calls == 2
+    assert popen_calls == 0
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    assert not (layout.game / "spawned.pid").exists()
+    assert not (layout.game / "spawned.pgid").exists()
+    _assert_no_canonical_probe_json(layout.evidence)
+
+
+@pytest.mark.parametrize(
+    ("family", "relative_path"),
+    [
+        ("canonical", Path("BepInEx/LogOutput.log")),
+        ("fallback", Path("BepInEx/LogOutput.log.1")),
+        ("preloader", Path("nested/preloader_boundary.log")),
+    ],
+)
+@pytest.mark.parametrize(
+    "mutation",
+    ["add", "modify", "remove", "inode-replace"],
+)
+def test_probe_reconciles_monitored_inventory_at_immediate_launch_boundary(
+    family: str,
+    relative_path: Path,
+    mutation: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    monitored = layout.game / relative_path
+    if mutation != "add":
+        monitored.parent.mkdir(parents=True, exist_ok=True)
+        monitored.write_bytes(f"original {family}\n".encode("ascii"))
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+        exit_code=0,
+    )
+    original_verify = (
+        oracle_boot._verify_and_close_bepinex_disk_logging_guard
+    )
+    mutation_calls = 0
+    popen_calls = 0
+    evidence_calls = 0
+
+    def mutate_after_logging_guard_close(guard):
+        nonlocal mutation_calls
+        contract = original_verify(guard)
+        mutation_calls += 1
+        if mutation == "add":
+            monitored.parent.mkdir(parents=True, exist_ok=True)
+            monitored.write_bytes(f"added {family}\n".encode("ascii"))
+        elif mutation == "modify":
+            monitored.write_bytes(f"modified {family}\n".encode("ascii"))
+        elif mutation == "remove":
+            monitored.unlink()
+        else:
+            replacement = monitored.with_name(
+                f"{monitored.name}.replacement"
+            )
+            replacement.write_bytes(monitored.read_bytes())
+            os.replace(replacement, monitored)
+        return contract
+
+    def forbidden_popen(*_args, **_kwargs):
+        nonlocal popen_calls
+        popen_calls += 1
+        raise AssertionError("inventory mismatch reached Popen")
+
+    def forbidden_evidence(*_args, **_kwargs):
+        nonlocal evidence_calls
+        evidence_calls += 1
+        raise AssertionError("inventory mismatch reached evidence transfer")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_verify_and_close_bepinex_disk_logging_guard",
+        mutate_after_logging_guard_close,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, Popen=forbidden_popen),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_collect_boot_evidence_retained",
+        forbidden_evidence,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "collect_boot_evidence",
+        forbidden_evidence,
+    )
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        run_boot_probe(
+            layout.game,
+            launcher,
+            layout.config,
+            layout.evidence,
+            2,
+        )
+
+    assert str(raised.value) == (
+        "monitored boot log inventory changed during preflight"
+    )
+    assert mutation_calls == 1
+    assert popen_calls == 0
+    assert evidence_calls == 0
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    assert not layout.evidence.exists()
+    assert not (layout.game / "spawned.pid").exists()
+    assert not (layout.game / "spawned.pgid").exists()
+    _assert_no_canonical_probe_json(tmp_path)
+
+
+def test_boot_main_reports_prelaunch_inventory_mismatch_without_stdout_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+        exit_code=0,
+    )
+    original_verify = (
+        oracle_boot._verify_and_close_bepinex_disk_logging_guard
+    )
+    launch_calls = 0
+    evidence_calls = 0
+
+    def add_canonical_after_logging_guard_close(guard):
+        contract = original_verify(guard)
+        layout.canonical_log.write_bytes(b"appeared at launch boundary\n")
+        return contract
+
+    def forbidden_popen(*_args, **_kwargs):
+        nonlocal launch_calls
+        launch_calls += 1
+        raise oracle_boot.BootProbeError("inventory mismatch reached Popen")
+
+    def forbidden_evidence(*_args, **_kwargs):
+        nonlocal evidence_calls
+        evidence_calls += 1
+        raise AssertionError("inventory mismatch reached evidence transfer")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_verify_and_close_bepinex_disk_logging_guard",
+        add_canonical_after_logging_guard_close,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, Popen=forbidden_popen),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_collect_boot_evidence_retained",
+        forbidden_evidence,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "collect_boot_evidence",
+        forbidden_evidence,
+    )
+
+    exit_code = oracle_boot.main(
+        [
+            "--game-root",
+            str(layout.game),
+            "--launcher",
+            str(launcher),
+            "--config",
+            str(layout.config),
+            "--evidence-root",
+            str(layout.evidence),
+            "--timeout",
+            "2",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert captured.err == (
+        "error: monitored boot log inventory changed during preflight\n"
+    )
+    assert launch_calls == 0
+    assert evidence_calls == 0
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    assert not layout.evidence.exists()
+    _assert_no_canonical_probe_json(tmp_path)
+
+
+def test_bepinex_disk_config_parser_accepts_realistic_generated_file(
+    tmp_path: Path,
+):
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+    payload = (
+        b"## Settings file was created by plugin BepInEx\n"
+        b"## Plugin GUID: BepInEx\n"
+        b"\n"
+        b"[Logging.Console]\n"
+        b"\n"
+        b"## Enables showing a console for log output.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: false\n"
+        b"Enabled = false\n"
+        b"\n"
+        b"## Which log levels to show in the console output.\n"
+        b"# Setting type: LogLevel\n"
+        b"# Default value: Fatal, Error, Warning, Message, Info\n"
+        b"LogLevels = Fatal, Error, Warning, Message, Info\n"
+        b"\n"
+        b"[Logging.Disk]\n"
+        b"\n"
+        b"## Enables writing log messages to disk.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: true\n"
+        b"Enabled = true\n"
+        b"\n"
+        b"## Appends to an existing log file instead of overwriting.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: false\n"
+        b"AppendLog = false\n"
+        b"\n"
+        b"## Flushes the disk log after every write.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: false\n"
+        b"InstantFlushing = false\n"
+        b"\n"
+        b"## Which log levels to include in the disk output.\n"
+        b"# Setting type: LogLevel\n"
+        b"# Default value: All\n"
+        b"LogLevels = All\n"
+        b"\n"
+        b"[Chainloader]\n"
+        b"\n"
+        b"## Hides the manager GameObject from Unity.\n"
+        b"HideManagerGameObject = false\n"
+    )
+
+    assert oracle_boot._parse_bepinex_disk_logging(payload, path) is None
 
 
 def _tahoe_code_signature_lines(app: Path) -> tuple[str, ...]:
@@ -1397,13 +2026,22 @@ def test_fingerprint_logs_is_recursive_case_sensitive_and_exact(
         game / "B/preloader_a.log",
         game / "a/deep/preloader_z.log",
         game / "preloader_root.log",
+        game / "BepInEx/LogOutput.log",
+        game / "BepInEx/LogOutput.log.1",
+        game / "BepInEx/LogOutput.log.4",
     ]
-    payloads = [b"B", b"nested", b"root"]
+    (game / "BepInEx").mkdir()
+    payloads = [b"B", b"nested", b"root", b"canonical", b"one", b"four"]
     for path, payload in zip(matching, payloads, strict=True):
         path.write_bytes(payload)
     (game / "Preloader_wrong.log").write_bytes(b"wrong case")
     (game / "preloader_wrong.LOG").write_bytes(b"wrong suffix")
     (game / "not_preloader.log").write_bytes(b"wrong prefix")
+    (game / "BepInEx/logoutput.log").write_bytes(b"wrong case")
+    (game / "BepInEx/LogOutput.log.0").write_bytes(b"wrong index")
+    (game / "BepInEx/LogOutput.log.5").write_bytes(b"wrong index")
+    (game / "BepInEx/nested").mkdir()
+    (game / "BepInEx/nested/LogOutput.log").write_bytes(b"wrong parent")
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -1437,10 +2075,610 @@ def test_fingerprint_logs_is_recursive_case_sensitive_and_exact(
 
 
 @pytest.mark.parametrize(
-    "unsafe_kind",
-    ["matching_symlink", "matching_fifo", "root_symlink", "symlink_parent"],
+    ("relative_path", "expected"),
+    [
+        (Path("BepInEx/LogOutput.log"), "canonical"),
+        (Path("BepInEx/LogOutput.log.1"), "fallback"),
+        (Path("BepInEx/LogOutput.log.4"), "fallback"),
+        (Path("preloader_root.log"), "preloader"),
+        (Path("nested/preloader_failure.log"), "preloader"),
+        (Path("BepInEx/logoutput.log"), None),
+        (Path("BepInEx/LogOutput.log.0"), None),
+        (Path("BepInEx/LogOutput.log.5"), None),
+        (Path("BepInEx/nested/LogOutput.log"), None),
+        (Path("preloader_wrong.LOG"), None),
+    ],
 )
-def test_fingerprint_rejects_unsafe_or_special_paths_without_hashing(
+def test_boot_log_kind_classifies_exact_relative_paths(
+    relative_path: Path,
+    expected: str | None,
+):
+    assert oracle_boot._boot_log_kind(relative_path) == expected
+
+
+_AUTHENTIC_CANONICAL_BOOT_PAYLOAD = (
+    b"BepInEx 5.4.23.5\n"
+    b"Detected Unity version: v2018.4.25f1\n"
+    b"SSR oracle boot probe loaded\n"
+)
+
+
+def test_canonical_live_marker_payload_produces_all_markers(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(_AUTHENTIC_CANONICAL_BOOT_PAYLOAD)
+
+    markers, errors, issues, observed = oracle_boot._observe_boot_logs(
+        game,
+        (),
+    )
+
+    assert markers == REQUIRED_MARKERS
+    assert errors == ()
+    assert issues == ()
+    assert observed == ()
+
+
+def test_canonical_live_marker_does_not_merge_failure_family_payloads(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    bepinex = game / "BepInEx"
+    bepinex.mkdir(parents=True)
+    payloads = {
+        game / "preloader_bepinex.log": b"BepInEx 5.4.23.5\n",
+        bepinex / "LogOutput.log.1": (
+            b"Detected Unity version: v2018.4.25f1\n"
+        ),
+        game / "nested/preloader_oracle.log": (
+            b"SSR oracle boot probe loaded\n"
+        ),
+    }
+    for path, payload in payloads.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+
+    markers, errors, issues, observed = oracle_boot._observe_boot_logs(
+        game,
+        (),
+    )
+
+    assert markers == ()
+    assert errors == ()
+    assert len(issues) == 3
+    assert tuple(item.relative_path for item in observed) == (
+        Path("BepInEx/LogOutput.log.1"),
+        Path("nested/preloader_oracle.log"),
+        Path("preloader_bepinex.log"),
+    )
+
+
+def test_markers_same_canonical_payload_is_never_completed_from_preloader(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(b"old canonical payload\n")
+    before = fingerprint_preloader_logs(game)
+    canonical.write_bytes(b"BepInEx 5.4.23.5\n")
+    preloader = game / "preloader_split.log"
+    preloader.write_bytes(
+        b"Detected Unity version: v2018.4.25f1\n"
+        b"SSR oracle boot probe loaded\n"
+    )
+
+    markers, errors, issues, observed = oracle_boot._observe_boot_logs(
+        game,
+        before,
+    )
+
+    assert markers == (REQUIRED_MARKERS[0],)
+    assert errors == ()
+    assert len(issues) == 1
+    assert tuple(item.relative_path for item in observed) == (
+        Path("preloader_split.log"),
+    )
+
+
+def test_unchanged_canonical_live_marker_payload_is_ignored(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(_AUTHENTIC_CANONICAL_BOOT_PAYLOAD)
+    before = fingerprint_preloader_logs(game)
+
+    markers, errors, issues, observed = oracle_boot._observe_boot_logs(
+        game,
+        before,
+    )
+
+    assert markers == ()
+    assert errors == ()
+    assert issues == ()
+    assert observed == ()
+
+
+def test_canonical_live_marker_error_is_reported_before_all_markers(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(
+        b"BepInEx 5.4.23.5\nDllNotFoundException: libc\n"
+    )
+
+    markers, errors, issues, observed = oracle_boot._observe_boot_logs(
+        game,
+        (),
+    )
+
+    assert markers == (REQUIRED_MARKERS[0],)
+    assert errors == ("DllNotFoundException",)
+    assert issues == ()
+    assert observed == ()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "existing"),
+    [
+        (Path("preloader_new.log"), False),
+        (Path("nested/preloader_changed.log"), True),
+        (Path("BepInEx/LogOutput.log.1"), False),
+        (Path("BepInEx/LogOutput.log.4"), True),
+    ],
+)
+def test_observed_failure_regular_log_returns_structural_monitor_error(
+    relative_path: Path,
+    existing: bool,
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    path = game / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before: tuple[oracle_boot.LogFingerprint, ...] = ()
+    if existing:
+        path.write_bytes(b"old benign payload\n")
+        before = fingerprint_preloader_logs(game)
+    path.write_bytes(b"new benign payload\n")
+    expected = path.lstat()
+    process = SimpleNamespace(poll=lambda: None)
+
+    outcome = oracle_boot._wait_for_markers(process, game, before, 0)
+
+    kind = oracle_boot._boot_log_kind(relative_path)
+    assert kind in {"preloader", "fallback"}
+    assert outcome.state == "error"
+    assert outcome.markers == ()
+    assert outcome.errors == ()
+    assert any(
+        kind in issue and relative_path.as_posix() in issue
+        for issue in outcome.issues
+    )
+    assert outcome.observed_failures == (
+        oracle_boot._ObservedFailureLog(
+            relative_path=relative_path,
+            kind=kind,
+            device=expected.st_dev,
+            inode=expected.st_ino,
+            mode=expected.st_mode,
+        ),
+    )
+    _, result_issues = oracle_boot._monitor_result_issues(outcome, 10)
+    assert any(
+        kind in issue and relative_path.as_posix() in issue
+        for issue in result_issues
+    )
+    assert "boot monitor reported an unspecified error" not in result_issues
+
+
+@pytest.mark.parametrize("mutation", ["removed", "replaced"])
+def test_observed_failure_identity_survives_process_cleanup_mutation(
+    mutation: str,
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    relative = Path("preloader_cleanup.log")
+    path = game / relative
+    path.write_bytes(b"stable failure evidence\n")
+    first = path.lstat()
+
+    class CleanupMutatingProcess:
+        mutated = False
+
+        def poll(self):
+            if not self.mutated:
+                self.mutated = True
+                if mutation == "removed":
+                    path.unlink()
+                else:
+                    replacement = game / "replacement.log"
+                    replacement.write_bytes(b"replacement identity\n")
+                    os.replace(replacement, path)
+            return 0
+
+    outcome = oracle_boot._wait_for_markers(
+        CleanupMutatingProcess(),
+        game,
+        (),
+        0,
+    )
+
+    assert outcome.state == "error"
+    assert outcome.observed_failures == (
+        oracle_boot._ObservedFailureLog(
+            relative_path=relative,
+            kind="preloader",
+            device=first.st_dev,
+            inode=first.st_ino,
+            mode=first.st_mode,
+        ),
+    )
+    if mutation == "removed":
+        assert not path.exists()
+    else:
+        assert path.stat().st_ino != first.st_ino
+        assert (
+            "observed failure log identity changed during monitoring: "
+            "preloader_cleanup.log"
+        ) in outcome.issues
+
+
+def test_observed_failure_deadline_poll_identity_change_retains_first(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    relative = Path("preloader_deadline.log")
+    path = game / relative
+    path.write_bytes(b"unstable initial payload\n")
+    original_open = os.open
+    original_read = os.read
+    target_descriptor = -1
+    first_stable: os.stat_result | None = None
+
+    def track_open(open_path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal target_descriptor
+        descriptor = original_open(
+            open_path,
+            flags,
+            mode,
+            dir_fd=dir_fd,
+        )
+        if dir_fd is not None and open_path == path.name:
+            target_descriptor = descriptor
+        return descriptor
+
+    def replace_during_initial_read(descriptor: int, count: int):
+        nonlocal first_stable
+        chunk = original_read(descriptor, count)
+        if (
+            descriptor == target_descriptor
+            and chunk
+            and first_stable is None
+        ):
+            replacement = game / "deadline-first.log"
+            replacement.write_bytes(b"first stable identity\n")
+            os.replace(replacement, path)
+            first_stable = path.lstat()
+        return chunk
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "os",
+        _ModuleProxy(
+            os,
+            open=track_open,
+            read=replace_during_initial_read,
+        ),
+        raising=False,
+    )
+
+    class DeadlineMutatingProcess:
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls == 2:
+                replacement = game / "deadline-second.log"
+                replacement.write_bytes(b"second stable identity\n")
+                os.replace(replacement, path)
+            return None
+
+    outcome = oracle_boot._wait_for_markers(
+        DeadlineMutatingProcess(),
+        game,
+        (),
+        0,
+    )
+
+    assert first_stable is not None
+    assert path.stat().st_ino != first_stable.st_ino
+    assert outcome.state == "error"
+    assert outcome.observed_failures == (
+        oracle_boot._ObservedFailureLog(
+            relative_path=relative,
+            kind="preloader",
+            device=first_stable.st_dev,
+            inode=first_stable.st_ino,
+            mode=first_stable.st_mode,
+        ),
+    )
+    assert (
+        "observed failure log identity changed during monitoring: "
+        "preloader_deadline.log"
+    ) in outcome.issues
+
+
+def test_observed_failure_unsafe_entries_are_recorded_without_opening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    bepinex = game / "BepInEx"
+    bepinex.mkdir(parents=True)
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(b"outside must not be opened\n")
+    symlink_log = game / "preloader_link.log"
+    symlink_log.symlink_to(outside)
+    fifo_log = bepinex / "LogOutput.log.2"
+    os.mkfifo(fifo_log, 0o600)
+    special_log = game / "preloader_directory.log"
+    special_log.mkdir()
+    unsafe = (fifo_log, symlink_log, special_log)
+    expected = {
+        path.relative_to(game): path.lstat() for path in unsafe
+    }
+    original_open = os.open
+
+    def forbid_unsafe_open(path, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is not None and path in {item.name for item in unsafe}:
+            raise AssertionError("unsafe monitored entry was opened")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "os",
+        _ModuleProxy(os, open=forbid_unsafe_open),
+        raising=False,
+    )
+    outcome = oracle_boot._wait_for_markers(
+        SimpleNamespace(poll=lambda: None),
+        game,
+        (),
+        0,
+    )
+
+    assert outcome.state == "error"
+    assert outcome.errors == ()
+    assert tuple(item.relative_path for item in outcome.observed_failures) == (
+        Path("BepInEx/LogOutput.log.2"),
+        Path("preloader_directory.log"),
+        Path("preloader_link.log"),
+    )
+    for record in outcome.observed_failures:
+        observed = expected[record.relative_path]
+        assert (record.device, record.inode, record.mode) == (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_mode,
+        )
+        assert any(
+            record.kind in issue
+            and oracle_boot._file_type(record.mode) in issue
+            and record.relative_path.as_posix() in issue
+            for issue in outcome.issues
+        )
+    assert outside.read_bytes() == b"outside must not be opened\n"
+
+
+def test_observed_failure_unsafe_canonical_is_not_family_evidence(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(_AUTHENTIC_CANONICAL_BOOT_PAYLOAD)
+    canonical.symlink_to(outside)
+
+    outcome = oracle_boot._wait_for_markers(
+        SimpleNamespace(poll=lambda: None),
+        game,
+        (),
+        10,
+    )
+
+    assert outcome.state == "error"
+    assert outcome.markers == ()
+    assert outcome.errors == ()
+    assert outcome.observed_failures == ()
+    assert any(
+        "canonical" in issue
+        and "symlink" in issue
+        and "BepInEx/LogOutput.log" in issue
+        for issue in outcome.issues
+    )
+    assert outside.read_bytes() == _AUTHENTIC_CANONICAL_BOOT_PAYLOAD
+
+
+def test_observed_failure_unsafe_identity_must_remain_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(b"outside\n")
+    path = game / "preloader_unstable.log"
+    path.symlink_to(outside)
+    original_scan = oracle_boot._scan_preloader_logs
+    mutation_reached = False
+
+    def scan_then_replace(game_root: Path):
+        nonlocal mutation_reached
+        scan = original_scan(game_root)
+        path.unlink()
+        os.mkfifo(path, 0o600)
+        mutation_reached = True
+        return scan
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_scan_preloader_logs",
+        scan_then_replace,
+    )
+
+    with pytest.raises(oracle_boot._TransientLogChange):
+        oracle_boot._observe_boot_logs(game, ())
+
+    assert mutation_reached
+    assert stat.S_ISFIFO(path.lstat().st_mode)
+    assert outside.read_bytes() == b"outside\n"
+
+
+def test_observed_failure_baseline_hash_growth_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    path = game / "preloader_growing.log"
+    path.write_bytes(b"old")
+    scan = oracle_boot._scan_preloader_logs(game)
+    original_open = os.open
+    original_read = os.read
+    target_descriptor = -1
+    growth_injected = False
+
+    def track_open(open_path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal target_descriptor
+        descriptor = original_open(
+            open_path,
+            flags,
+            mode,
+            dir_fd=dir_fd,
+        )
+        if dir_fd is not None and open_path == path.name:
+            target_descriptor = descriptor
+        return descriptor
+
+    def grow_after_first_read(descriptor: int, count: int):
+        nonlocal growth_injected
+        chunk = original_read(descriptor, count)
+        if descriptor == target_descriptor and chunk and not growth_injected:
+            with path.open("ab") as stream:
+                stream.write(b"growth beyond the bound")
+            growth_injected = True
+        return chunk
+
+    monkeypatch.setattr(oracle_boot, "_MAX_MONITOR_LOG_BYTES", 4)
+    monkeypatch.setattr(
+        oracle_boot,
+        "os",
+        _ModuleProxy(
+            os,
+            open=track_open,
+            read=grow_after_first_read,
+        ),
+        raising=False,
+    )
+    try:
+        with pytest.raises(
+            oracle_boot.BootProbeError,
+            match="monitored boot log exceeds byte limit",
+        ):
+            oracle_boot._fingerprint_scanned(scan.entries[0])
+    finally:
+        scan.close()
+
+    assert growth_injected
+
+
+def test_observed_failure_transient_regular_read_is_retried_not_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    path = game / "preloader_transient.log"
+    path.write_bytes(b"unstable failure payload\n")
+    original_open = os.open
+    original_read = os.read
+    target_descriptor = -1
+    removed = False
+
+    def track_open(open_path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal target_descriptor
+        descriptor = original_open(
+            open_path,
+            flags,
+            mode,
+            dir_fd=dir_fd,
+        )
+        if dir_fd is not None and open_path == path.name:
+            target_descriptor = descriptor
+        return descriptor
+
+    def remove_during_read(descriptor: int, count: int):
+        nonlocal removed
+        chunk = original_read(descriptor, count)
+        if descriptor == target_descriptor and not removed:
+            path.unlink()
+            removed = True
+        return chunk
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "os",
+        _ModuleProxy(os, open=track_open, read=remove_during_read),
+        raising=False,
+    )
+
+    class ExitAfterRetry:
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls == 1 else 0
+
+    outcome = oracle_boot._wait_for_markers(
+        ExitAfterRetry(),
+        game,
+        (),
+        10,
+    )
+
+    assert removed
+    assert outcome.state == "early_exit"
+    assert outcome.errors == ()
+    assert outcome.issues == ()
+    assert outcome.observed_failures == ()
+
+
+@pytest.mark.parametrize(
+    "unsafe_kind",
+    [
+        "matching_symlink",
+        "matching_fifo",
+        "canonical_symlink",
+        "canonical_fifo",
+        "fallback_symlink",
+        "fallback_fifo",
+        "root_symlink",
+        "symlink_parent",
+    ],
+)
+def test_fingerprint_rejects_unsafe_monitored_or_special_paths_without_hashing(
     unsafe_kind: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1458,6 +2696,22 @@ def test_fingerprint_rejects_unsafe_or_special_paths_without_hashing(
         special.symlink_to(outside)
     elif unsafe_kind == "matching_fifo":
         special = game / "preloader_pipe.log"
+        os.mkfifo(special, 0o600)
+    elif unsafe_kind == "canonical_symlink":
+        special = game / "BepInEx/LogOutput.log"
+        special.parent.mkdir()
+        special.symlink_to(outside)
+    elif unsafe_kind == "canonical_fifo":
+        special = game / "BepInEx/LogOutput.log"
+        special.parent.mkdir()
+        os.mkfifo(special, 0o600)
+    elif unsafe_kind == "fallback_symlink":
+        special = game / "BepInEx/LogOutput.log.1"
+        special.parent.mkdir()
+        special.symlink_to(outside)
+    elif unsafe_kind == "fallback_fifo":
+        special = game / "BepInEx/LogOutput.log.1"
+        special.parent.mkdir()
         os.mkfifo(special, 0o600)
     elif unsafe_kind == "root_symlink":
         requested_root = tmp_path / "game-link"
@@ -1486,6 +2740,878 @@ def test_fingerprint_rejects_unsafe_or_special_paths_without_hashing(
     assert outside.read_bytes() == b"outside must remain unread"
     if special is not None:
         assert os.path.lexists(special)
+
+
+def test_fingerprint_logs_validate_baseline_accepts_crafted_canonical_log_fingerprint(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    (game / "BepInEx").mkdir(parents=True)
+    canonical = game / "BepInEx/LogOutput.log"
+    fingerprint = oracle_boot.LogFingerprint(
+        path=canonical,
+        file_type="regular",
+        inode=1,
+        size=2,
+        mtime_ns=3,
+        sha256="a" * 64,
+    )
+
+    assert oracle_boot._validate_baseline((fingerprint,), game) == {
+        canonical: fingerprint
+    }
+
+
+def _validated_boot_log_contract(
+    game: Path,
+) -> oracle_boot._ValidatedBootLogContract:
+    config = game / "BepInEx/config/BepInEx.cfg"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_bytes(BEPINEX_DISK_CONFIG)
+    guard = oracle_boot._open_bepinex_disk_logging_guard(game)
+    return oracle_boot._verify_and_close_bepinex_disk_logging_guard(guard)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "state", "expected_transfer", "expected_issue"),
+    [
+        (
+            Path("BepInEx/LogOutput.log"),
+            "new",
+            "move",
+            None,
+        ),
+        (
+            Path("BepInEx/LogOutput.log"),
+            "changed",
+            "copy",
+            None,
+        ),
+        (
+            Path("BepInEx/LogOutput.log"),
+            "unchanged",
+            None,
+            "current canonical boot log is missing or unchanged",
+        ),
+        (
+            Path("preloader_family.log"),
+            "new",
+            "move",
+            "observed preloader failure log: preloader_family.log",
+        ),
+        (
+            Path("preloader_family.log"),
+            "changed",
+            "copy",
+            "observed preloader failure log: preloader_family.log",
+        ),
+        (
+            Path("preloader_family.log"),
+            "unchanged",
+            None,
+            None,
+        ),
+        (
+            Path("BepInEx/LogOutput.log.1"),
+            "new",
+            "move",
+            "observed fallback failure log: BepInEx/LogOutput.log.1",
+        ),
+        (
+            Path("BepInEx/LogOutput.log.1"),
+            "changed",
+            "copy",
+            "observed fallback failure log: BepInEx/LogOutput.log.1",
+        ),
+        (
+            Path("BepInEx/LogOutput.log.1"),
+            "unchanged",
+            None,
+            None,
+        ),
+    ],
+    ids=lambda value: value.as_posix() if isinstance(value, Path) else value,
+)
+def test_canonical_log_collection_applies_family_specific_transfer_policy(
+    relative_path: Path,
+    state: str,
+    expected_transfer: str | None,
+    expected_issue: str | None,
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    contract = _validated_boot_log_contract(game)
+    source = game / relative_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    if state != "new":
+        source.write_bytes(b"baseline\n")
+    before = fingerprint_preloader_logs(game)
+    final_payload = (
+        _AUTHENTIC_CANONICAL_BOOT_PAYLOAD
+        if relative_path == Path("BepInEx/LogOutput.log")
+        else b"family failure bytes\n"
+    )
+    if state == "new":
+        source.write_bytes(final_payload)
+    elif state == "changed":
+        source.write_bytes(final_payload)
+    expected_inventory = oracle_boot._capture_boot_log_inventory(game)
+
+    retained = oracle_boot._collect_boot_evidence_retained(
+        before,
+        game,
+        tmp_path / "evidence",
+        expected_inventory=expected_inventory,
+        run_contract=contract,
+    )
+    try:
+        expected_evidence = retained.public.evidence_dir / relative_path
+        assert retained.public.moved_logs == (
+            (expected_evidence,) if expected_transfer == "move" else ()
+        )
+        assert retained.public.copied_logs == (
+            (expected_evidence,) if expected_transfer == "copy" else ()
+        )
+        if expected_transfer is None:
+            assert source.read_bytes() == b"baseline\n"
+            assert not expected_evidence.exists()
+        else:
+            assert expected_evidence.read_bytes() == final_payload
+            assert source.exists() is (expected_transfer == "copy")
+        expected_issues = (
+            [] if expected_issue is None else [expected_issue]
+        )
+        if (
+            state == "changed"
+            and relative_path != Path("BepInEx/LogOutput.log")
+        ):
+            expected_issues.append(
+                f"pre-existing monitored boot log changed: "
+                f"{source.resolve()}"
+            )
+        if relative_path != Path("BepInEx/LogOutput.log"):
+            expected_issues.append(
+                "current canonical boot log is missing or unchanged"
+            )
+        assert retained.public.issues == tuple(expected_issues)
+        if relative_path == Path("BepInEx/LogOutput.log"):
+            assert not any(
+                "pre-existing preloader log changed" in issue
+                or "replacement" in issue
+                for issue in retained.public.issues
+            )
+    finally:
+        retained.close()
+
+
+def test_canonical_log_collection_public_helper_remains_conservative(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(b"baseline canonical\n")
+    before = fingerprint_preloader_logs(game)
+    canonical.write_bytes(_AUTHENTIC_CANONICAL_BOOT_PAYLOAD)
+
+    observed = collect_boot_evidence(
+        before,
+        game,
+        tmp_path / "evidence",
+    )
+
+    assert observed.moved_logs == ()
+    assert observed.copied_logs == (
+        observed.evidence_dir / "BepInEx/LogOutput.log",
+    )
+    assert observed.issues == (
+        f"pre-existing monitored boot log changed: {canonical.resolve()}",
+    )
+    assert not any(
+        "current canonical" in issue for issue in observed.issues
+    )
+
+
+def test_evidence_inventory_records_unsafe_families_without_opening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(_AUTHENTIC_CANONICAL_BOOT_PAYLOAD)
+    fallback_fifo = game / "BepInEx/LogOutput.log.1"
+    os.mkfifo(fallback_fifo, 0o600)
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(b"outside must not be read")
+    preloader_link = game / "preloader_link.log"
+    preloader_link.symlink_to(outside)
+    expected_stats = {
+        path.relative_to(game): path.stat(follow_symlinks=False)
+        for path in (canonical, fallback_fifo, preloader_link)
+    }
+    original_open = os.open
+    opened_leaf_names: list[str] = []
+
+    def guarded_open(path, flags, *args, **kwargs):
+        name = os.fspath(path)
+        if name in {fallback_fifo.name, preloader_link.name}:
+            raise AssertionError("unsafe inventory leaf was opened")
+        if name == canonical.name:
+            opened_leaf_names.append(name)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "os",
+        _ModuleProxy(os, open=guarded_open),
+        raising=False,
+    )
+
+    inventory = oracle_boot._capture_boot_log_inventory(game)
+
+    assert tuple(entry.relative_path for entry in inventory.entries) == (
+        Path("BepInEx/LogOutput.log"),
+        Path("BepInEx/LogOutput.log.1"),
+        Path("preloader_link.log"),
+    )
+    assert tuple(entry.kind for entry in inventory.entries) == (
+        "canonical",
+        "fallback",
+        "preloader",
+    )
+    assert tuple(entry.file_type for entry in inventory.entries) == (
+        "regular",
+        "fifo",
+        "symlink",
+    )
+    assert inventory.entries[0].fingerprint is not None
+    assert inventory.entries[1].fingerprint is None
+    assert inventory.entries[2].fingerprint is None
+    for entry in inventory.entries:
+        observed = expected_stats[entry.relative_path]
+        assert entry.path == game.resolve() / entry.relative_path
+        assert entry.device == observed.st_dev
+        assert entry.inode == observed.st_ino
+        assert entry.mode == observed.st_mode
+        assert entry.size == observed.st_size
+        assert entry.mtime_ns == observed.st_mtime_ns
+    assert inventory.regular_fingerprints == (
+        inventory.entries[0].fingerprint,
+    )
+    assert opened_leaf_names == [canonical.name]
+    assert outside.read_bytes() == b"outside must not be read"
+
+
+def test_recursive_log_scan_close_attempts_every_handle_after_inventory_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    log = game / "nested/deep/preloader_recursive.log"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"recursive inventory")
+    original_scan = oracle_boot._scan_preloader_logs
+    original_close = oracle_boot._DirectoryHandle.close
+    captured_handles: tuple[oracle_boot._DirectoryHandle, ...] = ()
+    close_calls: list[Path] = []
+
+    class FirstRecursiveCloseError(OSError):
+        pass
+
+    class LaterRecursiveCloseError(OSError):
+        pass
+
+    first_error = FirstRecursiveCloseError("deep handle close failed")
+    later_error = LaterRecursiveCloseError("nested handle close failed")
+
+    def capture_scan(*args, **kwargs):
+        nonlocal captured_handles
+        scan = original_scan(*args, **kwargs)
+        captured_handles = scan.handles
+        return scan
+
+    def close_then_fail(handle) -> None:
+        relative = handle.path.relative_to(game.resolve())
+        close_calls.append(relative)
+        original_close(handle)
+        if relative == Path("nested/deep"):
+            raise first_error
+        if relative == Path("nested"):
+            raise later_error
+
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                oracle_boot,
+                "_scan_preloader_logs",
+                capture_scan,
+            )
+            scoped.setattr(
+                oracle_boot._DirectoryHandle,
+                "close",
+                close_then_fail,
+            )
+
+            with pytest.raises(FirstRecursiveCloseError) as raised:
+                oracle_boot._capture_boot_log_inventory(game)
+
+            assert raised.value is first_error
+            assert close_calls == [
+                Path("nested/deep"),
+                Path("nested"),
+                Path("."),
+            ]
+            assert all(handle.fd == -1 for handle in captured_handles)
+            assert any(
+                "log scan handle close also failed" in note
+                and "nested handle close failed" in note
+                for note in getattr(first_error, "__notes__", ())
+            )
+    finally:
+        for handle in reversed(captured_handles):
+            if handle.fd >= 0:
+                original_close(handle)
+
+
+def test_recursive_log_scan_close_attaches_all_failures_to_inventory_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    log = game / "nested/deep/preloader_recursive.log"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"recursive inventory")
+    original_scan = oracle_boot._scan_preloader_logs
+    original_close = oracle_boot._DirectoryHandle.close
+    captured_handles: tuple[oracle_boot._DirectoryHandle, ...] = ()
+    close_calls: list[Path] = []
+
+    class PrimaryInventoryError(RuntimeError):
+        pass
+
+    class RecursiveCloseError(OSError):
+        pass
+
+    primary_error = PrimaryInventoryError("inventory fingerprint failed")
+
+    def capture_scan(*args, **kwargs):
+        nonlocal captured_handles
+        scan = original_scan(*args, **kwargs)
+        captured_handles = scan.handles
+        return scan
+
+    def fail_inventory(_entry):
+        raise primary_error
+
+    def close_then_fail(handle) -> None:
+        relative = handle.path.relative_to(game.resolve())
+        close_calls.append(relative)
+        original_close(handle)
+        if relative in {Path("nested/deep"), Path("nested")}:
+            raise RecursiveCloseError(
+                f"{relative.as_posix()} handle close failed"
+            )
+
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                oracle_boot,
+                "_scan_preloader_logs",
+                capture_scan,
+            )
+            scoped.setattr(
+                oracle_boot,
+                "_fingerprint_scanned",
+                fail_inventory,
+            )
+            scoped.setattr(
+                oracle_boot._DirectoryHandle,
+                "close",
+                close_then_fail,
+            )
+
+            with pytest.raises(PrimaryInventoryError) as raised:
+                oracle_boot._capture_boot_log_inventory(game)
+
+            assert raised.value is primary_error
+            assert close_calls == [
+                Path("nested/deep"),
+                Path("nested"),
+                Path("."),
+            ]
+            assert all(handle.fd == -1 for handle in captured_handles)
+            notes = getattr(primary_error, "__notes__", ())
+            assert any(
+                "log scan handle close also failed" in note
+                and "nested/deep handle close failed" in note
+                for note in notes
+            )
+            assert any(
+                "log scan handle close also failed" in note
+                and "nested handle close failed" in note
+                for note in notes
+            )
+    finally:
+        for handle in reversed(captured_handles):
+            if handle.fd >= 0:
+                original_close(handle)
+
+
+def test_evidence_inventory_complete_comparison_precedes_transfer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    movable = game / "preloader_new.log"
+    movable.write_bytes(b"new")
+    unsafe = game / "preloader_unsafe.log"
+    os.mkfifo(unsafe, 0o600)
+    expected = oracle_boot._capture_boot_log_inventory(game)
+    original_allocate = oracle_boot._allocate_evidence_directory
+    transfer_calls: list[Path] = []
+
+    def allocate_then_replace_unsafe(*args, **kwargs):
+        result = original_allocate(*args, **kwargs)
+        unsafe.unlink()
+        unsafe.symlink_to(tmp_path / "outside")
+        return result
+
+    def forbidden_transfer(entry, *_args, **_kwargs):
+        transfer_calls.append(entry.path)
+        raise AssertionError("transfer preceded complete inventory check")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_allocate_evidence_directory",
+        allocate_then_replace_unsafe,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_move_regular_exclusive",
+        forbidden_transfer,
+    )
+
+    with pytest.raises(
+        oracle_boot.BootProbeError,
+        match="post-shutdown monitored boot log inventory changed",
+    ):
+        oracle_boot._collect_boot_evidence_retained(
+            (),
+            game,
+            tmp_path / "evidence",
+            expected_inventory=expected,
+        )
+
+    assert transfer_calls == []
+
+
+def _collect_retained_boot_logs(
+    tmp_path: Path,
+    payloads: dict[Path, bytes],
+) -> oracle_boot._RetainedBootEvidence:
+    game = tmp_path / "game"
+    game.mkdir()
+    for relative_path, payload in payloads.items():
+        path = game / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    expected = oracle_boot._capture_boot_log_inventory(game)
+    return oracle_boot._collect_boot_evidence_retained(
+        (),
+        game,
+        tmp_path / "evidence",
+        expected_inventory=expected,
+    )
+
+
+def test_canonical_retained_decision_accepts_authentic_payload(
+    tmp_path: Path,
+):
+    retained = _collect_retained_boot_logs(
+        tmp_path,
+        {Path("BepInEx/LogOutput.log"): _AUTHENTIC_CANONICAL_BOOT_PAYLOAD},
+    )
+    try:
+        assert retained.decision is not None
+        assert retained.decision.markers == REQUIRED_MARKERS
+        assert retained.decision.errors == ()
+    finally:
+        retained.close()
+
+
+def test_canonical_retained_decision_never_merges_failure_payloads(
+    tmp_path: Path,
+):
+    retained = _collect_retained_boot_logs(
+        tmp_path,
+        {
+            Path("BepInEx/LogOutput.log"): b"BepInEx 5.4.23.5\n",
+            Path("preloader_split.log"): (
+                b"Detected Unity version: v2018.4.25f1\n"
+            ),
+            Path("BepInEx/LogOutput.log.1"): (
+                b"SSR oracle boot probe loaded\n"
+            ),
+        },
+    )
+    try:
+        assert retained.decision is not None
+        assert retained.decision.markers == (REQUIRED_MARKERS[0],)
+        assert retained.decision.errors == ()
+    finally:
+        retained.close()
+
+
+def test_canonical_retained_decision_uses_final_shutdown_bytes(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    canonical = game / "BepInEx/LogOutput.log"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(_AUTHENTIC_CANONICAL_BOOT_PAYLOAD)
+    before = fingerprint_preloader_logs(game)
+    with canonical.open("ab") as stream:
+        stream.write(b"DllNotFoundException: shutdown failure\n")
+    expected = oracle_boot._capture_boot_log_inventory(game)
+    retained = oracle_boot._collect_boot_evidence_retained(
+        before,
+        game,
+        tmp_path / "evidence",
+        expected_inventory=expected,
+        run_contract=_validated_boot_log_contract(game),
+    )
+    try:
+        assert retained.decision is not None
+        assert retained.decision.markers == REQUIRED_MARKERS
+        assert retained.decision.errors == ("DllNotFoundException",)
+    finally:
+        retained.close()
+
+
+def test_canonical_retained_decision_rejects_marker_bearing_fallback(
+    tmp_path: Path,
+):
+    retained = _collect_retained_boot_logs(
+        tmp_path,
+        {
+            Path("BepInEx/LogOutput.log.1"): (
+                _AUTHENTIC_CANONICAL_BOOT_PAYLOAD
+            )
+        },
+    )
+    try:
+        assert retained.decision is not None
+        assert retained.decision.markers == ()
+        assert retained.public.issues == (
+            "observed fallback failure log: BepInEx/LogOutput.log.1",
+        )
+    finally:
+        retained.close()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"BepInEx 5.4.23.50\n",
+        b"Detected Unity version: v2018.4.25f10\n",
+    ],
+    ids=("bepinex", "unity"),
+)
+def test_canonical_retained_decision_rejects_extended_versions(
+    payload: bytes,
+    tmp_path: Path,
+):
+    retained = _collect_retained_boot_logs(
+        tmp_path,
+        {Path("BepInEx/LogOutput.log"): payload},
+    )
+    try:
+        assert retained.decision is not None
+        assert retained.decision.markers == ()
+    finally:
+        retained.close()
+
+
+@pytest.mark.parametrize("phase", ["before-fsync", "during-fsync"])
+def test_canonical_retained_decision_rejects_descriptor_pinned_mutation(
+    phase: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    retained = _collect_retained_boot_logs(
+        tmp_path,
+        {Path("BepInEx/LogOutput.log"): _AUTHENTIC_CANONICAL_BOOT_PAYLOAD},
+    )
+    item = retained.files[0]
+    preserved = retained.public.evidence_dir / item.relative_path
+    original = preserved.read_bytes()
+    replacement = b"X" + original[1:]
+    assert replacement != original
+    assert len(replacement) == len(original)
+    mutation_injected = False
+
+    def inject_mutation() -> None:
+        nonlocal mutation_injected
+        before = preserved.stat(follow_symlinks=False)
+        preserved.write_bytes(replacement)
+        os.utime(
+            preserved,
+            ns=(before.st_atime_ns, before.st_mtime_ns),
+            follow_symlinks=False,
+        )
+        mutation_injected = True
+
+    original_fsync = os.fsync
+
+    def mutate_during_file_fsync(descriptor: int) -> None:
+        original_fsync(descriptor)
+        if descriptor == item.descriptor and not mutation_injected:
+            inject_mutation()
+
+    if phase == "before-fsync":
+        inject_mutation()
+    else:
+        monkeypatch.setattr(
+            oracle_boot,
+            "os",
+            _ModuleProxy(os, fsync=mutate_during_file_fsync),
+            raising=False,
+        )
+    try:
+        with pytest.raises(
+            oracle_boot.BootProbeError,
+            match="fingerprint changed",
+        ):
+            oracle_boot._verify_and_sync_retained_evidence(retained)
+        assert mutation_injected
+    finally:
+        retained.close()
+
+
+def test_canonical_retained_decision_rejects_impossible_path_kind(
+    tmp_path: Path,
+):
+    retained = _collect_retained_boot_logs(
+        tmp_path,
+        {Path("BepInEx/LogOutput.log"): _AUTHENTIC_CANONICAL_BOOT_PAYLOAD},
+    )
+    retained.files[0].relative_path = Path("unclassified.log")
+    try:
+        with pytest.raises(
+            oracle_boot.BootProbeError,
+            match="invalid retained boot log path",
+        ):
+            oracle_boot._capture_retained_evidence_decision(retained)
+    finally:
+        retained.close()
+
+
+def _observed_failure(relative_path: Path, path: Path, kind: str):
+    observed = path.stat(follow_symlinks=False)
+    return oracle_boot._ObservedFailureLog(
+        relative_path=relative_path,
+        kind=kind,
+        device=observed.st_dev,
+        inode=observed.st_ino,
+        mode=observed.st_mode,
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["removed", "replaced", "symlink", "fifo", "initially-unsafe"],
+)
+def test_observed_failure_preservation_reports_unpreservable_identity(
+    mutation: str,
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    relative = Path("preloader_observed.log")
+    source = game / relative
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(b"outside")
+    if mutation == "initially-unsafe":
+        os.mkfifo(source, 0o600)
+    else:
+        source.write_bytes(b"observed failure\n")
+    observed_failure = _observed_failure(relative, source, "preloader")
+    if mutation != "initially-unsafe":
+        source.unlink()
+        if mutation == "replaced":
+            source.write_bytes(b"replacement\n")
+        elif mutation == "symlink":
+            source.symlink_to(outside)
+        elif mutation == "fifo":
+            os.mkfifo(source, 0o600)
+    expected = oracle_boot._capture_boot_log_inventory(game)
+
+    retained = oracle_boot._collect_boot_evidence_retained(
+        (),
+        game,
+        tmp_path / "evidence",
+        expected_inventory=expected,
+        observed_failures=(observed_failure,),
+    )
+    try:
+        assert (
+            "observed failure log could not be preserved: "
+            "preloader_observed.log"
+        ) in retained.public.issues
+        if mutation == "replaced":
+            assert retained.public.moved_logs == (
+                retained.public.evidence_dir / relative,
+            )
+            assert retained.public.moved_logs[0].read_bytes() == (
+                b"replacement\n"
+            )
+        else:
+            assert retained.public.moved_logs == ()
+        assert outside.read_bytes() == b"outside"
+    finally:
+        retained.close()
+
+
+def test_observed_failure_preservation_accepts_same_inode_growth(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    relative = Path("BepInEx/LogOutput.log.1")
+    source = game / relative
+    source.parent.mkdir()
+    source.write_bytes(b"observed\n")
+    observed_failure = _observed_failure(relative, source, "fallback")
+    with source.open("ab") as stream:
+        stream.write(b"Preloader error: completed failure\n")
+    final_payload = source.read_bytes()
+    expected = oracle_boot._capture_boot_log_inventory(game)
+
+    retained = oracle_boot._collect_boot_evidence_retained(
+        (),
+        game,
+        tmp_path / "evidence",
+        expected_inventory=expected,
+        observed_failures=(observed_failure,),
+    )
+    try:
+        assert retained.public.moved_logs == (
+            retained.public.evidence_dir / relative,
+        )
+        assert retained.public.moved_logs[0].read_bytes() == final_payload
+        assert retained.decision is not None
+        assert retained.decision.errors == ("Preloader error",)
+        assert not any(
+            "could not be preserved" in issue
+            for issue in retained.public.issues
+        )
+    finally:
+        retained.close()
+
+
+def test_observed_failure_preservation_copies_baseline_restoration(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    relative = Path("preloader_restored.log")
+    source = game / relative
+    baseline_payload = b"baseline final bytes\n"
+    source.write_bytes(baseline_payload)
+    before = fingerprint_preloader_logs(game)
+    baseline_stat = source.stat(follow_symlinks=False)
+    source.write_bytes(b"observed live failure")
+    observed_failure = _observed_failure(relative, source, "preloader")
+    source.write_bytes(baseline_payload)
+    os.utime(
+        source,
+        ns=(baseline_stat.st_atime_ns, baseline_stat.st_mtime_ns),
+        follow_symlinks=False,
+    )
+    expected = oracle_boot._capture_boot_log_inventory(game)
+    assert expected.regular_fingerprints == before
+
+    retained = oracle_boot._collect_boot_evidence_retained(
+        before,
+        game,
+        tmp_path / "evidence",
+        expected_inventory=expected,
+        observed_failures=(observed_failure,),
+    )
+    try:
+        assert retained.public.moved_logs == ()
+        assert retained.public.copied_logs == (
+            retained.public.evidence_dir / relative,
+        )
+        assert retained.public.copied_logs[0].read_bytes() == baseline_payload
+        assert retained.public.issues == (
+            "observed preloader failure log: preloader_restored.log",
+        )
+    finally:
+        retained.close()
+
+
+@pytest.mark.parametrize(
+    "observed_failures",
+    [
+        (
+            oracle_boot._ObservedFailureLog(
+                relative_path=Path("../preloader_escape.log"),
+                kind="preloader",
+                device=1,
+                inode=2,
+                mode=stat.S_IFREG | 0o600,
+            ),
+        ),
+        (
+            oracle_boot._ObservedFailureLog(
+                relative_path=Path("BepInEx/LogOutput.log"),
+                kind="preloader",
+                device=1,
+                inode=2,
+                mode=stat.S_IFREG | 0o600,
+            ),
+        ),
+        (
+            oracle_boot._ObservedFailureLog(
+                relative_path=Path("preloader_duplicate.log"),
+                kind="preloader",
+                device=1,
+                inode=2,
+                mode=stat.S_IFREG | 0o600,
+            ),
+            oracle_boot._ObservedFailureLog(
+                relative_path=Path("preloader_duplicate.log"),
+                kind="preloader",
+                device=1,
+                inode=2,
+                mode=stat.S_IFREG | 0o600,
+            ),
+        ),
+    ],
+    ids=("not-normalized", "kind-mismatch", "duplicate-path"),
+)
+def test_observed_failure_preservation_validates_records_before_mutation(
+    observed_failures: tuple[oracle_boot._ObservedFailureLog, ...],
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    game.mkdir()
+    evidence = tmp_path / "evidence"
+
+    with pytest.raises(oracle_boot.BootProbeError):
+        oracle_boot._collect_boot_evidence_retained(
+            (),
+            game,
+            evidence,
+            expected_inventory=oracle_boot._capture_boot_log_inventory(game),
+            observed_failures=observed_failures,
+        )
+
+    assert not evidence.exists()
 
 
 def test_collect_preserves_relative_paths_and_rejects_adversarial_entries(
@@ -1640,7 +3766,7 @@ def test_collect_retained_evidence_keeps_exact_files_open_until_close(
     source.parent.mkdir()
     source.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
     source_payload = source.read_bytes()
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
 
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
@@ -1687,7 +3813,7 @@ def test_collect_retained_evidence_keeps_exact_files_open_until_close(
             ),
         )
         assert retained.decision == oracle_boot._EvidenceDecision(
-            markers=REQUIRED_MARKERS,
+            markers=(),
             errors=(),
             fingerprints=(item.fingerprint,),
         )
@@ -1708,7 +3834,7 @@ def test_read_retained_evidence_rejects_same_metadata_byte_substitution(
     log = game / "nested/preloader_probe.log"
     log.parent.mkdir()
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -1780,7 +3906,7 @@ def test_verify_retained_evidence_rejects_final_tree_or_byte_change(
     log = game / "nested/preloader_probe.log"
     log.parent.mkdir()
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -1825,7 +3951,7 @@ def test_verify_retained_evidence_rejects_replaced_public_root(
     log = game / "nested/preloader_probe.log"
     log.parent.mkdir()
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -1862,7 +3988,7 @@ def test_verify_retained_evidence_fsyncs_exact_tree_deepest_first(
     log = game / "nested/deep/preloader_probe.log"
     log.parent.mkdir(parents=True)
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -1917,7 +4043,7 @@ def test_verify_retained_evidence_rejects_transient_pre_fsync_decision(
     log = game / "nested/preloader_probe.log"
     log.parent.mkdir()
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -1975,7 +4101,7 @@ def test_verify_retained_evidence_post_fsync_recapture_exposes_mutation(
     log = game / "nested/preloader_probe.log"
     log.parent.mkdir()
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -2030,7 +4156,7 @@ def test_evidence_inventory_error_survives_scan_handle_close_failure(
     log = game / "nested/preloader_probe.log"
     log.parent.mkdir()
     log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -2094,7 +4220,7 @@ def test_collect_retained_evidence_closes_partial_transfer_ownership(
             "\n".join(REQUIRED_MARKERS),
             encoding="utf-8",
         )
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     original_allocate = oracle_boot._allocate_evidence_directory
     original_move = oracle_boot._move_regular_exclusive
     allocated_directory_fd = -1
@@ -2162,7 +4288,7 @@ def test_collect_retained_evidence_keeps_exact_copied_file_writable(
     before = oracle_boot._fingerprint_regular_preloader_logs(game)
     copied_payload = b"after allocation boundary"
     source.write_bytes(copied_payload)
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
 
     retained = oracle_boot._collect_boot_evidence_retained(
         before,
@@ -2207,7 +4333,7 @@ def test_collect_retained_inventory_check_precedes_every_transfer(
     game = tmp_path / "game"
     game.mkdir()
     (game / "preloader_expected.log").write_bytes(b"expected")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     original_scan = oracle_boot._scan_preloader_logs
     original_allocate = oracle_boot._allocate_evidence_directory
     events: list[str] = []
@@ -2275,7 +4401,7 @@ def test_collect_retained_closes_file_returned_before_registration(
         "\n".join(REQUIRED_MARKERS),
         encoding="utf-8",
     )
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     original_move = oracle_boot._move_regular_exclusive
     returned_descriptor = -1
 
@@ -2396,7 +4522,7 @@ def test_collect_retained_acquisition_boundary_interrupt_closes_ownership(
                 (),
                 game,
                 tmp_path / "evidence",
-                expected_inventory=(),
+                expected_inventory=oracle_boot._BootLogInventory(()),
             )
     finally:
         sys.settrace(previous_trace)
@@ -2989,7 +5115,7 @@ def test_collect_parent_acquisition_boundary_interrupt_closes_parent(
     else:
         before = ()
         source.write_bytes(b"new")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     acquired_descriptors: list[int] = []
     armed = False
     original_make_parents = oracle_boot._make_evidence_parents
@@ -4009,7 +6135,11 @@ def test_public_collect_signature_delegates_and_closes_retained(
     assert calls == [
         (
             ((), game, evidence),
-            {"expected_inventory": None},
+            {
+                "expected_inventory": None,
+                "run_contract": None,
+                "observed_failures": (),
+            },
         )
     ]
     assert verification_calls == [fake_retained]
@@ -4311,7 +6441,7 @@ def test_stage_probe_json_duplicates_retained_directory_handle(
     source = game / "nested/preloader_probe.log"
     source.parent.mkdir()
     source.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
-    expected = oracle_boot._fingerprint_regular_preloader_logs(game)
+    expected = oracle_boot._capture_boot_log_inventory(game)
     retained = oracle_boot._collect_boot_evidence_retained(
         (),
         game,
@@ -4873,6 +7003,409 @@ def _boot_snapshot(
     )
 
 
+def test_probe_reuses_authoritative_second_inventory_without_third_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    layout.canonical_log.write_bytes(b"stale canonical output\n")
+    expected_before = _independent_log_fingerprint(layout.canonical_log)
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+        log_relative="BepInEx/LogOutput.log",
+    )
+    original_fingerprint = oracle_boot.fingerprint_preloader_logs
+    original_wait = oracle_boot._wait_for_markers
+    original_collect = oracle_boot._collect_boot_evidence_retained
+    initial = original_fingerprint(layout.game)
+    preliminary = tuple([*initial])
+    authoritative = tuple([*initial])
+    assert preliminary == authoritative
+    assert preliminary is not authoritative
+    fingerprint_calls: list[Path] = []
+    wait_baselines: list[tuple[oracle_boot.LogFingerprint, ...]] = []
+    collect_baselines: list[tuple[oracle_boot.LogFingerprint, ...]] = []
+    missing_keyword = object()
+    collector_contract: object = missing_keyword
+    collector_observed: object = missing_keyword
+
+    def controlled_fingerprint(game_root: Path):
+        fingerprint_calls.append(game_root)
+        if len(fingerprint_calls) == 1:
+            return preliminary
+        if len(fingerprint_calls) == 2:
+            return authoritative
+        raise AssertionError("run_boot_probe recomputed a third baseline")
+
+    def capture_wait(process, game_root, before, timeout_seconds):
+        wait_baselines.append(before)
+        return original_wait(process, game_root, before, timeout_seconds)
+
+    def capture_collect(
+        before,
+        game_root,
+        evidence_root,
+        *,
+        expected_inventory,
+        run_contract=missing_keyword,
+        observed_failures=missing_keyword,
+    ):
+        nonlocal collector_contract, collector_observed
+        collect_baselines.append(before)
+        collector_contract = run_contract
+        collector_observed = observed_failures
+        return original_collect(
+            before,
+            game_root,
+            evidence_root,
+            expected_inventory=expected_inventory,
+            run_contract=(
+                None if run_contract is missing_keyword else run_contract
+            ),
+            observed_failures=(
+                ()
+                if observed_failures is missing_keyword
+                else observed_failures
+            ),
+        )
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "fingerprint_preloader_logs",
+        controlled_fingerprint,
+    )
+    monkeypatch.setattr(oracle_boot, "_wait_for_markers", capture_wait)
+    monkeypatch.setattr(
+        oracle_boot,
+        "_collect_boot_evidence_retained",
+        capture_collect,
+    )
+
+    result = run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    assert fingerprint_calls == [layout.game.resolve(), layout.game.resolve()]
+    assert wait_baselines == [authoritative]
+    assert wait_baselines[0] is authoritative
+    assert collect_baselines == [authoritative]
+    assert collect_baselines[0] is authoritative
+    assert isinstance(
+        collector_contract,
+        oracle_boot._ValidatedBootLogContract,
+    )
+    assert collector_observed == ()
+    assert result.success is True
+    payload = json.loads(
+        (result.evidence_dir / "probe.json").read_text(encoding="utf-8")
+    )
+    assert payload["before_logs"] == [expected_before]
+    assert result.copied_logs == (
+        result.evidence_dir / "BepInEx/LogOutput.log",
+    )
+    assert layout.canonical_log.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
+    )
+    _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_probe_accepts_tracked_authentic_new_canonical_output_end_to_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+    )
+
+    result = run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    preserved = result.evidence_dir / "BepInEx/LogOutput.log"
+    assert result.success is True
+    assert result.markers == REQUIRED_MARKERS
+    assert result.issues == ()
+    assert result.exit_code is None
+    assert result.moved_logs == (preserved,)
+    assert result.copied_logs == ()
+    assert preserved.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
+    )
+    assert not layout.canonical_log.exists()
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    payload = json.loads(
+        (result.evidence_dir / "probe.json").read_text(encoding="utf-8")
+    )
+    assert payload["schema_version"] == 1
+    assert payload["success"] is True
+    assert payload["markers"] == list(REQUIRED_MARKERS)
+    assert payload["before_logs"] == []
+    assert [entry["path"] for entry in payload["after_logs"]] == [
+        str(layout.canonical_log.resolve())
+    ]
+    _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_probe_overwrites_stale_canonical_output_and_preserves_installed_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    layout.canonical_log.write_bytes(b"stale canonical output\n")
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+        log_relative="BepInEx/LogOutput.log",
+    )
+
+    result = run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    preserved = result.evidence_dir / "BepInEx/LogOutput.log"
+    assert result.success is True
+    assert result.markers == REQUIRED_MARKERS
+    assert result.issues == ()
+    assert result.moved_logs == ()
+    assert result.copied_logs == (preserved,)
+    assert preserved.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
+    )
+    assert layout.canonical_log.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
+    )
+    assert not any(
+        "pre-existing monitored boot log changed" in issue
+        for issue in result.issues
+    )
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_probe_rejects_unchanged_stale_marker_bearing_canonical_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    layout.canonical_log.write_text(
+        _AUTHENTIC_CANONICAL_BOOT_TEXT,
+        encoding="utf-8",
+    )
+    launcher = _launcher(
+        tmp_path,
+        log_text="unmonitored launcher output\n",
+        log_relative="unmonitored-launcher.log",
+    )
+
+    result = run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        1,
+    )
+
+    assert result.success is False
+    assert result.markers == ()
+    assert result.moved_logs == ()
+    assert result.copied_logs == ()
+    assert "current canonical boot log is missing or unchanged" in (
+        result.issues
+    )
+    assert layout.canonical_log.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
+    )
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_probe_rejects_append_logging_with_stale_markers_before_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    layout.canonical_log.write_text(
+        _AUTHENTIC_CANONICAL_BOOT_TEXT,
+        encoding="utf-8",
+    )
+    append_config = BEPINEX_DISK_CONFIG.replace(
+        b"AppendLog = false",
+        b"AppendLog = true",
+    )
+    layout.bepinex_config.write_bytes(append_config)
+    layout.bepinex_config.chmod(0o640)
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+    )
+    launch_calls = 0
+
+    def forbidden_popen(*_args, **_kwargs):
+        nonlocal launch_calls
+        launch_calls += 1
+        raise AssertionError("AppendLog=true reached Popen")
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "subprocess",
+        _ModuleProxy(subprocess, Popen=forbidden_popen),
+        raising=False,
+    )
+
+    with pytest.raises(oracle_boot.BootProbeError) as raised:
+        run_boot_probe(
+            layout.game,
+            launcher,
+            layout.config,
+            layout.evidence,
+            2,
+        )
+
+    assert "AppendLog" in str(raised.value)
+    assert launch_calls == 0
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    assert layout.bepinex_config.read_bytes() == append_config
+    assert not layout.evidence.exists()
+    _assert_no_canonical_probe_json(tmp_path)
+
+
+def test_probe_deduplicates_live_and_retained_failure_family_issues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    relative_failure = "nested/preloader_failure.log"
+    launcher = _launcher(
+        tmp_path,
+        log_text="Preloader error: injected\n",
+        log_relative=relative_failure,
+        additional_logs=(
+            (
+                "BepInEx/LogOutput.log",
+                _AUTHENTIC_CANONICAL_BOOT_TEXT,
+            ),
+        ),
+    )
+
+    result = run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    structural_issue = (
+        "observed preloader failure log: nested/preloader_failure.log"
+    )
+    assert result.success is False
+    assert result.markers == REQUIRED_MARKERS
+    assert result.issues.count(structural_issue) == 1
+    assert "boot monitor error: Preloader error" in result.issues
+    assert "boot monitor reported an unspecified error" not in result.issues
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_probe_keeps_structural_failure_when_live_payload_disappears(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_probe_popen,
+):
+    layout = _probe_layout(tmp_path)
+    _patch_healthy_preflight(monkeypatch, layout)
+    failure = layout.game / "nested/preloader_disappearing.log"
+    launcher = _launcher(
+        tmp_path,
+        log_text="Preloader error: transient\n",
+        log_relative="nested/preloader_disappearing.log",
+        additional_logs=(
+            (
+                "BepInEx/LogOutput.log",
+                _AUTHENTIC_CANONICAL_BOOT_TEXT,
+            ),
+        ),
+    )
+    original_wait = oracle_boot._wait_for_markers
+
+    def remove_failure_after_monitoring(
+        process,
+        game_root,
+        before,
+        timeout_seconds,
+    ):
+        outcome = original_wait(
+            process,
+            game_root,
+            before,
+            timeout_seconds,
+        )
+        assert failure.is_file()
+        failure.unlink()
+        return outcome
+
+    monkeypatch.setattr(
+        oracle_boot,
+        "_wait_for_markers",
+        remove_failure_after_monitoring,
+    )
+
+    result = run_boot_probe(
+        layout.game,
+        launcher,
+        layout.config,
+        layout.evidence,
+        2,
+    )
+
+    assert result.success is False
+    assert result.markers == REQUIRED_MARKERS
+    assert (
+        "observed preloader failure log: nested/preloader_disappearing.log"
+        in result.issues
+    )
+    assert (
+        "observed failure log could not be preserved: "
+        "nested/preloader_disappearing.log"
+    ) in result.issues
+    assert not any("Preloader error" in issue for issue in result.issues)
+    assert "boot monitor reported an unspecified error" not in result.issues
+    assert layout.config.read_bytes() == ORIGINAL_CONFIG
+    assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
+    _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
 @pytest.mark.parametrize(
     "signature_kind",
     ["clean", "tahoe_original_order", "tahoe_reverse_order"],
@@ -4910,7 +7443,7 @@ def test_tahoe_code_signature_probe_accepts_order_only_delta_and_preserves_raw_e
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     lines = _tahoe_code_signature_lines(layout.app)
     before_signature = _tahoe_code_signature(
@@ -4992,7 +7525,7 @@ def test_tahoe_code_signature_preflight_rejects_every_unreviewed_result_before_l
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     lines = _tahoe_code_signature_lines(layout.app)
     exact = _tahoe_code_signature(layout.app)
@@ -5144,7 +7677,7 @@ def test_tahoe_code_signature_postflight_semantic_delta_fails_despite_all_marker
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     lines = _tahoe_code_signature_lines(layout.app)
     before_signature = _tahoe_code_signature(layout.app)
@@ -5221,7 +7754,7 @@ def test_probe_preflight_rejects_invalid_snapshot_without_launch(
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         exit_code=0,
     )
     snapshot_calls: list[Path] = []
@@ -5297,7 +7830,7 @@ def test_probe_postflight_mismatch_fails_despite_all_markers(
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     preflight = _boot_snapshot(layout, signature=pre_signature)
     post_kwargs: dict[str, object] = {"signature": post_signature}
@@ -5362,7 +7895,7 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     snapshot = _boot_snapshot(layout, signature=signature)
     snapshot_calls: list[Path] = []
@@ -5403,7 +7936,9 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
     [
         (
             "missing_bepinex",
-            "\n".join(REQUIRED_MARKERS[1:]),
+            "\n".join(
+                (AUTHENTIC_UNITY_LOG_LINE, REQUIRED_MARKERS[2])
+            ),
             None,
             REQUIRED_MARKERS[1:],
         ),
@@ -5415,7 +7950,9 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
         ),
         (
             "missing_oracle",
-            "\n".join(REQUIRED_MARKERS[:2]),
+            "\n".join(
+                (REQUIRED_MARKERS[0], AUTHENTIC_UNITY_LOG_LINE)
+            ),
             None,
             REQUIRED_MARKERS[:2],
         ),
@@ -5424,7 +7961,7 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
             "\n".join(
                 (
                     "BepInEx 5.4.23.4",
-                    REQUIRED_MARKERS[1],
+                    AUTHENTIC_UNITY_LOG_LINE,
                     REQUIRED_MARKERS[2],
                 )
             ),
@@ -5436,7 +7973,7 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
             "\n".join(
                 (
                     REQUIRED_MARKERS[0],
-                    "Unity v2018.4.26f1",
+                    "Detected Unity version: v2018.4.26f1",
                     REQUIRED_MARKERS[2],
                 )
             ),
@@ -5448,7 +7985,7 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
             "\n".join(
                 (
                     REQUIRED_MARKERS[0],
-                    REQUIRED_MARKERS[1],
+                    AUTHENTIC_UNITY_LOG_LINE,
                     "SSR oracle boot probe not loaded",
                 )
             ),
@@ -5457,13 +7994,27 @@ def test_probe_accepts_stable_reviewed_pre_and_post_snapshots(
         ),
         (
             "dll_not_found",
-            "\n".join((*REQUIRED_MARKERS, "DllNotFoundException: libc")),
+            "\n".join(
+                (
+                    REQUIRED_MARKERS[0],
+                    AUTHENTIC_UNITY_LOG_LINE,
+                    REQUIRED_MARKERS[2],
+                    "DllNotFoundException: libc",
+                )
+            ),
             None,
             REQUIRED_MARKERS,
         ),
         (
             "preloader_error",
-            "\n".join((*REQUIRED_MARKERS, "Preloader error: injected")),
+            "\n".join(
+                (
+                    REQUIRED_MARKERS[0],
+                    AUTHENTIC_UNITY_LOG_LINE,
+                    REQUIRED_MARKERS[2],
+                    "Preloader error: injected",
+                )
+            ),
             None,
             REQUIRED_MARKERS,
         ),
@@ -5521,7 +8072,7 @@ def test_probe_already_exited_launcher_preserves_all_marker_evidence(
         tmp_path,
         log_text="unused deterministic Popen double",
     )
-    log = layout.game / "nested/preloader_probe.log"
+    log = layout.canonical_log
     popen_calls: list[tuple[list[str], dict[str, object]]] = []
     signal_calls: list[tuple[int, int]] = []
     group_absence_probes = 0
@@ -5532,7 +8083,7 @@ def test_probe_already_exited_launcher_preserves_all_marker_evidence(
         layout.config.write_bytes(b"[Oracle]\nMode=mutated-before-exit\n")
         layout.config.chmod(0o600)
         log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
+        log.write_text(_AUTHENTIC_CANONICAL_BOOT_TEXT, encoding="utf-8")
         return _AlreadyExitedProcess(exit_code)
 
     def forbidden_getpgid(_pid: int) -> int:
@@ -5573,7 +8124,7 @@ def test_probe_already_exited_launcher_preserves_all_marker_evidence(
         1,
     )
 
-    expected_evidence_log = result.evidence_dir / "nested/preloader_probe.log"
+    expected_evidence_log = result.evidence_dir / "BepInEx/LogOutput.log"
     assert result.success is False
     assert result.markers == REQUIRED_MARKERS
     assert result.exit_code == exit_code
@@ -5585,8 +8136,8 @@ def test_probe_already_exited_launcher_preserves_all_marker_evidence(
     )
     assert result.moved_logs == (expected_evidence_log,)
     assert result.copied_logs == ()
-    assert expected_evidence_log.read_text(encoding="utf-8") == "\n".join(
-        REQUIRED_MARKERS
+    assert expected_evidence_log.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
     )
     assert layout.config.read_bytes() == ORIGINAL_CONFIG
     assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
@@ -5650,7 +8201,7 @@ def test_probe_exact_markers_are_ordered_deduplicated_and_group_terminated(
                 "noise",
                 REQUIRED_MARKERS[2],
                 REQUIRED_MARKERS[0],
-                REQUIRED_MARKERS[1],
+                AUTHENTIC_UNITY_LOG_LINE,
                 REQUIRED_MARKERS[0],
             )
         ),
@@ -5682,7 +8233,7 @@ def test_probe_rechecks_shutdown_log_and_rejects_term_appended_error(
     late_error = "\nDllNotFoundException: injected during shutdown\n"
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         term_append_text=late_error,
     )
 
@@ -5694,7 +8245,7 @@ def test_probe_rechecks_shutdown_log_and_rejects_term_appended_error(
         2,
     )
 
-    preserved = result.evidence_dir / "nested/preloader_probe.log"
+    preserved = result.evidence_dir / "BepInEx/LogOutput.log"
     assert result.success is False
     assert result.exit_code is None
     assert any(
@@ -5719,14 +8270,14 @@ def test_probe_grades_late_error_from_exact_preserved_bytes(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
-    original_fingerprint = oracle_boot._fingerprint_regular_preloader_logs
+    original_inventory = oracle_boot._capture_boot_log_inventory
     injected = False
 
-    def append_error_then_fingerprint(game):
+    def append_error_then_inventory(game):
         nonlocal injected
-        log = game / "nested/preloader_probe.log"
+        log = game / "BepInEx/LogOutput.log"
         if log.exists() and not injected:
             log.write_text(
                 log.read_text(encoding="utf-8")
@@ -5734,12 +8285,12 @@ def test_probe_grades_late_error_from_exact_preserved_bytes(
                 encoding="utf-8",
             )
             injected = True
-        return original_fingerprint(game)
+        return original_inventory(game)
 
     monkeypatch.setattr(
         oracle_boot,
-        "_fingerprint_regular_preloader_logs",
-        append_error_then_fingerprint,
+        "_capture_boot_log_inventory",
+        append_error_then_inventory,
     )
 
     result = run_boot_probe(
@@ -5753,7 +8304,7 @@ def test_probe_grades_late_error_from_exact_preserved_bytes(
     assert injected
     assert result.success is False
     assert any("DllNotFoundException" in issue for issue in result.issues)
-    preserved = result.evidence_dir / "nested/preloader_probe.log"
+    preserved = result.evidence_dir / "BepInEx/LogOutput.log"
     assert "after stale scan" in preserved.read_text(encoding="utf-8")
 
 
@@ -5767,7 +8318,7 @@ def test_probe_reports_natural_exit_between_marker_scan_and_cleanup(
         tmp_path,
         log_text="unused deterministic Popen double",
     )
-    log = layout.game / "nested/preloader_probe.log"
+    log = layout.canonical_log
     exit_code = 23
     signal_calls: list[tuple[int, int]] = []
 
@@ -5789,8 +8340,8 @@ def test_probe_reports_natural_exit_between_marker_scan_and_cleanup(
     process = ExitAfterMarkerScan()
 
     def fake_popen(*_args, **_kwargs):
-        log.parent.mkdir(parents=True)
-        log.write_text("\n".join(REQUIRED_MARKERS), encoding="utf-8")
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(_AUTHENTIC_CANONICAL_BOOT_TEXT, encoding="utf-8")
         return process
 
     def absent_group(pgid: int, sent_signal: int) -> None:
@@ -5846,7 +8397,7 @@ def test_probe_reports_natural_exit_between_marker_scan_and_cleanup(
             "\n".join(
                 (
                     "BepInEx 5.4.23.50",
-                    REQUIRED_MARKERS[1],
+                    "Detected Unity version: v2018.4.25f1",
                     REQUIRED_MARKERS[2],
                 )
             ),
@@ -5857,7 +8408,7 @@ def test_probe_reports_natural_exit_between_marker_scan_and_cleanup(
             "\n".join(
                 (
                     REQUIRED_MARKERS[0],
-                    "Unity v2018.4.25f10",
+                    "Detected Unity version: v2018.4.25f10",
                     REQUIRED_MARKERS[2],
                 )
             ),
@@ -5906,8 +8457,8 @@ def test_probe_accepts_exact_version_tokens_inside_realistic_log_framing(
         log_text="\n".join(
             (
                 "[Message:   BepInEx] BepInEx 5.4.23.5 - SSR",
-                "[Info   : Unity] Initialize engine version: "
-                "Unity v2018.4.25f1 (8c3c7d0f5c5c)",
+                "[Info   :   BepInEx] Detected Unity version: "
+                "v2018.4.25f1",
                 "[Info   : SsrOracle] SSR oracle boot probe loaded",
             )
         ),
@@ -5928,6 +8479,27 @@ def test_probe_accepts_exact_version_tokens_inside_realistic_log_framing(
     assert layout.config.read_bytes() == ORIGINAL_CONFIG
     assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
     _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_authentic_unity_marker_matches_only_exact_detected_version_line():
+    payload = (
+        Path(__file__).parent
+        / "fixtures/oracle_boot/BepInEx-LogOutput-5.4.23.5.log"
+    ).read_bytes()
+
+    assert tuple(
+        marker
+        for marker in REQUIRED_MARKERS
+        if oracle_boot._payload_contains_boot_marker(payload, marker)
+    ) == REQUIRED_MARKERS
+    for invalid in (
+        b"Unity v2018.4.25f1",
+        b"Detected Unity version: v2018.4.25f10",
+        b"Detected Unity version: xv2018.4.25f1",
+    ):
+        assert not oracle_boot._payload_contains_boot_marker(
+            invalid, REQUIRED_MARKERS[1]
+        )
 
 
 def _signature_json(signature) -> dict[str, object]:
@@ -5983,8 +8555,12 @@ def test_probe_json_schema_v1_matches_independent_exact_encoding(
     existing.parent.mkdir()
     existing.write_text("before", encoding="utf-8")
     before_logs = [_independent_log_fingerprint(existing)]
-    log_text = "\n".join(
-        REQUIRED_MARKERS if not ordinary_failure else REQUIRED_MARKERS[:2]
+    log_text = (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
+        if not ordinary_failure
+        else "\n".join(
+            (REQUIRED_MARKERS[0], AUTHENTIC_UNITY_LOG_LINE)
+        )
     )
     launcher = _launcher(
         tmp_path,
@@ -6007,17 +8583,21 @@ def test_probe_json_schema_v1_matches_independent_exact_encoding(
         evidence_root,
         *,
         expected_inventory,
+        run_contract,
+        observed_failures,
     ):
         assert expected_inventory is not None
         after_logs.extend(
             _independent_log_fingerprint(fingerprint.path)
-            for fingerprint in expected_inventory
+            for fingerprint in expected_inventory.regular_fingerprints
         )
         return original_collect_retained(
             before,
             game_root,
             evidence_root,
             expected_inventory=expected_inventory,
+            run_contract=run_contract,
+            observed_failures=observed_failures,
         )
 
     monkeypatch.setattr(
@@ -6062,12 +8642,14 @@ def test_probe_json_schema_v1_matches_independent_exact_encoding(
         ()
         if not ordinary_failure
         else (
-            f"pre-existing preloader log changed: {existing.resolve()}",
+            "observed preloader failure log: "
+            "existing/preloader_existing.log",
+            f"pre-existing monitored boot log changed: {existing.resolve()}",
             f"missing required boot marker: {REQUIRED_MARKERS[2]}",
         )
     )
     expected_moved = (
-        result.evidence_dir / "nested/preloader_probe.log",
+        result.evidence_dir / "BepInEx/LogOutput.log",
     )
     expected_copied = (
         (result.evidence_dir / "existing/preloader_existing.log",)
@@ -6205,7 +8787,7 @@ def test_probe_retries_group_cleanup_after_one_keyboard_interrupt(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=b"mutated before interrupted cleanup\n",
     )
@@ -6251,7 +8833,7 @@ def test_probe_launches_exact_argv_without_shell_in_distinct_session(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         exit_code=0,
     )
     observed: dict[str, object] = {}
@@ -6296,7 +8878,7 @@ def test_probe_kills_exact_child_handle_when_pgid_retention_is_rejected(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         exit_code=0,
     )
     rejected_pid = os.getpgrp()
@@ -6389,7 +8971,7 @@ def test_probe_rejects_replaced_absolute_config_parent_at_launch_boundary(
     passive_config = b"; replacement tree\n[Oracle]\nMode=passive\n"
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         exit_code=0,
     )
     original_verify_launcher = oracle_boot._verify_launcher_guard
@@ -6500,9 +9082,9 @@ def test_probe_preserves_full_group_grace_after_term_exits_leader(
         )
         while not (root / "descendant.ready").exists():
             time.sleep(0.001)
-        log = root / "nested" / "preloader_probe.log"
+        log = root / "BepInEx" / "LogOutput.log"
         log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text({chr(10).join(REQUIRED_MARKERS)!r}, encoding="utf-8")
+        log.write_text({_AUTHENTIC_CANONICAL_BOOT_TEXT!r}, encoding="utf-8")
         time.sleep(60)
         """,
     )
@@ -6580,7 +9162,7 @@ def test_probe_escalates_term_to_kill_for_spawned_process_tree_only(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         ignore_term=True,
         spawn_descendant=True,
     )
@@ -6805,7 +9387,7 @@ def test_probe_launcher_observes_exact_off_config_then_restores_mutation(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=b"launcher mutation\n",
     )
@@ -6840,7 +9422,7 @@ def test_probe_refuses_initial_non_off_config_before_launch_or_mutation(
     layout.config.chmod(0o604)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         exit_code=0,
     )
     popen_calls = 0
@@ -6893,7 +9475,7 @@ def test_probe_restores_exact_config_after_exception_at_every_stage(
     mutated = f"injected {failure_stage}\n".encode()
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated,
     )
@@ -7032,7 +9614,7 @@ def test_probe_restore_failure_cannot_leave_canonical_success_json(
     mutated = b"successful probe mutation before restore\n"
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated,
     )
@@ -7072,9 +9654,9 @@ def test_probe_restore_failure_cannot_leave_canonical_success_json(
         path for path in layout.evidence.iterdir() if path.is_dir()
     )
     assert len(evidence_runs) == 1
-    preserved = evidence_runs[0] / "nested/preloader_probe.log"
-    assert preserved.read_text(encoding="utf-8") == "\n".join(
-        REQUIRED_MARKERS
+    preserved = evidence_runs[0] / "BepInEx/LogOutput.log"
+    assert preserved.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
     )
     for probe in evidence_runs[0].rglob("probe.json"):
         payload = json.loads(probe.read_bytes())
@@ -7251,7 +9833,7 @@ def test_probe_cleanup_close_failure_cannot_leave_success_json(
     mutated = f"{cleanup_guard} close mutation\n".encode()
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated,
     )
@@ -7322,7 +9904,7 @@ def test_probe_cleanup_close_failure_cannot_leave_success_json(
         )
 
     preserved_logs = tuple(
-        layout.evidence.rglob("preloader_probe.log")
+        layout.evidence.rglob("LogOutput.log")
     )
     assert close_injection.target is not None
     assert close_injection.reached
@@ -7336,8 +9918,8 @@ def test_probe_cleanup_close_failure_cannot_leave_success_json(
         for note in getattr(raised.value, "__notes__", ())
     )
     assert len(preserved_logs) == 1
-    assert preserved_logs[0].read_text(encoding="utf-8") == "\n".join(
-        REQUIRED_MARKERS
+    assert preserved_logs[0].read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
     )
     assert evidence_sentinel.read_bytes() == b"evidence root survives"
     assert outside_sentinel.read_bytes() == b"outside survives"
@@ -7374,7 +9956,7 @@ def test_probe_preserves_primary_restore_error_over_cleanup_close_error(
     mutated = f"restore and {cleanup_guard} failure mutation\n".encode()
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated,
     )
@@ -7418,7 +10000,7 @@ def test_probe_preserves_primary_restore_error_over_cleanup_close_error(
         raised = exc
 
     preserved_logs = tuple(
-        layout.evidence.rglob("preloader_probe.log")
+        layout.evidence.rglob("LogOutput.log")
     )
     assert restore_injection_reached
     assert close_injection.target is not None
@@ -7426,8 +10008,8 @@ def test_probe_preserves_primary_restore_error_over_cleanup_close_error(
     assert type(raised) is _InjectedPrimaryRestoreError
     assert str(raised) == "injected primary restore failure"
     assert len(preserved_logs) == 1
-    assert preserved_logs[0].read_text(encoding="utf-8") == "\n".join(
-        REQUIRED_MARKERS
+    assert preserved_logs[0].read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
     )
     assert evidence_sentinel.read_bytes() == b"evidence root survives"
     assert outside_sentinel.read_bytes() == b"outside survives"
@@ -7448,8 +10030,8 @@ def test_probe_evidence_source_open_is_nonblocking_before_fifo_substitution(
     _patch_healthy_preflight(monkeypatch, layout)
     mutated_config = f"{transfer_kind} evidence mutation\n".encode()
     if transfer_kind == "move":
-        source = layout.game / "nested/preloader_probe.log"
-        source_payload = "\n".join(REQUIRED_MARKERS).encode()
+        source = layout.canonical_log
+        source_payload = _AUTHENTIC_CANONICAL_BOOT_TEXT.encode("utf-8")
         changed_log = None
         changed_log_text = ""
     else:
@@ -7461,7 +10043,7 @@ def test_probe_evidence_source_open_is_nonblocking_before_fifo_substitution(
         changed_log_text = source_payload.decode()
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated_config,
         changed_log=changed_log,
@@ -7629,7 +10211,7 @@ def test_probe_rejects_new_log_inventory_change_after_shutdown_snapshot(
     layout = _probe_layout(tmp_path)
     _patch_healthy_preflight(monkeypatch, layout)
     mutated_config = f"post-snapshot {mutation}\n".encode()
-    initial_payload = "\n".join(REQUIRED_MARKERS).encode()
+    initial_payload = _AUTHENTIC_CANONICAL_BOOT_TEXT.encode("utf-8")
     changed_payload = initial_payload + b"\nchanged after shutdown snapshot\n"
     launcher = _launcher(
         tmp_path,
@@ -7637,7 +10219,7 @@ def test_probe_rejects_new_log_inventory_change_after_shutdown_snapshot(
         observed_config=layout.config,
         mutate_config_to=mutated_config,
     )
-    source = layout.game / "nested/preloader_probe.log"
+    source = layout.canonical_log
     displaced = tmp_path / "removed-after-snapshot.log"
     original_verify = oracle_boot._verify_pinned_directory_path
     injection_reached = False
@@ -7734,7 +10316,7 @@ def test_probe_rechecks_expected_inventory_after_evidence_allocation(
     baseline.write_bytes(b"stable baseline")
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     original_allocate = oracle_boot._allocate_evidence_directory
     injected = False
@@ -7789,7 +10371,7 @@ def test_probe_rejects_evidence_directory_substitution_at_final_json_boundary(
     mutated_config = b"evidence directory substitution\n"
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated_config,
     )
@@ -7845,9 +10427,9 @@ def test_probe_rejects_evidence_directory_substitution_at_final_json_boundary(
     assert original_evidence_dir is not None
     assert displaced is not None
     assert sentinel is not None
-    preserved_log = displaced / "nested/preloader_probe.log"
-    assert preserved_log.read_text(encoding="utf-8") == "\n".join(
-        REQUIRED_MARKERS
+    preserved_log = displaced / "BepInEx/LogOutput.log"
+    assert preserved_log.read_text(encoding="utf-8") == (
+        _AUTHENTIC_CANONICAL_BOOT_TEXT
     )
     assert sentinel.read_bytes() == b"replacement survives"
     assert layout.config.read_bytes() == ORIGINAL_CONFIG
@@ -7873,21 +10455,29 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
     mutated_config = b"mutated before ordered cleanup\n"
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=mutated_config,
     )
     events: list[str] = []
     targets = SimpleNamespace(
         config=None,
+        disk_logging=None,
         launcher=None,
         game=None,
         retained=None,
     )
     original_open_config = oracle_boot._open_config_guard
+    original_open_disk_logging = (
+        oracle_boot._open_bepinex_disk_logging_guard
+    )
     original_open_launcher = oracle_boot._open_launcher_guard
+    original_snapshot = oracle_boot._capture_boot_snapshot
+    original_cleanup = oracle_boot._cleanup_spawned_process
+    original_inventory = oracle_boot._capture_boot_log_inventory
     original_verify_path = oracle_boot._verify_pinned_directory_path
     original_restore = oracle_boot._restore_config_guard
+    original_disk_logging_close = oracle_boot._DiskLoggingConfigGuard.close
     original_launcher_close = oracle_boot._LauncherGuard.close
     original_directory_close = oracle_boot._DirectoryHandle.close
     original_config_close = oracle_boot._ConfigGuard.close
@@ -7898,6 +10488,9 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
     original_stage = oracle_boot._stage_probe_json
     original_retained_close = oracle_boot._RetainedBootEvidence.close
     original_write = oracle_boot._write_probe_json
+    snapshot_calls = 0
+    inventory_calls = 0
+    disk_logging_close_calls = 0
 
     def capture_config(path):
         guard = original_open_config(path)
@@ -7910,6 +10503,33 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
         assert targets.launcher is None
         targets.launcher = guard
         return guard
+
+    def capture_disk_logging(path):
+        guard = original_open_disk_logging(path)
+        assert targets.disk_logging is None
+        targets.disk_logging = guard
+        return guard
+
+    def capture_snapshot(path):
+        nonlocal snapshot_calls
+        snapshot = original_snapshot(path)
+        snapshot_calls += 1
+        if snapshot_calls == 2:
+            events.append("postflight-captured")
+        return snapshot
+
+    def cleanup_process(process, pgid):
+        exit_code = original_cleanup(process, pgid)
+        events.append("process-cleaned")
+        return exit_code
+
+    def capture_inventory(path):
+        nonlocal inventory_calls
+        inventory = original_inventory(path)
+        inventory_calls += 1
+        if inventory_calls == 1:
+            events.append("post-cleanup-inventory-captured")
+        return inventory
 
     def capture_game(path, pinned, label) -> None:
         if label == "game root at launch":
@@ -7931,6 +10551,14 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
         if is_target:
             events.append("launcher-guard-closed")
 
+    def close_disk_logging(guard) -> None:
+        nonlocal disk_logging_close_calls
+        is_target = guard is targets.disk_logging
+        original_disk_logging_close(guard)
+        if is_target:
+            disk_logging_close_calls += 1
+            events.append("disk-logging-guard-closed")
+
     def close_directory(handle) -> None:
         is_target = handle is targets.game
         original_directory_close(handle)
@@ -7947,6 +10575,7 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
         retained = original_collect(*args, **kwargs)
         assert targets.retained is None
         targets.retained = retained
+        events.append("evidence-collected")
         return retained
 
     def verify_evidence(retained) -> None:
@@ -7990,6 +10619,26 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
     )
     monkeypatch.setattr(
         oracle_boot,
+        "_open_bepinex_disk_logging_guard",
+        capture_disk_logging,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_capture_boot_snapshot",
+        capture_snapshot,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_cleanup_spawned_process",
+        cleanup_process,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
+        "_capture_boot_log_inventory",
+        capture_inventory,
+    )
+    monkeypatch.setattr(
+        oracle_boot,
         "_verify_pinned_directory_path",
         capture_game,
     )
@@ -7997,6 +10646,11 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
         oracle_boot,
         "_restore_config_guard",
         restore_config,
+    )
+    monkeypatch.setattr(
+        oracle_boot._DiskLoggingConfigGuard,
+        "close",
+        close_disk_logging,
     )
     monkeypatch.setattr(
         oracle_boot._LauncherGuard,
@@ -8049,6 +10703,11 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
 
     assert result.success is True
     assert events == [
+        "disk-logging-guard-closed",
+        "process-cleaned",
+        "post-cleanup-inventory-captured",
+        "evidence-collected",
+        "postflight-captured",
         "config-restored",
         "launcher-guard-closed",
         "game-root-handle-closed",
@@ -8059,9 +10718,12 @@ def test_probe_orders_cleanup_evidence_verification_and_publication(
         "probe-json-committed",
     ]
     assert targets.config is not None
+    assert targets.disk_logging is not None
     assert targets.launcher is not None
     assert targets.game is not None
     assert targets.retained is not None
+    assert disk_logging_close_calls == 1
+    assert snapshot_calls == 2
     assert (result.evidence_dir / "probe.json").is_file()
     assert layout.config.read_bytes() == ORIGINAL_CONFIG
     assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
@@ -8075,7 +10737,10 @@ def test_probe_uses_allocated_evidence_handle_before_json_staging(
 ):
     layout = _probe_layout(tmp_path)
     _patch_healthy_preflight(monkeypatch, layout)
-    launcher = _launcher(tmp_path, log_text="\n".join(REQUIRED_MARKERS))
+    launcher = _launcher(
+        tmp_path,
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
+    )
     original_stage = oracle_boot._stage_probe_json
     displaced: Path | None = None
 
@@ -8103,8 +10768,8 @@ def test_probe_uses_allocated_evidence_handle_before_json_staging(
         )
     assert displaced is not None
     assert (
-        displaced / "nested/preloader_probe.log"
-    ).read_text(encoding="utf-8") == "\n".join(REQUIRED_MARKERS)
+        displaced / "BepInEx/LogOutput.log"
+    ).read_text(encoding="utf-8") == _AUTHENTIC_CANONICAL_BOOT_TEXT
     _assert_no_canonical_probe_json(displaced, layout.evidence)
 
 
@@ -8117,7 +10782,7 @@ def test_probe_revalidates_collected_evidence_after_cleanup_before_publication(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=b"mutated during probe\n",
     )
@@ -8129,7 +10794,7 @@ def test_probe_revalidates_collected_evidence_after_cleanup_before_publication(
         original_restore(guard)
         if not injected:
             preserved = next(
-                layout.evidence.rglob("preloader_probe.log")
+                layout.evidence.rglob("LogOutput.log")
             )
             preserved.write_bytes(
                 preserved.read_bytes() + b"\nchanged before publication"
@@ -8164,7 +10829,7 @@ def test_probe_preserves_monitor_error_over_process_cleanup_uncertainty(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
 
     class PrimaryMonitorError(RuntimeError):
@@ -8214,7 +10879,7 @@ def test_probe_retained_evidence_close_failure_cannot_publish_canonical_json(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     original_close = oracle_boot._RetainedBootEvidence.close
     close_calls = 0
@@ -8260,7 +10925,7 @@ def test_probe_writer_boundary_failure_closes_staged_descriptors(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     staged_descriptors: list[int] = []
 
@@ -8321,7 +10986,7 @@ def test_probe_retries_interrupted_failure_cleanup_config_restoration(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=b"mutated before postflight failure\n",
     )
@@ -8406,7 +11071,7 @@ def test_probe_final_evidence_fsync_failure_restores_and_closes(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         observed_config=layout.config,
         mutate_config_to=b"mutated before final evidence fsync\n",
     )
@@ -8546,7 +11211,9 @@ def test_collect_moves_only_new_regular_logs(tmp_path: Path):
         REQUIRED_MARKERS
     )
     assert result.copied_logs == ()
-    assert result.issues == ()
+    assert result.issues == (
+        "observed preloader failure log: logs/z/preloader_new.log",
+    )
 
 
 def test_collect_leaves_changed_preexisting_log_and_copies_evidence(
@@ -8604,7 +11271,9 @@ def test_probe_requires_all_three_markers(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS[:2]),
+        log_text="\n".join(
+            (REQUIRED_MARKERS[0], AUTHENTIC_UNITY_LOG_LINE)
+        ),
         linger_seconds=60,
     )
 
@@ -8631,7 +11300,7 @@ def test_probe_terminates_only_spawned_process_and_resets_mode(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
         linger_seconds=60,
     )
     unrelated = subprocess.Popen(
@@ -8719,7 +11388,7 @@ def test_probe_rejects_invalid_requests_before_any_side_effect(
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     game_root: object = layout.game
     launcher_path: object = launcher
@@ -9023,7 +11692,7 @@ def test_boot_main_rejects_supplied_symlink_paths_before_probe_side_effects(
     _patch_healthy_preflight(monkeypatch, layout)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     targets = {
         "game": layout.game,
@@ -9111,7 +11780,7 @@ def test_boot_main_emits_canonical_public_json_and_exact_exit_code(
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
     result = _complete_boot_probe_result(tmp_path, success=success)
     calls: list[tuple[Path, Path, Path, Path, int]] = []
@@ -9212,7 +11881,7 @@ def test_boot_main_reports_probe_errors_on_stderr_only(
     layout = _probe_layout(tmp_path)
     launcher = _launcher(
         tmp_path,
-        log_text="\n".join(REQUIRED_MARKERS),
+        log_text=_AUTHENTIC_CANONICAL_BOOT_TEXT,
     )
 
     def fail_probe(*_args, **_kwargs):
