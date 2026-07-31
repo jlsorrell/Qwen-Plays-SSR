@@ -5292,12 +5292,16 @@ def run_boot_probe(
         disk_logging_guard = _open_bepinex_disk_logging_guard(game)
         game_handle = _open_absolute_directory(game, "game root")
         launcher_guard = _open_launcher_guard(launcher_path)
-        before = fingerprint_preloader_logs(game)
+        preliminary_logs = fingerprint_preloader_logs(game)
         preflight = _capture_boot_snapshot(game)
         _verify_config_guard_unchanged(config_guard)
         issues = _preflight_issues(preflight, game / "Sausage.app")
         if issues:
-            preserved = collect_boot_evidence(before, game, evidence)
+            preserved = collect_boot_evidence(
+                preliminary_logs,
+                game,
+                evidence,
+            )
             return BootProbeResult(
                 success=False,
                 evidence_dir=preserved.evidence_dir,
@@ -5315,13 +5319,15 @@ def run_boot_probe(
         )
         _verify_launcher_guard(launcher_guard)
         _verify_config_guard_unchanged(config_guard)
-        _boot_log_contract = (
-            _verify_and_close_bepinex_disk_logging_guard(
-                disk_logging_guard
-            )
+        run_contract = _verify_and_close_bepinex_disk_logging_guard(
+            disk_logging_guard
         )
         disk_logging_guard = None
-        before = fingerprint_preloader_logs(game)
+        before_logs = fingerprint_preloader_logs(game)
+        if before_logs != preliminary_logs:
+            raise BootProbeError(
+                "monitored boot log inventory changed during preflight"
+            )
         process: subprocess.Popen[bytes] | None = None
         spawned_pgid: int | None = None
         cleanup_exit_code: int | None = None
@@ -5334,10 +5340,10 @@ def run_boot_probe(
                 start_new_session=True,
             )
             spawned_pgid = _retained_spawned_pgid(process)
-            _monitor_outcome = _wait_for_markers(
+            monitor_outcome = _wait_for_markers(
                 process,
                 game,
-                before,
+                before_logs,
                 timeout,
             )
         except BaseException as exc:
@@ -5366,8 +5372,8 @@ def run_boot_probe(
             "game root after process cleanup",
         )
         final_exit_code = (
-            _monitor_outcome.exit_code
-            if _monitor_outcome.exit_code is not None
+            monitor_outcome.exit_code
+            if monitor_outcome.exit_code is not None
             else cleanup_exit_code
         )
         after_inventory = _capture_boot_log_inventory(game)
@@ -5378,10 +5384,12 @@ def run_boot_probe(
             "game root after log snapshot",
         )
         retained = _collect_boot_evidence_retained(
-            before,
+            before_logs,
             game,
             evidence,
             expected_inventory=after_inventory,
+            run_contract=run_contract,
+            observed_failures=monitor_outcome.observed_failures,
         )
         decision = retained.decision
         if decision is None:
@@ -5390,12 +5398,17 @@ def run_boot_probe(
                 f"{retained.public.evidence_dir}"
             )
         preserved = retained.public
+        structural_issues = tuple(
+            dict.fromkeys(
+                (*monitor_outcome.issues, *preserved.issues)
+            )
+        )
         final_outcome = _MonitorOutcome(
-            state=_monitor_outcome.state,
+            state=monitor_outcome.state,
             markers=decision.markers,
             errors=decision.errors,
-            issues=_monitor_outcome.issues,
-            observed_failures=_monitor_outcome.observed_failures,
+            issues=structural_issues,
+            observed_failures=monitor_outcome.observed_failures,
             exit_code=final_exit_code,
         )
         _verify_pinned_directory_path(
@@ -5418,9 +5431,7 @@ def run_boot_probe(
             postflight,
             game / "Sausage.app",
         )
-        result_issues = (
-            preserved.issues + monitor_issues + postflight_issues
-        )
+        result_issues = monitor_issues + postflight_issues
         monitor_succeeded = (
             final_outcome.state == "markers"
             and markers == _REQUIRED_BOOT_MARKERS
@@ -5440,7 +5451,7 @@ def run_boot_probe(
             result,
             preflight,
             postflight,
-            before,
+            before_logs,
             after_logs,
         )
 
