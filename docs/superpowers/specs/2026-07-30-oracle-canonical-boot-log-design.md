@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-30
 
-**Status:** Approved; implementation and review pending
+**Status:** Implemented, independently reviewed, and offline-verified;
+corrected runtime validation pending
 
 ## Context
 
@@ -428,13 +429,29 @@ context produced by that recheck. The public `collect_boot_evidence(...)`
 signature has no such proof and retains conservative generic collection
 semantics.
 
-Issue wording and internal helper names may be generalized from "preloader
-log" to "monitored boot log" where needed for accuracy. Public function
-signatures do not change.
+Issue wording and internal helper names are generalized from "preloader log"
+to "monitored boot log" where needed for accuracy. Public function signatures
+do not change.
 
 The existing failed `probe.json` is not rewritten. The separately preserved
 forensic copies remain diagnostic evidence and are not retroactively inserted
 into the probe-owned evidence directory.
+
+## Implementation Status
+
+The canonical observer described above is implemented and independently
+reviewed offline. Its offline boot-module verification recorded 419 passing
+tests, with six inherited documented non-strict XPASS cases. This status
+verifies the monitored-family classification, canonical-only success,
+strict logging-contract validation, two-snapshot prelaunch reconciliation,
+new-versus-changed canonical retention, and schema/public-marker stability.
+It does not verify an installed-game result.
+
+Corrected runtime validation remains pending. No second deployment, game
+launch, end-to-end installed-game pass, or installed plugin/config change has
+occurred. The first runtime boot remains diagnostic evidence only: it
+succeeded, while the former `preloader_*.log`-only observer falsely missed its
+canonical `BepInEx/LogOutput.log` output.
 
 ## Failure Handling
 
@@ -457,13 +474,13 @@ If the canonical log cannot be opened and BepInEx selects a numbered fallback,
 the probe retains that fallback and fails with a specific noncanonical-log
 issue. It does not silently broaden acceptance.
 
-## Test-Driven Implementation
+## Test-Driven Implementation and Offline Verification
 
-Before production changes, freeze the current package source used by the
-tests and record its exact SHA-256. New behavioral tests must be observed RED
-against that frozen source for the intended reason.
+Before production changes, the implementation froze the current package source
+used by the tests and recorded its exact SHA-256. New behavioral tests were
+observed RED against that frozen source for the intended reason.
 
-Focused regressions will cover:
+Focused regressions cover:
 
 1. an authentic new `BepInEx/LogOutput.log` fixture with all real lines is
    currently invisible and becomes successful;
@@ -504,11 +521,11 @@ Focused regressions will cover:
 16. the existing recursive preloader-log, process-group, oracle-config,
     evidence-publication, CLI, and JSON-schema tests remain green.
 
-The realistic fixture will be derived from the 17-line successful
-`LogOutput.log` while avoiding machine-local absolute paths. It will include
-the exact pinned versions and plugin marker.
+The realistic fixture is derived from the 17-line successful `LogOutput.log`
+while avoiding machine-local absolute paths. It includes the exact pinned
+versions and plugin marker.
 
-Verification requires:
+Offline verification included:
 
 - the new focused regressions;
 - the complete `tests/test_oracle_boot.py` module;
@@ -568,7 +585,7 @@ The correction is ready for a new launch request only when:
 - the final result is derived from durable canonical evidence;
 - all offline verification and independent reviews pass;
 - the installed game remains healthy `official`; and
-- no second launch has occurred.
+- corrected second-launch validation remains pending.
 
 The end-to-end checkpoint is complete only after a separately approved
 corrected probe succeeds, the official restore is verified, the identical

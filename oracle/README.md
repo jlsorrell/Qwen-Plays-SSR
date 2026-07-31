@@ -12,21 +12,33 @@ marker. It does not patch the game assembly or implement later oracle behavior.
 
 The current controlled-boot target is **macOS Tahoe 26.6**. macOS 15.7.3 is
 historical context only: it is where the original obsolete-platform-probe
-failure was recorded. Exactly one approved initial Tahoe boot occurred. The
-runtime started successfully, but the automated observer produced a known
-false negative; the official preloader was then restored transactionally and
-its healthy `official` state verified. No corrected second launch or re-deploy
-has occurred.
+failure was recorded. Exactly one approved initial Tahoe boot occurred. Its
+runtime boot succeeded, but the old observer watched only `preloader_*.log`
+and therefore missed the authentic `BepInEx/LogOutput.log` success output. The
+official preloader was then restored transactionally and its healthy
+`official` state verified.
+
+The canonical observer correction is implemented, independently reviewed, and
+offline-tested. Corrected runtime validation is still pending: no second
+deployment, game launch, end-to-end installed-game pass, or installed
+plugin/config change has occurred.
 
 ## Current stop gate
 
 Offline rebuilds, tests, and the read-only status and preflight commands remain
-usable. Do **not** deploy or re-deploy either oracle artifact, run the boot
-probe, or request another game launch until the canonical `LogOutput.log`
-observer correction is implemented, tested, and independently reviewed. After
-those gates, any corrected launch still requires separate authorization. The
-mutation, boot, restore, and re-deploy commands below document the controlled
-sequence but are not currently runnable.
+usable. The observer is implemented and offline-tested, but it has not been
+exercised by a corrected second game launch. The mutation, boot, restore, and
+re-deploy commands below are reference-only; this document does not authorize
+their execution.
+
+Before *any* mutation, deploy, restore, or launch command below is used, run a
+fresh read-only preflight and obtain separate explicit approval that names the
+exact command sequence. That approval must limit the operation to
+installer-only deployment, exactly one corrected bounded probe, and a verified
+official restore; it must not be inferred from the first launch or from this
+runbook. Do not make individual commands from the transactional section
+generally runnable or reuse an approval for another deployment, launch, or
+re-deployment.
 
 Run all repository commands below from the root of the
 `ssr-executable-oracle` worktree. Networked acquisition and installed-game
@@ -518,14 +530,65 @@ validated. Do not substitute a relative path, stale `current.json` path, or
 unresolved environment value. The four checksum results immediately before
 the first mutation must all print `OK`; otherwise stop.
 
+## Reviewed boot-log observer contract
+
+The offline-tested observer classifies exactly three monitored families under
+the game root, using the existing recursive no-follow scan:
+
+1. the sole canonical success path, `BepInEx/LogOutput.log`;
+2. canonical fallback paths, `BepInEx/LogOutput.log.1` through
+   `BepInEx/LogOutput.log.4`;
+3. failure paths whose basename matches the existing case-sensitive
+   `preloader_*.log` rule.
+
+No other `*.log` path, including Unity's user-global `Player.log`, is accepted
+as probe evidence. Success is canonical-only: all three required markers must
+come from one retained canonical `BepInEx/LogOutput.log`. The authentic Unity
+source text is `Detected Unity version: v2018.4.25f1`; the observer derives
+the stable public schema-v1 marker `Unity v2018.4.25f1` only from that exact
+source line. `BootProbeResult.markers`, CLI JSON, and `probe.json.markers`
+therefore retain their public marker names, and `probe.json` remains schema
+version 1.
+
+A new or changed member of either failure family (a numbered fallback or a
+`preloader_*.log`) is always a structural failure when observed, even if the
+canonical log contains every marker. The observer retains such evidence when
+preservable and records an evidence-integrity issue when it cannot be
+preserved. A new canonical log is moved into evidence; a changed pre-existing
+canonical log is copied into evidence and remains installed. An unchanged
+canonical log cannot satisfy a current run.
+
+Before launch, the observer validates only the strict BepInEx logging subset
+that guarantees canonical output and early-marker visibility:
+
+```ini
+[Logging.Disk]
+AppendLog = false
+Enabled = true
+LogLevels = Fatal, Error, Warning, Message, Info
+
+[Logging.Console]
+LogLevels = Fatal, Error, Warning, Message, Info
+```
+
+An absent `BepInEx.cfg` uses those pinned defaults; malformed, duplicate,
+unsafe, disabled, append-mode, or insufficient-level settings are rejected.
+The complete monitored inventory is fingerprinted twice before launch: once
+before the longer preflight and once immediately before `Popen`. Any difference
+between those snapshots rejects the probe before launch; the second snapshot
+is the authoritative baseline.
+
 ## Transactional deploy and controlled boot
 
-> **STOP:** the current canonical-log observer is known to report a false
-> negative. Do not run any command in this section until the correction has
-> been implemented, tested, independently reviewed, and separately authorized.
+> **GATE — reference only:** the observer correction is implemented and
+> offline-tested, but corrected runtime validation has not occurred. Do not run
+> a command in this section without a fresh successful read-only preflight and
+> separate explicit approval for the complete installer-only deployment, one
+> bounded probe, and verified official-restore sequence.
 
-For this checkpoint, transactionally deploy the hash-verified rebuilt plugin
-and Mode-off config unconditionally. Healthy `official` status proves that the
+For a future explicitly approved checkpoint, transactionally deploy the
+hash-verified rebuilt plugin and Mode-off config only through the installer.
+Healthy `official` status proves that the
 installed plugin matches its existing manifest; it does not prove that it
 matches this rebuild. The installed plugin remains
 `6d06583d75bfdc5a677668c3c7b0bd88f9eec49be0d169cf6f357ccac4cc7de4`;
@@ -580,6 +643,10 @@ retained below
 `$SSR_EVIDENCE_ROOT/<UTC>-<128-bit-random>/` on success or failure.
 
 ## Exact restore and identical re-deploy
+
+> **GATE — reference only:** this restore or re-deploy must be separately
+> covered by the fresh preflight and explicit approval above. The official
+> restore is required and must be verified after the one approved probe.
 
 Restore requires a healthy patched state and moves the official preloader back
 transactionally:

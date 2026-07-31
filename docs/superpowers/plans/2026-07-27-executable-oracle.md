@@ -316,6 +316,16 @@ git commit -m "feat: add safe SSR oracle installer"
 
 ### Task 2: `net35` plugin build and boot-compatibility spike
 
+**Observed result (2026-07-31):** The one approved first Tahoe boot succeeded
+at runtime, but the old observer watched only `preloader_*.log` and falsely
+reported no boot markers. Authentic successful output was instead
+`BepInEx/LogOutput.log`. The reviewed canonical observer now derives the
+stable public `Unity v2018.4.25f1` marker only from the exact authentic source
+line `Detected Unity version: v2018.4.25f1`; this implementation is
+offline-verified. Corrected launch validation remains pending. No second
+deployment, game launch, end-to-end installed-game pass, or installed
+plugin/config change is recorded here.
+
 **Files:**
 - Create: `oracle/plugin/SsrOracle.Plugin.csproj`
 - Create: `oracle/plugin/Plugin.cs`
