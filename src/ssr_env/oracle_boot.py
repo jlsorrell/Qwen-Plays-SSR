@@ -43,6 +43,15 @@ _VERSION_TOKEN_BYTES = frozenset(
     b"0123456789._+-"
 )
 _BOOT_ERROR_MARKERS = ("DllNotFoundException", "Preloader error")
+_CANONICAL_BOOT_LOG = Path("BepInEx/LogOutput.log")
+_FALLBACK_BOOT_LOGS = frozenset(
+    Path(f"BepInEx/LogOutput.log.{index}") for index in range(1, 5)
+)
+_BOOT_MARKER_PATTERNS = {
+    "BepInEx 5.4.23.5": b"BepInEx 5.4.23.5",
+    "Unity v2018.4.25f1": b"Detected Unity version: v2018.4.25f1",
+    "SSR oracle boot probe loaded": b"SSR oracle boot probe loaded",
+}
 
 
 class BootProbeError(RuntimeError):
@@ -286,6 +295,7 @@ class _StagedProbeJson:
 @dataclass(frozen=True, slots=True)
 class _ScannedLog:
     path: Path
+    kind: str
     parent: _DirectoryHandle
     name: str
     observed: os.stat_result
@@ -565,6 +575,16 @@ def _is_preloader_log(path: Path) -> bool:
     return path.name.startswith("preloader_") and path.name.endswith(".log")
 
 
+def _boot_log_kind(relative_path: Path) -> str | None:
+    if relative_path == _CANONICAL_BOOT_LOG:
+        return "canonical"
+    if relative_path in _FALLBACK_BOOT_LOGS:
+        return "fallback"
+    if _is_preloader_log(relative_path):
+        return "preloader"
+    return None
+
+
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
@@ -803,7 +823,7 @@ def _scan_preloader_logs(
                 children = sorted(discovered, key=lambda entry: entry.name)
         except OSError as exc:
             raise BootProbeError(
-                f"cannot scan game root for preloader logs: "
+                f"cannot scan game root for monitored boot logs: "
                 f"{directory.path}: {exc}"
             ) from exc
         for child_entry in children:
@@ -816,21 +836,24 @@ def _scan_preloader_logs(
                 )
             except OSError as exc:
                 raise BootProbeError(
-                    f"cannot inspect preloader scan entry: "
+                    f"cannot inspect monitored boot log scan entry: "
                     f"{candidate}: {exc}"
                 ) from exc
-            kind = _file_type(observed.st_mode)
-            if _is_preloader_log(candidate):
+            file_type = _file_type(observed.st_mode)
+            relative_path = candidate.relative_to(game)
+            log_kind = _boot_log_kind(relative_path)
+            if log_kind is not None:
                 entries.append(
                     _ScannedLog(
                         path=candidate,
+                        kind=log_kind,
                         parent=directory,
                         name=child_entry.name,
                         observed=observed,
-                        file_type=kind,
+                        file_type=file_type,
                     )
                 )
-            if kind == "directory":
+            if file_type == "directory":
                 pending_handle = _open_child_directory(
                     directory,
                     child_entry.name,
@@ -898,7 +921,7 @@ def _fingerprint_scanned(entry: _ScannedLog) -> LogFingerprint:
         )
     except OSError as exc:
         raise BootProbeError(
-            f"cannot open preloader log without following symlinks: "
+            f"cannot open monitored boot log without following symlinks: "
             f"{entry.path}: {exc}"
         ) from exc
     try:
@@ -922,7 +945,7 @@ def _fingerprint_scanned(entry: _ScannedLog) -> LogFingerprint:
             or before_identity != expected_identity
         ):
             raise BootProbeError(
-                f"preloader log changed before hashing: {entry.path}"
+                f"monitored boot log changed before hashing: {entry.path}"
             )
         digest = hashlib.sha256()
         while True:
@@ -955,7 +978,7 @@ def _fingerprint_scanned(entry: _ScannedLog) -> LogFingerprint:
             or named_identity != expected_identity
         ):
             raise BootProbeError(
-                f"preloader log changed while hashing: {entry.path}"
+                f"monitored boot log changed while hashing: {entry.path}"
             )
         return LogFingerprint(
             path=entry.path,
@@ -983,7 +1006,7 @@ def _read_monitored_log(entry: _ScannedLog) -> bytes:
         expected_identity = _stat_identity(entry.observed)
         if before.st_size > _MAX_MONITOR_LOG_BYTES:
             raise BootProbeError(
-                f"monitored preloader log exceeds byte limit: {entry.path}"
+                f"monitored boot log exceeds byte limit: {entry.path}"
             )
         if (
             not stat.S_ISREG(before.st_mode)
@@ -999,7 +1022,7 @@ def _read_monitored_log(entry: _ScannedLog) -> bytes:
             byte_count += len(chunk)
             if byte_count > _MAX_MONITOR_LOG_BYTES:
                 raise BootProbeError(
-                    f"monitored preloader log exceeds byte limit: {entry.path}"
+                    f"monitored boot log exceeds byte limit: {entry.path}"
                 )
             chunks.append(chunk)
         after = os.fstat(descriptor)
@@ -1023,7 +1046,7 @@ def _read_monitored_log(entry: _ScannedLog) -> bytes:
 
 
 def _payload_contains_boot_marker(payload: bytes, marker: str) -> bool:
-    encoded = marker.encode("ascii")
+    encoded = _BOOT_MARKER_PATTERNS[marker]
     if marker not in _VERSION_BOOT_MARKERS:
         return encoded in payload
     offset = 0
@@ -1051,7 +1074,7 @@ def _observe_boot_logs(
     scan = _scan_preloader_logs(game_root)
     try:
         unsafe = tuple(
-            f"unsafe {entry.file_type} monitored preloader log: {entry.path}"
+            f"unsafe {entry.file_type} monitored boot log: {entry.path}"
             for entry in scan.entries
             if entry.file_type != "regular"
         )
@@ -1061,7 +1084,7 @@ def _observe_boot_logs(
                 continue
             if entry.observed.st_size > _MAX_MONITOR_LOG_BYTES:
                 raise BootProbeError(
-                    f"monitored preloader log exceeds byte limit: {entry.path}"
+                    f"monitored boot log exceeds byte limit: {entry.path}"
                 )
             prior = baseline.get(entry.path)
             if prior is not None:
@@ -1113,7 +1136,7 @@ def _wait_for_markers(
             try:
                 markers, errors = _observe_boot_logs(game_root, before)
             except _TransientLogChange:
-                errors = ("preloader log was unstable at launcher exit",)
+                errors = ("monitored boot log was unstable at launcher exit",)
             except BootProbeError as exc:
                 errors = (str(exc),)
             observation_stable = True
@@ -1136,7 +1159,9 @@ def _wait_for_markers(
                 try:
                     markers, errors = _observe_boot_logs(game_root, before)
                 except _TransientLogChange:
-                    errors = ("preloader log remained unstable at deadline",)
+                    errors = (
+                        "monitored boot log remained unstable at deadline",
+                    )
                 except BootProbeError as exc:
                     errors = (str(exc),)
             exit_code = process.poll()
@@ -1171,7 +1196,7 @@ def fingerprint_preloader_logs(
         )
         if unsafe is not None:
             raise BootProbeError(
-                f"unsafe {unsafe.file_type} preloader log: {unsafe.path}"
+                f"unsafe {unsafe.file_type} monitored boot log: {unsafe.path}"
             )
         return tuple(
             _fingerprint_scanned(entry) for entry in scan.entries
@@ -1222,7 +1247,7 @@ def _validate_baseline(
             raise BootProbeError(
                 f"baseline log path is outside game root: {fingerprint.path}"
             )
-        if not _is_preloader_log(path):
+        if _boot_log_kind(path.relative_to(game_root)) is None:
             raise BootProbeError(f"invalid baseline log name: {path}")
         if fingerprint.file_type != "regular":
             raise BootProbeError(f"invalid baseline log type: {path}")
@@ -2444,6 +2469,7 @@ def _move_regular_exclusive(
         moved_identity = _stat_identity(moved_observed)
         moved_entry = _ScannedLog(
             path=destination_path,
+            kind=entry.kind,
             parent=destination_parent,
             name=destination_name,
             observed=moved_observed,

@@ -960,6 +960,8 @@ def _launcher(
     tmp_path: Path,
     *,
     log_text: str,
+    log_relative: str = "nested/preloader_probe.log",
+    additional_logs: tuple[tuple[str, str], ...] = (),
     linger_seconds: float = 60.0,
     ignore_term: bool = False,
     spawn_descendant: bool = False,
@@ -1050,8 +1052,12 @@ def _launcher(
         {config_setup}
         {changed_log_setup}
         {descendant_setup}
-        log = root / "nested" / "preloader_probe.log"
+        log = root / {log_relative!r}
         log.parent.mkdir(parents=True, exist_ok=True)
+        for relative, text in {additional_logs!r}:
+            additional_log = root / relative
+            additional_log.parent.mkdir(parents=True, exist_ok=True)
+            additional_log.write_text(text, encoding="utf-8")
 {termination_setup}
         log.write_text({log_text!r}, encoding="utf-8")
         {("raise SystemExit(" + str(exit_code) + ")" if exit_code is not None else "time.sleep(" + repr(linger_seconds) + ")")}
@@ -1077,6 +1083,9 @@ def _probe_layout(tmp_path: Path) -> SimpleNamespace:
     preloader = game / "BepInEx/core/BepInEx.Preloader.dll"
     preloader.parent.mkdir(parents=True)
     preloader.write_bytes(b"controlled patched preloader")
+    bepinex = game / "BepInEx"
+    bepinex_config = bepinex / "config/BepInEx.cfg"
+    bepinex_config.parent.mkdir()
     return SimpleNamespace(
         game=game,
         app=app,
@@ -1084,6 +1093,12 @@ def _probe_layout(tmp_path: Path) -> SimpleNamespace:
         evidence=evidence,
         assembly=assembly,
         preloader=preloader,
+        bepinex=bepinex,
+        bepinex_config=bepinex_config,
+        canonical_log=bepinex / "LogOutput.log",
+        fallback_logs=tuple(
+            bepinex / f"LogOutput.log.{index}" for index in range(1, 5)
+        ),
     )
 
 
@@ -1397,13 +1412,22 @@ def test_fingerprint_logs_is_recursive_case_sensitive_and_exact(
         game / "B/preloader_a.log",
         game / "a/deep/preloader_z.log",
         game / "preloader_root.log",
+        game / "BepInEx/LogOutput.log",
+        game / "BepInEx/LogOutput.log.1",
+        game / "BepInEx/LogOutput.log.4",
     ]
-    payloads = [b"B", b"nested", b"root"]
+    (game / "BepInEx").mkdir()
+    payloads = [b"B", b"nested", b"root", b"canonical", b"one", b"four"]
     for path, payload in zip(matching, payloads, strict=True):
         path.write_bytes(payload)
     (game / "Preloader_wrong.log").write_bytes(b"wrong case")
     (game / "preloader_wrong.LOG").write_bytes(b"wrong suffix")
     (game / "not_preloader.log").write_bytes(b"wrong prefix")
+    (game / "BepInEx/logoutput.log").write_bytes(b"wrong case")
+    (game / "BepInEx/LogOutput.log.0").write_bytes(b"wrong index")
+    (game / "BepInEx/LogOutput.log.5").write_bytes(b"wrong index")
+    (game / "BepInEx/nested").mkdir()
+    (game / "BepInEx/nested/LogOutput.log").write_bytes(b"wrong parent")
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -1437,10 +1461,41 @@ def test_fingerprint_logs_is_recursive_case_sensitive_and_exact(
 
 
 @pytest.mark.parametrize(
-    "unsafe_kind",
-    ["matching_symlink", "matching_fifo", "root_symlink", "symlink_parent"],
+    ("relative_path", "expected"),
+    [
+        (Path("BepInEx/LogOutput.log"), "canonical"),
+        (Path("BepInEx/LogOutput.log.1"), "fallback"),
+        (Path("BepInEx/LogOutput.log.4"), "fallback"),
+        (Path("preloader_root.log"), "preloader"),
+        (Path("nested/preloader_failure.log"), "preloader"),
+        (Path("BepInEx/logoutput.log"), None),
+        (Path("BepInEx/LogOutput.log.0"), None),
+        (Path("BepInEx/LogOutput.log.5"), None),
+        (Path("BepInEx/nested/LogOutput.log"), None),
+        (Path("preloader_wrong.LOG"), None),
+    ],
 )
-def test_fingerprint_rejects_unsafe_or_special_paths_without_hashing(
+def test_boot_log_kind_classifies_exact_relative_paths(
+    relative_path: Path,
+    expected: str | None,
+):
+    assert oracle_boot._boot_log_kind(relative_path) == expected
+
+
+@pytest.mark.parametrize(
+    "unsafe_kind",
+    [
+        "matching_symlink",
+        "matching_fifo",
+        "canonical_symlink",
+        "canonical_fifo",
+        "fallback_symlink",
+        "fallback_fifo",
+        "root_symlink",
+        "symlink_parent",
+    ],
+)
+def test_fingerprint_rejects_unsafe_monitored_or_special_paths_without_hashing(
     unsafe_kind: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1458,6 +1513,22 @@ def test_fingerprint_rejects_unsafe_or_special_paths_without_hashing(
         special.symlink_to(outside)
     elif unsafe_kind == "matching_fifo":
         special = game / "preloader_pipe.log"
+        os.mkfifo(special, 0o600)
+    elif unsafe_kind == "canonical_symlink":
+        special = game / "BepInEx/LogOutput.log"
+        special.parent.mkdir()
+        special.symlink_to(outside)
+    elif unsafe_kind == "canonical_fifo":
+        special = game / "BepInEx/LogOutput.log"
+        special.parent.mkdir()
+        os.mkfifo(special, 0o600)
+    elif unsafe_kind == "fallback_symlink":
+        special = game / "BepInEx/LogOutput.log.1"
+        special.parent.mkdir()
+        special.symlink_to(outside)
+    elif unsafe_kind == "fallback_fifo":
+        special = game / "BepInEx/LogOutput.log.1"
+        special.parent.mkdir()
         os.mkfifo(special, 0o600)
     elif unsafe_kind == "root_symlink":
         requested_root = tmp_path / "game-link"
@@ -1486,6 +1557,26 @@ def test_fingerprint_rejects_unsafe_or_special_paths_without_hashing(
     assert outside.read_bytes() == b"outside must remain unread"
     if special is not None:
         assert os.path.lexists(special)
+
+
+def test_fingerprint_logs_validate_baseline_accepts_crafted_canonical_log_fingerprint(
+    tmp_path: Path,
+):
+    game = tmp_path / "game"
+    (game / "BepInEx").mkdir(parents=True)
+    canonical = game / "BepInEx/LogOutput.log"
+    fingerprint = oracle_boot.LogFingerprint(
+        path=canonical,
+        file_type="regular",
+        inode=1,
+        size=2,
+        mtime_ns=3,
+        sha256="a" * 64,
+    )
+
+    assert oracle_boot._validate_baseline((fingerprint,), game) == {
+        canonical: fingerprint
+    }
 
 
 def test_collect_preserves_relative_paths_and_rejects_adversarial_entries(
@@ -5846,7 +5937,7 @@ def test_probe_reports_natural_exit_between_marker_scan_and_cleanup(
             "\n".join(
                 (
                     "BepInEx 5.4.23.50",
-                    REQUIRED_MARKERS[1],
+                    "Detected Unity version: v2018.4.25f1",
                     REQUIRED_MARKERS[2],
                 )
             ),
@@ -5857,7 +5948,7 @@ def test_probe_reports_natural_exit_between_marker_scan_and_cleanup(
             "\n".join(
                 (
                     REQUIRED_MARKERS[0],
-                    "Unity v2018.4.25f10",
+                    "Detected Unity version: v2018.4.25f10",
                     REQUIRED_MARKERS[2],
                 )
             ),
@@ -5906,8 +5997,8 @@ def test_probe_accepts_exact_version_tokens_inside_realistic_log_framing(
         log_text="\n".join(
             (
                 "[Message:   BepInEx] BepInEx 5.4.23.5 - SSR",
-                "[Info   : Unity] Initialize engine version: "
-                "Unity v2018.4.25f1 (8c3c7d0f5c5c)",
+                "[Info   :   BepInEx] Detected Unity version: "
+                "v2018.4.25f1",
                 "[Info   : SsrOracle] SSR oracle boot probe loaded",
             )
         ),
@@ -5928,6 +6019,27 @@ def test_probe_accepts_exact_version_tokens_inside_realistic_log_framing(
     assert layout.config.read_bytes() == ORIGINAL_CONFIG
     assert stat.S_IMODE(layout.config.stat().st_mode) == 0o640
     _assert_tracked_probe_groups_stopped(tracked_probe_popen)
+
+
+def test_authentic_unity_marker_matches_only_exact_detected_version_line():
+    payload = (
+        Path(__file__).parent
+        / "fixtures/oracle_boot/BepInEx-LogOutput-5.4.23.5.log"
+    ).read_bytes()
+
+    assert tuple(
+        marker
+        for marker in REQUIRED_MARKERS
+        if oracle_boot._payload_contains_boot_marker(payload, marker)
+    ) == REQUIRED_MARKERS
+    for invalid in (
+        b"Unity v2018.4.25f1",
+        b"Detected Unity version: v2018.4.25f10",
+        b"Detected Unity version: xv2018.4.25f1",
+    ):
+        assert not oracle_boot._payload_contains_boot_marker(
+            invalid, REQUIRED_MARKERS[1]
+        )
 
 
 def _signature_json(signature) -> dict[str, object]:
