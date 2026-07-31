@@ -386,6 +386,15 @@ def _validate_evidence_root(path: Path) -> tuple[Path, bool]:
     return absolute, True
 
 
+def _decode_codesign_stream(payload: bytes, stream: str) -> str:
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BootProbeError(
+            f"codesign {stream} is not valid UTF-8"
+        ) from exc
+
+
 def _capture_app_signature(app_path: Path) -> _AppSignature:
     app = _validate_directory(app_path, "game app")
     parent = _open_absolute_directory(app.parent, "game app parent")
@@ -413,10 +422,10 @@ def _capture_app_signature(app_path: Path) -> _AppSignature:
                 "--verify",
                 "--deep",
                 "--strict",
+                "--verbose=1",
                 str(app),
             ],
             capture_output=True,
-            text=True,
             check=False,
         )
         after = os.stat(
@@ -435,8 +444,8 @@ def _capture_app_signature(app_path: Path) -> _AppSignature:
             )
         return _AppSignature(
             returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=_decode_codesign_stream(completed.stdout, "stdout"),
+            stderr=_decode_codesign_stream(completed.stderr, "stderr"),
         )
     finally:
         if app_handle is not None:
@@ -4120,6 +4129,16 @@ def _validate_probe_request(
     return game, launcher, config, evidence, timeout_seconds
 
 
+def _app_signature_identity(
+    signature: _AppSignature,
+) -> tuple[int, tuple[str, ...], str]:
+    return (
+        signature.returncode,
+        tuple(sorted(signature.stdout.splitlines(keepends=True))),
+        signature.stderr,
+    )
+
+
 def _preflight_issues(
     snapshot: _BootSnapshot,
     app: Path,
@@ -4138,15 +4157,31 @@ def _preflight_issues(
         )
 
     clean_signature = _AppSignature(0, "", "")
+    foreground_bundle = app / "Contents/Plugins/Foregroundr.bundle"
     foreground_only_signature = _AppSignature(
         1,
-        "",
-        f"{app / 'Contents/Resources/Foregroundr.bundle'}: "
-        "code object is not signed at all\n",
+        "".join(
+            (
+                "file added: "
+                f"{foreground_bundle / 'Contents/_CodeSignature/CodeResources'}\n",
+                "file added: "
+                f"{foreground_bundle / 'Contents/_CodeSignature/CodeDirectory'}\n",
+                "file added: "
+                f"{foreground_bundle / 'Contents/_CodeSignature/CodeRequirements'}\n",
+                "file added: "
+                f"{foreground_bundle / 'Contents/_CodeSignature/CodeSignature'}\n",
+                "file added: "
+                f"{foreground_bundle / 'Contents/MacOS/Foregroundr'}\n",
+                "file added: "
+                f"{foreground_bundle / 'Contents/Info.plist'}\n",
+                f"file missing: {foreground_bundle}\n",
+            )
+        ),
+        f"{app}: a sealed resource is missing or invalid\n",
     )
-    if snapshot.app_signature not in {
-        clean_signature,
-        foreground_only_signature,
+    if _app_signature_identity(snapshot.app_signature) not in {
+        _app_signature_identity(clean_signature),
+        _app_signature_identity(foreground_only_signature),
     }:
         issues.append("game app code signature is not an accepted exact result")
     return tuple(issues)
@@ -4212,9 +4247,11 @@ def _postflight_issues(
         != preflight.active_preloader_sha256
     ):
         issues.append("active preloader SHA-256 changed during boot probe")
-    if postflight.app_signature != preflight.app_signature:
+    if _app_signature_identity(
+        postflight.app_signature
+    ) != _app_signature_identity(preflight.app_signature):
         issues.append(
-            "game app raw code-signature result changed during boot probe"
+            "game app code-signature result changed during boot probe"
         )
     return tuple(issues)
 
