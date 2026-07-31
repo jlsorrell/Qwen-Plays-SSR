@@ -1429,6 +1429,57 @@ def test_bepinex_disk_config_prelaunch_revalidation_blocks_changed_state(
     _assert_no_canonical_probe_json(layout.evidence)
 
 
+def test_bepinex_disk_config_parser_accepts_realistic_generated_file(
+    tmp_path: Path,
+):
+    path = tmp_path / "BepInEx/config/BepInEx.cfg"
+    payload = (
+        b"## Settings file was created by plugin BepInEx\n"
+        b"## Plugin GUID: BepInEx\n"
+        b"\n"
+        b"[Logging.Console]\n"
+        b"\n"
+        b"## Enables showing a console for log output.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: false\n"
+        b"Enabled = false\n"
+        b"\n"
+        b"## Which log levels to show in the console output.\n"
+        b"# Setting type: LogLevel\n"
+        b"# Default value: Fatal, Error, Warning, Message, Info\n"
+        b"LogLevels = Fatal, Error, Warning, Message, Info\n"
+        b"\n"
+        b"[Logging.Disk]\n"
+        b"\n"
+        b"## Enables writing log messages to disk.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: true\n"
+        b"Enabled = true\n"
+        b"\n"
+        b"## Appends to an existing log file instead of overwriting.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: false\n"
+        b"AppendLog = false\n"
+        b"\n"
+        b"## Flushes the disk log after every write.\n"
+        b"# Setting type: Boolean\n"
+        b"# Default value: false\n"
+        b"InstantFlushing = false\n"
+        b"\n"
+        b"## Which log levels to include in the disk output.\n"
+        b"# Setting type: LogLevel\n"
+        b"# Default value: All\n"
+        b"LogLevels = All\n"
+        b"\n"
+        b"[Chainloader]\n"
+        b"\n"
+        b"## Hides the manager GameObject from Unity.\n"
+        b"HideManagerGameObject = false\n"
+    )
+
+    assert oracle_boot._parse_bepinex_disk_logging(payload, path) is None
+
+
 def _tahoe_code_signature_lines(app: Path) -> tuple[str, ...]:
     bundle = (
         app.resolve()
