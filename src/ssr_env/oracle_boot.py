@@ -196,10 +196,21 @@ class _ConfigSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class _ObservedFailureLog:
+    relative_path: Path
+    kind: str
+    device: int
+    inode: int
+    mode: int
+
+
+@dataclass(frozen=True, slots=True)
 class _MonitorOutcome:
     state: str
     markers: tuple[str, ...]
     errors: tuple[str, ...]
+    issues: tuple[str, ...]
+    observed_failures: tuple[_ObservedFailureLog, ...]
     exit_code: int | None
 
 
@@ -905,7 +916,7 @@ def _scan_preloader_logs(
                         file_type=file_type,
                     )
                 )
-            if file_type == "directory":
+            if file_type == "directory" and log_kind is None:
                 pending_handle = _open_child_directory(
                     directory,
                     child_entry.name,
@@ -1000,10 +1011,16 @@ def _fingerprint_scanned(entry: _ScannedLog) -> LogFingerprint:
                 f"monitored boot log changed before hashing: {entry.path}"
             )
         digest = hashlib.sha256()
+        byte_count = 0
         while True:
             chunk = os.read(descriptor, 1024 * 1024)
             if not chunk:
                 break
+            byte_count += len(chunk)
+            if byte_count > _MAX_MONITOR_LOG_BYTES:
+                raise BootProbeError(
+                    f"monitored boot log exceeds byte limit: {entry.path}"
+                )
             digest.update(chunk)
         after = os.fstat(descriptor)
         named = os.stat(
@@ -1028,6 +1045,7 @@ def _fingerprint_scanned(entry: _ScannedLog) -> LogFingerprint:
         if (
             after_identity != expected_identity
             or named_identity != expected_identity
+            or byte_count != before.st_size
         ):
             raise BootProbeError(
                 f"monitored boot log changed while hashing: {entry.path}"
@@ -1121,18 +1139,47 @@ def _payload_contains_boot_marker(payload: bytes, marker: str) -> bool:
 def _observe_boot_logs(
     game_root: Path,
     before: tuple[LogFingerprint, ...],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[_ObservedFailureLog, ...],
+]:
+    game = _requested_path(game_root, "game root")
     baseline = {fingerprint.path: fingerprint for fingerprint in before}
-    scan = _scan_preloader_logs(game_root)
+    scan = _scan_preloader_logs(game)
     try:
-        unsafe = tuple(
-            f"unsafe {entry.file_type} monitored boot log: {entry.path}"
-            for entry in scan.entries
-            if entry.file_type != "regular"
-        )
-        payloads: list[bytes] = []
+        canonical_payloads: list[bytes] = []
+        error_payloads: list[bytes] = []
+        issues: list[str] = []
+        observed_failures: list[_ObservedFailureLog] = []
         for entry in scan.entries:
+            relative_path = entry.path.relative_to(game)
             if entry.file_type != "regular":
+                try:
+                    named = os.stat(
+                        entry.name,
+                        dir_fd=entry.parent.fd,
+                        follow_symlinks=False,
+                    )
+                except OSError as exc:
+                    raise _TransientLogChange(str(entry.path)) from exc
+                if _stat_identity(named) != _stat_identity(entry.observed):
+                    raise _TransientLogChange(str(entry.path))
+                issues.append(
+                    f"unsafe {entry.file_type} {entry.kind} boot log: "
+                    f"{relative_path.as_posix()}"
+                )
+                if entry.kind in {"preloader", "fallback"}:
+                    observed_failures.append(
+                        _ObservedFailureLog(
+                            relative_path=relative_path,
+                            kind=entry.kind,
+                            device=entry.observed.st_dev,
+                            inode=entry.observed.st_ino,
+                            mode=entry.observed.st_mode,
+                        )
+                    )
                 continue
             if entry.observed.st_size > _MAX_MONITOR_LOG_BYTES:
                 raise BootProbeError(
@@ -1146,7 +1193,24 @@ def _observe_boot_logs(
                     raise _TransientLogChange(str(entry.path)) from exc
                 if _fingerprint_matches(prior, current):
                     continue
-            payloads.append(_read_monitored_log(entry))
+            payload = _read_monitored_log(entry)
+            error_payloads.append(payload)
+            if entry.kind == "canonical":
+                canonical_payloads.append(payload)
+                continue
+            issues.append(
+                f"observed {entry.kind} failure log: "
+                f"{relative_path.as_posix()}"
+            )
+            observed_failures.append(
+                _ObservedFailureLog(
+                    relative_path=relative_path,
+                    kind=entry.kind,
+                    device=entry.observed.st_dev,
+                    inode=entry.observed.st_ino,
+                    mode=entry.observed.st_mode,
+                )
+            )
     finally:
         scan.close()
     markers = tuple(
@@ -1154,15 +1218,18 @@ def _observe_boot_logs(
         for marker in _REQUIRED_BOOT_MARKERS
         if any(
             _payload_contains_boot_marker(payload, marker)
-            for payload in payloads
+            for payload in canonical_payloads
         )
     )
-    errors = unsafe + tuple(
+    errors = tuple(
         marker
         for marker in _BOOT_ERROR_MARKERS
-        if any(marker.encode("ascii") in payload for payload in payloads)
+        if any(
+            marker.encode("ascii") in payload
+            for payload in error_payloads
+        )
     )
-    return markers, errors
+    return markers, errors, tuple(issues), tuple(observed_failures)
 
 
 def _wait_for_markers(
@@ -1174,61 +1241,110 @@ def _wait_for_markers(
     deadline = time.monotonic() + timeout_seconds
     markers: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    issue_list: list[str] = []
+    issue_set: set[str] = set()
+    observed_by_path: dict[Path, _ObservedFailureLog] = {}
+
+    def add_issue(issue: str) -> None:
+        if issue not in issue_set:
+            issue_set.add(issue)
+            issue_list.append(issue)
+
+    def merge_structural_observation(
+        issues: tuple[str, ...],
+        observed_failures: tuple[_ObservedFailureLog, ...],
+    ) -> None:
+        for issue in issues:
+            add_issue(issue)
+        for observed in observed_failures:
+            prior = observed_by_path.get(observed.relative_path)
+            if prior is None:
+                observed_by_path[observed.relative_path] = observed
+            elif prior != observed:
+                add_issue(
+                    "observed failure log identity changed during "
+                    f"monitoring: {observed.relative_path.as_posix()}"
+                )
+
+    def outcome(
+        state: str,
+        exit_code: int | None,
+    ) -> _MonitorOutcome:
+        return _MonitorOutcome(
+            state=state,
+            markers=markers,
+            errors=errors,
+            issues=tuple(issue_list),
+            observed_failures=tuple(
+                observed_by_path[path]
+                for path in sorted(
+                    observed_by_path,
+                    key=lambda path: path.as_posix(),
+                )
+            ),
+            exit_code=exit_code,
+        )
+
+    def observe() -> None:
+        nonlocal markers, errors
+        (
+            markers,
+            errors,
+            observed_issues,
+            observed_failures,
+        ) = _observe_boot_logs(game_root, before)
+        merge_structural_observation(
+            observed_issues,
+            observed_failures,
+        )
+
     while True:
         observation_stable = True
         try:
-            markers, errors = _observe_boot_logs(game_root, before)
+            observe()
         except _TransientLogChange:
             observation_stable = False
         except BootProbeError as exc:
-            errors = (str(exc),)
+            add_issue(str(exc))
 
         exit_code = process.poll()
         if not observation_stable and exit_code is not None:
             try:
-                markers, errors = _observe_boot_logs(game_root, before)
+                observe()
             except _TransientLogChange:
-                errors = ("monitored boot log was unstable at launcher exit",)
+                add_issue(
+                    "monitored boot log was unstable at launcher exit"
+                )
             except BootProbeError as exc:
-                errors = (str(exc),)
+                add_issue(str(exc))
             observation_stable = True
         if observation_stable:
-            if errors:
-                return _MonitorOutcome("error", markers, errors, exit_code)
+            if errors or issue_list:
+                return outcome("error", exit_code)
             if exit_code is not None:
-                return _MonitorOutcome(
-                    "early_exit",
-                    markers,
-                    (),
-                    exit_code,
-                )
+                return outcome("early_exit", exit_code)
             if markers == _REQUIRED_BOOT_MARKERS:
-                return _MonitorOutcome("markers", markers, (), None)
+                return outcome("markers", None)
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             if not observation_stable:
                 try:
-                    markers, errors = _observe_boot_logs(game_root, before)
+                    observe()
                 except _TransientLogChange:
-                    errors = (
-                        "monitored boot log remained unstable at deadline",
+                    add_issue(
+                        "monitored boot log remained unstable at deadline"
                     )
                 except BootProbeError as exc:
-                    errors = (str(exc),)
+                    add_issue(str(exc))
             exit_code = process.poll()
-            if errors:
-                return _MonitorOutcome("error", markers, errors, exit_code)
+            if errors or issue_list:
+                return outcome("error", exit_code)
             if exit_code is not None:
-                return _MonitorOutcome(
-                    "early_exit",
-                    markers,
-                    (),
-                    exit_code,
-                )
+                return outcome("early_exit", exit_code)
             if markers == _REQUIRED_BOOT_MARKERS:
-                return _MonitorOutcome("markers", markers, (), None)
-            return _MonitorOutcome("timeout", markers, (), None)
+                return outcome("markers", None)
+            return outcome("timeout", None)
         time.sleep(min(_PROCESS_POLL_SECONDS, remaining))
 
 
@@ -4667,14 +4783,19 @@ def _monitor_result_issues(
     missing_markers = tuple(
         marker for marker in _REQUIRED_BOOT_MARKERS if marker not in markers
     )
-    issues = [
+    issues = list(outcome.issues)
+    issues.extend(
         f"missing required boot marker: {marker}"
         for marker in missing_markers
-    ]
+    )
     issues.extend(
         f"boot monitor error: {error}" for error in outcome.errors
     )
-    if outcome.state == "error" and not outcome.errors:
+    if (
+        outcome.state == "error"
+        and not outcome.errors
+        and not outcome.issues
+    ):
         issues.append("boot monitor reported an unspecified error")
     if outcome.state not in {
         "markers",
@@ -4915,6 +5036,8 @@ def run_boot_probe(
             state=_monitor_outcome.state,
             markers=decision.markers,
             errors=decision.errors,
+            issues=_monitor_outcome.issues,
+            observed_failures=_monitor_outcome.observed_failures,
             exit_code=final_exit_code,
         )
         _verify_pinned_directory_path(
