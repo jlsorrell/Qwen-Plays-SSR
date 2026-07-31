@@ -12,6 +12,7 @@
 
 - Target macOS 15.7.3 on Apple Silicon while the game process itself runs as `x86_64` through Rosetta.
 - Target `net35`: the game has no `netstandard.dll`, its `mscorlib.dll` uses CLR `v2.0.50727`, and its embedded Mono is 2.6.5.
+- Deployable Release plugin builds must omit revision and debug/PDB metadata: set `IncludeSourceRevisionInInformationalVersion` to `false`, `DebugType` to `none`, and `DebugSymbols` to `false`; Git and artifact hashes remain external provenance and no Release PDB is produced.
 - Pin BepInEx to stable `5.4.23.5`; use the release archive's own `BepInEx.dll`, `0Harmony.dll`, and Doorstop rather than separate NuGet runtime packages.
 - Treat `886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564` as the expected SHA-256 of the installed `Assembly-CSharp.dll`.
 - Never modify `Sausage.app`, `Assembly-CSharp.dll`, or the user's normal save directories.
@@ -339,6 +340,12 @@ git commit -m "feat: add safe SSR oracle installer"
     <Nullable>disable</Nullable>
     <AssemblyName>SsrOracle.Plugin</AssemblyName>
     <RootNamespace>SsrOracle</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
