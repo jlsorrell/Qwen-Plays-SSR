@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-30
 
-**Status:** Implemented, independently reviewed, and offline-verified;
+**Status:** Implemented and offline-verified; final branch/PR review and
 corrected runtime validation pending
 
 ## Context
@@ -439,13 +439,33 @@ into the probe-owned evidence directory.
 
 ## Implementation Status
 
-The canonical observer described above is implemented and independently
-reviewed offline. Its offline boot-module verification recorded 419 passing
-tests, with six inherited documented non-strict XPASS cases. This status
-verifies the monitored-family classification, canonical-only success,
-strict logging-contract validation, two-snapshot prelaunch reconciliation,
-new-versus-changed canonical retention, and schema/public-marker stability.
-It does not verify an installed-game result.
+The canonical observer described above is implemented. Its immutable
+implementation range is
+`2f27ede141b3b16b57806e18b7e82b4e8658b394..8a63be151f9a08c7e0674d6de74548396fa9f623`;
+the final implementation tree is
+`8a63be151f9a08c7e0674d6de74548396fa9f623`
+(`fix: observe canonical BepInEx boot output`). The tracked test record is
+`8a63be151f9a08c7e0674d6de74548396fa9f623:tests/test_oracle_boot.py`.
+The same command is the tracked Task 7, Step 1 acceptance command in
+`docs/superpowers/plans/2026-07-31-oracle-canonical-boot-log-implementation.md`.
+Against that tree, it
+
+```bash
+UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q --tb=short \
+  tests/test_oracle_boot.py
+```
+
+recorded `419 passed, 6 xpassed`; the six XPASS cases are inherited documented
+non-strict practical-model cases. This code/test evidence covers monitored
+family classification, canonical-only success, strict logging-contract
+validation, two-snapshot prelaunch reconciliation, new-versus-changed canonical
+retention, and schema/public-marker stability. It does not verify an
+installed-game result.
+
+Task-scoped review notes exist in the worktree-local Task 1–5 reports, but
+they are not immutable branch or PR review records. Therefore this document
+does not claim final independent review: final branch/PR review remains
+pending.
 
 Corrected runtime validation remains pending. No second deployment, game
 launch, end-to-end installed-game pass, or installed plugin/config change has
@@ -525,7 +545,7 @@ The realistic fixture is derived from the 17-line successful `LogOutput.log`
 while avoiding machine-local absolute paths. It includes the exact pinned
 versions and plugin marker.
 
-Offline verification included:
+Final branch/PR review must include:
 
 - the new focused regressions;
 - the complete `tests/test_oracle_boot.py` module;
@@ -533,7 +553,7 @@ Offline verification included:
 - the complete Python repository suite with only documented expected
   failures;
 - Python compilation, whitespace, scope, and artifact-hash checks;
-- an independent specification review and code-quality review;
+- an immutable independent specification and code-quality review record; and
 - no installed-game mutation or launch.
 
 ## Files in Scope
@@ -583,7 +603,8 @@ The correction is ready for a new launch request only when:
   marker or early warning/error diagnostics;
 - failure and fallback log families remain fail-closed and retained;
 - the final result is derived from durable canonical evidence;
-- all offline verification and independent reviews pass;
+- immutable offline test evidence is present and final branch/PR review is
+  complete;
 - the installed game remains healthy `official`; and
 - corrected second-launch validation remains pending.
 

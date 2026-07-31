@@ -18,18 +18,21 @@ and therefore missed the authentic `BepInEx/LogOutput.log` success output. The
 official preloader was then restored transactionally and its healthy
 `official` state verified.
 
-The canonical observer correction is implemented, independently reviewed, and
-offline-tested. Corrected runtime validation is still pending: no second
-deployment, game launch, end-to-end installed-game pass, or installed
+The canonical observer correction is implemented and offline-tested. Its
+immutable code/test evidence is the commit range
+`2f27ede141b3b16b57806e18b7e82b4e8658b394` through
+`8a63be151f9a08c7e0674d6de74548396fa9f623`; final independent branch/PR
+review remains pending. Corrected runtime validation is also pending: no
+second deployment, game launch, end-to-end installed-game pass, or installed
 plugin/config change has occurred.
 
 ## Current stop gate
 
 Offline rebuilds, tests, and the read-only status and preflight commands remain
 usable. The observer is implemented and offline-tested, but it has not been
-exercised by a corrected second game launch. The mutation, boot, restore, and
-re-deploy commands below are reference-only; this document does not authorize
-their execution.
+exercised by a corrected second game launch and final branch/PR review remains
+pending. The mutation, boot, restore, and re-deploy commands below are
+reference-only; this document does not authorize their execution.
 
 Before *any* mutation, deploy, restore, or launch command below is used, run a
 fresh read-only preflight and obtain separate explicit approval that names the
@@ -559,7 +562,11 @@ canonical log is copied into evidence and remains installed. An unchanged
 canonical log cannot satisfy a current run.
 
 Before launch, the observer validates only the strict BepInEx logging subset
-that guarantees canonical output and early-marker visibility:
+that guarantees canonical output and early-marker visibility. An absent
+`BepInEx/config` directory or absent `BepInEx.cfg` leaf accepts the pinned
+disk and console defaults. If `BepInEx.cfg` exists, it must be a regular,
+no-follow file beneath a real `BepInEx/config` directory and the following
+disk contract is mandatory:
 
 ```ini
 [Logging.Disk]
@@ -571,8 +578,35 @@ LogLevels = Fatal, Error, Warning, Message, Info
 LogLevels = Fatal, Error, Warning, Message, Info
 ```
 
-An absent `BepInEx.cfg` uses those pinned defaults; malformed, duplicate,
-unsafe, disabled, append-mode, or insufficient-level settings are rejected.
+The present-file cardinality and scope rules are exact:
+
+- There must be exactly one exactly-spelled `[Logging.Disk]` section, with
+  exactly one exactly-spelled `Enabled`, `AppendLog`, and `LogLevels` key in
+  that section. A relevant key in another section does not satisfy the disk
+  requirement.
+- `[Logging.Console]` is optional. If present, there is at most one
+  exactly-spelled console section and at most one exactly-spelled `LogLevels`
+  key in it. An absent console section or console `LogLevels` uses the pinned
+  console default; other keys and unrelated sections do not alter this subset.
+- `Enabled` must be `true` and `AppendLog` must be `false`, case-insensitively
+  after value trimming. Disk and explicit console `LogLevels` each accept
+  either the singleton `All` (case-insensitively) or a comma-separated,
+  duplicate-free list containing every required visibility level—`Fatal`,
+  `Error`, `Warning`, `Message`, and `Info`—in any order, with one optional
+  `Debug`. `All` cannot be combined with `Debug` or any other item.
+
+The parser accepts a leading UTF-8 BOM and CRLF line endings, but rejects
+invalid UTF-8, an embedded BOM, NUL bytes, and bare carriage returns. Blank
+lines and whole-line `#` comments are allowed; inline comments are rejected.
+Outer line and key/value whitespace is trimmed, but internal case/whitespace
+lookalikes are not normalized into monitored names.
+Every remaining line must be either a well-formed single-bracket section or a
+key/value line with `=`. Malformed or empty sections/keys, duplicate relevant
+sections or keys, and case/whitespace lookalikes of monitored keys within their
+disk/console scope are rejected. Disabled, append-mode, unknown, repeated,
+empty, or insufficient log-level lists are rejected; a console level list
+cannot satisfy the required disk list.
+
 The complete monitored inventory is fingerprinted twice before launch: once
 before the longer preflight and once immediately before `Popen`. Any difference
 between those snapshots rejects the probe before launch; the second snapshot
