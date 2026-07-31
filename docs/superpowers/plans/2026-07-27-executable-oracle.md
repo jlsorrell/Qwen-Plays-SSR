@@ -327,6 +327,47 @@ pending. No second
 deployment, game launch, end-to-end installed-game pass, or installed
 plugin/config change is recorded here.
 
+#### Offline verification record (2026-07-31)
+
+**Execution date:** 2026-07-31 (America/New_York).
+**Branch commit executed:** `e26e1854664295cbc48841dad90f3644196b5760`
+(`docs: describe canonical boot observer rollout`).
+**Implementation source/test range under test:**
+`2f27ede141b3b16b57806e18b7e82b4e8658b394..8a63be151f9a08c7e0674d6de74548396fa9f623`;
+the final implementation source/test tree is
+`8a63be151f9a08c7e0674d6de74548396fa9f623`
+(`fix: observe canonical BepInEx boot output`). The following read-only
+comparison exited 0 with no output, establishing that the executed branch had
+the same `src/ssr_env/oracle_boot.py` and `tests/test_oracle_boot.py` content
+as that final implementation tree:
+
+```bash
+git diff --exit-code \
+  8a63be151f9a08c7e0674d6de74548396fa9f623 \
+  e26e1854664295cbc48841dad90f3644196b5760 -- \
+  src/ssr_env/oracle_boot.py tests/test_oracle_boot.py
+```
+
+**Exact command:**
+
+```bash
+UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q --tb=short \
+  tests/test_oracle_boot.py
+```
+
+**Exit code:** `0`.
+**Exact summary output:**
+
+```text
+419 passed, 6 xpassed in 26.49s
+```
+
+The six XPASS cases are inherited, documented non-strict practical-model
+cases; they are not test failures and this run introduced no failure. This is
+an offline boot-module verification only: Task 7 final acceptance has not run,
+final branch/PR review has not run, and the record asserts no installed-game
+deployment, mutation, launch, or end-to-end result.
+
 **Files:**
 - Create: `oracle/plugin/SsrOracle.Plugin.csproj`
 - Create: `oracle/plugin/Plugin.cs`
