@@ -400,9 +400,21 @@ class _LogScan:
     entries: tuple[_ScannedLog, ...]
     handles: tuple[_DirectoryHandle, ...]
 
-    def close(self) -> None:
+    def close(self, primary: BaseException | None = None) -> None:
         for handle in reversed(self.handles):
-            handle.close()
+            try:
+                handle.close()
+            except BaseException as exc:
+                if primary is None:
+                    primary = exc
+                else:
+                    _note_later_error(
+                        primary,
+                        "log scan handle close also failed",
+                        exc,
+                    )
+        if primary is not None:
+            raise primary
 
 
 def _requested_path(value: object, label: str) -> Path:
@@ -1477,14 +1489,7 @@ def _capture_boot_log_inventory(
     try:
         inventory = _capture_boot_log_inventory_from_scan(game, scan)
     except BaseException as primary:
-        try:
-            scan.close()
-        except BaseException as exc:
-            _note_later_error(
-                primary,
-                "boot log inventory scan close also failed",
-                exc,
-            )
+        scan.close(primary)
         raise
     else:
         scan.close()
@@ -3938,14 +3943,7 @@ def _collect_boot_evidence_retained(
                 )
         except BaseException as primary:
             if final_scan is not None:
-                try:
-                    final_scan.close()
-                except BaseException as exc:
-                    _note_later_error(
-                        primary,
-                        "final preloader scan close also failed",
-                        exc,
-                    )
+                final_scan.close(primary)
             raise
         else:
             final_scan.close()

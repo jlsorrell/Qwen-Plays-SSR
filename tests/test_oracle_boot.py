@@ -2768,6 +2768,161 @@ def test_evidence_inventory_records_unsafe_families_without_opening(
     assert outside.read_bytes() == b"outside must not be read"
 
 
+def test_recursive_log_scan_close_attempts_every_handle_after_inventory_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    log = game / "nested/deep/preloader_recursive.log"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"recursive inventory")
+    original_scan = oracle_boot._scan_preloader_logs
+    original_close = oracle_boot._DirectoryHandle.close
+    captured_handles: tuple[oracle_boot._DirectoryHandle, ...] = ()
+    close_calls: list[Path] = []
+
+    class FirstRecursiveCloseError(OSError):
+        pass
+
+    class LaterRecursiveCloseError(OSError):
+        pass
+
+    first_error = FirstRecursiveCloseError("deep handle close failed")
+    later_error = LaterRecursiveCloseError("nested handle close failed")
+
+    def capture_scan(*args, **kwargs):
+        nonlocal captured_handles
+        scan = original_scan(*args, **kwargs)
+        captured_handles = scan.handles
+        return scan
+
+    def close_then_fail(handle) -> None:
+        relative = handle.path.relative_to(game.resolve())
+        close_calls.append(relative)
+        original_close(handle)
+        if relative == Path("nested/deep"):
+            raise first_error
+        if relative == Path("nested"):
+            raise later_error
+
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                oracle_boot,
+                "_scan_preloader_logs",
+                capture_scan,
+            )
+            scoped.setattr(
+                oracle_boot._DirectoryHandle,
+                "close",
+                close_then_fail,
+            )
+
+            with pytest.raises(FirstRecursiveCloseError) as raised:
+                oracle_boot._capture_boot_log_inventory(game)
+
+            assert raised.value is first_error
+            assert close_calls == [
+                Path("nested/deep"),
+                Path("nested"),
+                Path("."),
+            ]
+            assert all(handle.fd == -1 for handle in captured_handles)
+            assert any(
+                "log scan handle close also failed" in note
+                and "nested handle close failed" in note
+                for note in getattr(first_error, "__notes__", ())
+            )
+    finally:
+        for handle in reversed(captured_handles):
+            if handle.fd >= 0:
+                original_close(handle)
+
+
+def test_recursive_log_scan_close_attaches_all_failures_to_inventory_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    game = tmp_path / "game"
+    log = game / "nested/deep/preloader_recursive.log"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(b"recursive inventory")
+    original_scan = oracle_boot._scan_preloader_logs
+    original_close = oracle_boot._DirectoryHandle.close
+    captured_handles: tuple[oracle_boot._DirectoryHandle, ...] = ()
+    close_calls: list[Path] = []
+
+    class PrimaryInventoryError(RuntimeError):
+        pass
+
+    class RecursiveCloseError(OSError):
+        pass
+
+    primary_error = PrimaryInventoryError("inventory fingerprint failed")
+
+    def capture_scan(*args, **kwargs):
+        nonlocal captured_handles
+        scan = original_scan(*args, **kwargs)
+        captured_handles = scan.handles
+        return scan
+
+    def fail_inventory(_entry):
+        raise primary_error
+
+    def close_then_fail(handle) -> None:
+        relative = handle.path.relative_to(game.resolve())
+        close_calls.append(relative)
+        original_close(handle)
+        if relative in {Path("nested/deep"), Path("nested")}:
+            raise RecursiveCloseError(
+                f"{relative.as_posix()} handle close failed"
+            )
+
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                oracle_boot,
+                "_scan_preloader_logs",
+                capture_scan,
+            )
+            scoped.setattr(
+                oracle_boot,
+                "_fingerprint_scanned",
+                fail_inventory,
+            )
+            scoped.setattr(
+                oracle_boot._DirectoryHandle,
+                "close",
+                close_then_fail,
+            )
+
+            with pytest.raises(PrimaryInventoryError) as raised:
+                oracle_boot._capture_boot_log_inventory(game)
+
+            assert raised.value is primary_error
+            assert close_calls == [
+                Path("nested/deep"),
+                Path("nested"),
+                Path("."),
+            ]
+            assert all(handle.fd == -1 for handle in captured_handles)
+            notes = getattr(primary_error, "__notes__", ())
+            assert any(
+                "log scan handle close also failed" in note
+                and "nested/deep handle close failed" in note
+                for note in notes
+            )
+            assert any(
+                "log scan handle close also failed" in note
+                and "nested handle close failed" in note
+                for note in notes
+            )
+    finally:
+        for handle in reversed(captured_handles):
+            if handle.fd >= 0:
+                original_close(handle)
+
+
 def test_evidence_inventory_complete_comparison_precedes_transfer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
