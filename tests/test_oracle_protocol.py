@@ -8,12 +8,21 @@ from pathlib import Path
 import pytest
 
 from ssr_env.oracle_protocol import (
+    EXPECTED_ASSEMBLY_SHA256,
+    EXPECTED_INPUT_COUNT,
     MAX_RECORD_BYTES,
     MAX_TRACE_BYTES,
     OracleProtocolError,
+    SCHEMA_VERSION,
+    _decode_record,
     _read_record_lines,
 )
-from ssr_env.oracle_protocol import _CanonicalJsonReader
+from ssr_env.oracle_protocol import (
+    InitialRecord,
+    OracleCapture,
+    RunHeader,
+    _CanonicalJsonReader,
+)
 
 
 def _read_lines(path: Path) -> list[tuple[int, bytes]]:
@@ -438,3 +447,179 @@ def test_state_identity_rejects_long_decimal_before_conversion(value: str) -> No
         OracleProtocolError, match="state_identity exceeds 11 characters"
     ):
         _validate_state_identity(value)
+
+
+RUN_ID = "0123456789abcdef0123456789abcdef"
+OTHER_RUN_ID = "fedcba9876543210fedcba9876543210"
+ASSEMBLY_HASH = EXPECTED_ASSEMBLY_SHA256
+CAPTURE_JSON = (
+    '{"raw_save":"initial","state_identity":"17","level":"",'
+    '"overworld":false,"won":false,"returning":false,'
+    '"have_ever_cooked_all":false,"lost_reason":"","display_name":"",'
+    '"sausages_cooked":0,"movement_count":0,"pushes_to_try":0}'
+)
+MOVED_CAPTURE_JSON = CAPTURE_JSON.replace('"raw_save":"initial"', '"raw_save":"moved"')
+RUN_LINE = (
+    f'{{"kind":"run","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","mode":"passive",'
+    f'"game_assembly_sha256":"{ASSEMBLY_HASH}",'
+    '"plugin_version":"0.2.0","input_sha256":null,'
+    f'"expected_input_count":{EXPECTED_INPUT_COUNT},'
+    '"started_at_utc":"2026-07-31T19:09:50.3199100Z"}'
+).encode("utf-8")
+INITIAL_LINE = (
+    f'{{"kind":"initial","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_index":null,"capture":{CAPTURE_JSON}'
+    "}"
+).encode("utf-8")
+STEP0_LINE = (
+    f'{{"kind":"step","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_index":0,"input":"West",'
+    '"accepted":true,"movement_scheduled":true,"settle_frames":2,'
+    f'"state_replaced":false,"capture":{MOVED_CAPTURE_JSON}'
+    "}"
+).encode("utf-8")
+STEP1_LINE = (
+    f'{{"kind":"step","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_index":1,"input":"North",'
+    '"accepted":false,"movement_scheduled":false,"settle_frames":2,'
+    f'"state_replaced":false,"capture":{MOVED_CAPTURE_JSON}'
+    "}"
+).encode("utf-8")
+STEP2_LINE = (
+    f'{{"kind":"step","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_index":2,"input":"Undo",'
+    '"accepted":true,"movement_scheduled":false,"settle_frames":2,'
+    f'"state_replaced":false,"capture":{CAPTURE_JSON}'
+    "}"
+).encode("utf-8")
+END_LINE = (
+    f'{{"kind":"end","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_count":{EXPECTED_INPUT_COUNT},'
+    '"finished_at_utc":"2026-07-31T19:11:00.0000000Z"}'
+).encode("utf-8")
+ERROR_LINE = (
+    f'{{"kind":"error","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_index":1,"input":"North",'
+    '"code":"settle_timeout","message":"input did not settle",'
+    f'"settle_frames":600,"last_capture":{MOVED_CAPTURE_JSON}'
+    "}"
+).encode("utf-8")
+
+
+def _expected_capture(raw_save: str) -> OracleCapture:
+    return OracleCapture(
+        raw_save=raw_save,
+        state_identity="17",
+        level="",
+        overworld=False,
+        won=False,
+        returning=False,
+        have_ever_cooked_all=False,
+        lost_reason="",
+        display_name="",
+        sausages_cooked=0,
+        movement_count=0,
+        pushes_to_try=0,
+    )
+
+
+def test_record_decoder_accepts_run_initial_and_complete_capture() -> None:
+    run = _decode_record(RUN_LINE, 1, source="literal")
+    initial = _decode_record(INITIAL_LINE, 2, source="literal")
+
+    assert run.kind == "run"
+    assert run.schema_version == SCHEMA_VERSION
+    assert run.run_id == RUN_ID
+    assert run.record == RunHeader(
+        run_id=RUN_ID,
+        game_assembly_sha256=ASSEMBLY_HASH,
+        started_at_utc="2026-07-31T19:09:50.3199100Z",
+    )
+    assert initial.record == InitialRecord(capture=_expected_capture("initial"))
+
+
+STRUCTURALLY_BAD_RUN_OR_CAPTURE_LINES = [
+    pytest.param(RUN_LINE.replace(b'"kind":"run"', b'"kind":"wat"'), id="kind"),
+    pytest.param(
+        RUN_LINE.replace(b'"schema_version":1', b'"schema_version":true'),
+        id="bool-as-schema-integer",
+    ),
+    pytest.param(
+        RUN_LINE.replace(
+            b'"mode":"passive","game_assembly_sha256"',
+            b'"game_assembly_sha256":"' + ASSEMBLY_HASH.encode() + b'","mode"',
+        ),
+        id="reordered-top-level-key",
+    ),
+    pytest.param(
+        RUN_LINE.replace(
+            b'"mode":"passive",',
+            b'"mode":"passive","mode":"passive",',
+        ),
+        id="duplicate-top-level-key",
+    ),
+    pytest.param(
+        RUN_LINE.replace(
+            b'"mode":"passive",',
+            b'"mode":"passive","extra":false,',
+        ),
+        id="unknown-top-level-key",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(
+            b'"raw_save":"initial","state_identity":"17"',
+            b'"state_identity":"17","raw_save":"initial"',
+        ),
+        id="reordered-capture-key",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(b'"level":"",', b""),
+        id="missing-capture-key",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(
+            b'"raw_save":"initial",',
+            b'"raw_save":"initial","extra":false,',
+        ),
+        id="unknown-capture-key",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(
+            b'"raw_save":"initial",',
+            b'"raw_save":"initial","raw_save":"initial",',
+        ),
+        id="duplicate-capture-key",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(b'"raw_save":"initial"', b'"raw_save":null'),
+        id="null-raw-save",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(b'"sausages_cooked":0', b'"sausages_cooked":false'),
+        id="bool-as-capture-integer",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(b'"pushes_to_try":0', b'"pushes_to_try":2147483648'),
+        id="overflow-capture-integer",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", STRUCTURALLY_BAD_RUN_OR_CAPTURE_LINES)
+def test_record_decoder_rejects_structurally_bad_run_or_capture(
+    payload: bytes,
+) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 1, source="bad-structure")
+
+
+def test_record_decoder_preserves_long_integer_lexer_guard() -> None:
+    payload = RUN_LINE.replace(
+        b'"expected_input_count":3',
+        b'"expected_input_count":' + b"9" * 100_000,
+    )
+    with pytest.raises(
+        OracleProtocolError, match="integer lexeme exceeds 11 bytes"
+    ):
+        _decode_record(payload, 1, source="long-integer")

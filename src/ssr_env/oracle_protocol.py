@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 from types import MappingProxyType
-from typing import BinaryIO, Iterator, Literal
+from typing import BinaryIO, Iterator, Literal, NoReturn, TypeVar, cast
 
 SCHEMA_VERSION = 1
 MAX_RECORD_BYTES = 16 * 1024 * 1024
@@ -419,3 +419,116 @@ def _input_name(value: str, *, allow_none: bool = False) -> InputName:
         suffix = " or null" if allow_none else ""
         raise OracleProtocolError(f"input must use the passive vocabulary{suffix}")
     return value  # type: ignore[return-value]
+
+
+_T = TypeVar("_T")
+
+
+def _located(reader: _CanonicalJsonReader, operation: Callable[[], _T]) -> _T:
+    try:
+        return operation()
+    except OracleProtocolError as exc:
+        raise OracleProtocolError(
+            f"{reader.source}: line {reader.line_number}: {exc}"
+        ) from exc
+
+
+def _record_error(reader: _CanonicalJsonReader, message: str) -> NoReturn:
+    raise OracleProtocolError(
+        f"{reader.source}: line {reader.line_number}: {message}"
+    )
+
+
+def _read_capture(reader: _CanonicalJsonReader) -> OracleCapture:
+    values = reader.read_object(
+        (
+            ("raw_save", reader.read_string),
+            ("state_identity", reader.read_string),
+            ("level", reader.read_string),
+            ("overworld", reader.read_boolean),
+            ("won", reader.read_boolean),
+            ("returning", reader.read_boolean),
+            ("have_ever_cooked_all", reader.read_boolean),
+            ("lost_reason", reader.read_string),
+            ("display_name", reader.read_string),
+            ("sausages_cooked", reader.read_integer),
+            ("movement_count", reader.read_integer),
+            ("pushes_to_try", reader.read_integer),
+        )
+    )
+    return OracleCapture(
+        raw_save=cast(str, values["raw_save"]),
+        state_identity=cast(str, values["state_identity"]),
+        level=cast(str, values["level"]),
+        overworld=cast(bool, values["overworld"]),
+        won=cast(bool, values["won"]),
+        returning=cast(bool, values["returning"]),
+        have_ever_cooked_all=cast(bool, values["have_ever_cooked_all"]),
+        lost_reason=cast(str, values["lost_reason"]),
+        display_name=cast(str, values["display_name"]),
+        sausages_cooked=cast(int, values["sausages_cooked"]),
+        movement_count=cast(int, values["movement_count"]),
+        pushes_to_try=cast(int, values["pushes_to_try"]),
+    )
+
+
+def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
+    values = reader.read_object(
+        (
+            ("kind", reader.read_string),
+            ("schema_version", reader.read_integer),
+            ("run_id", reader.read_string),
+            ("mode", reader.read_string),
+            ("game_assembly_sha256", reader.read_string),
+            ("plugin_version", reader.read_string),
+            ("input_sha256", lambda: reader.read_optional(reader.read_string)),
+            ("expected_input_count", reader.read_integer),
+            ("started_at_utc", reader.read_string),
+        )
+    )
+    reader.finish()
+    kind = cast(RecordKind, values["kind"])
+    run_id = cast(str, values["run_id"])
+    return _DecodedLine(
+        kind=kind,
+        schema_version=cast(int, values["schema_version"]),
+        run_id=run_id,
+        record=RunHeader(
+            run_id=run_id,
+            game_assembly_sha256=cast(
+                str, values["game_assembly_sha256"]
+            ),
+            started_at_utc=cast(str, values["started_at_utc"]),
+        ),
+    )
+
+
+def _decode_initial(reader: _CanonicalJsonReader) -> _DecodedLine:
+    values = reader.read_object(
+        (
+            ("kind", reader.read_string),
+            ("schema_version", reader.read_integer),
+            ("run_id", reader.read_string),
+            ("input_index", lambda: reader.read_optional(reader.read_integer)),
+            ("capture", lambda: _read_capture(reader)),
+        )
+    )
+    reader.finish()
+    return _DecodedLine(
+        kind=cast(RecordKind, values["kind"]),
+        schema_version=cast(int, values["schema_version"]),
+        run_id=cast(str, values["run_id"]),
+        record=InitialRecord(capture=cast(OracleCapture, values["capture"])),
+    )
+
+
+def _decode_record(
+    payload: bytes, line_number: int, *, source: str
+) -> _DecodedLine:
+    reader = _CanonicalJsonReader(payload, line_number, source=source)
+    if payload.startswith(b'{"kind":"run",'):
+        return _decode_run(reader)
+    if payload.startswith(b'{"kind":"initial",'):
+        return _decode_initial(reader)
+    _record_error(reader, "kind must be the first key and use a schema-v1 value")
+    raise AssertionError("unreachable")
