@@ -902,3 +902,81 @@ BAD_ERROR_SEMANTIC_LINES = [
 def test_record_decoder_rejects_invalid_error_semantics(payload: bytes) -> None:
     with pytest.raises(OracleProtocolError):
         _decode_record(payload, 4, source="bad-error-semantics")
+
+
+from ssr_env.oracle_protocol import read_oracle_trace_stream
+
+
+def _trace_bytes(*records: bytes) -> bytes:
+    return b"\n".join(records) + b"\n"
+
+
+SUCCESS_TRACE_BYTES = _trace_bytes(
+    RUN_LINE,
+    INITIAL_LINE,
+    STEP0_LINE,
+    STEP1_LINE,
+    STEP2_LINE,
+    END_LINE,
+)
+ERROR_TRACE_BYTES = _trace_bytes(
+    RUN_LINE,
+    INITIAL_LINE,
+    STEP0_LINE,
+    ERROR_LINE,
+)
+RUN_ONLY_ERROR_LINE = (
+    f'{{"kind":"error","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","input_index":null,"input":null,'
+    '"code":"capture_failed","message":"game-state capture failed",'
+    '"settle_frames":0,"last_capture":null}'
+).encode("utf-8")
+ERROR_INDEX_0_LINE = ERROR_LINE.replace(b'"input_index":1', b'"input_index":0')
+ERROR_INDEX_2_LINE = ERROR_LINE.replace(b'"input_index":1', b'"input_index":2')
+ERROR_INDEX_3_LINE = ERROR_LINE.replace(b'"input_index":1', b'"input_index":3')
+
+
+def test_trace_stream_accepts_complete_success_shape() -> None:
+    trace = read_oracle_trace_stream(
+        io.BytesIO(SUCCESS_TRACE_BYTES), source="success-memory"
+    )
+    assert trace.header == RunHeader(
+        run_id=RUN_ID,
+        game_assembly_sha256=ASSEMBLY_HASH,
+        started_at_utc="2026-07-31T19:09:50.3199100Z",
+    )
+    assert trace.initial == InitialRecord(capture=_expected_capture("initial"))
+    assert trace.steps == (
+        StepRecord(
+            input_index=0,
+            input="West",
+            accepted=True,
+            movement_scheduled=True,
+            settle_frames=2,
+            state_replaced=False,
+            capture=_expected_capture("moved"),
+        ),
+        StepRecord(
+            input_index=1,
+            input="North",
+            accepted=False,
+            movement_scheduled=False,
+            settle_frames=2,
+            state_replaced=False,
+            capture=_expected_capture("moved"),
+        ),
+        StepRecord(
+            input_index=2,
+            input="Undo",
+            accepted=True,
+            movement_scheduled=False,
+            settle_frames=2,
+            state_replaced=False,
+            capture=_expected_capture("initial"),
+        ),
+    )
+    assert trace.terminal == EndRecord(
+        input_count=3,
+        finished_at_utc="2026-07-31T19:11:00.0000000Z",
+    )
+    assert trace.outcome == "success"

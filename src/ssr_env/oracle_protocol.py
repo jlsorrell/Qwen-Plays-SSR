@@ -742,3 +742,36 @@ def _decode_record(
         return _decode_error(reader)
     _record_error(reader, "kind must be the first key and use a schema-v1 value")
     raise AssertionError("unreachable")
+
+
+def _sequence_error(source: str, message: str) -> NoReturn:
+    raise OracleProtocolError(f"{source}: {message}")
+
+
+def _decode_trace_lines(
+    stream: BinaryIO, *, source: str
+) -> Iterator[_DecodedLine]:
+    for line_number, payload in _read_record_lines(stream, source=source):
+        yield _decode_record(payload, line_number, source=source)
+
+
+def read_oracle_trace_stream(
+    stream: BinaryIO, *, source: str
+) -> OracleRun:
+    decoded = list(_decode_trace_lines(stream, source=source))
+    header = cast(RunHeader, decoded[0].record)
+    initial = cast(InitialRecord, decoded[1].record)
+    steps = tuple(
+        cast(StepRecord, item.record) for item in decoded[2:-1]
+    )
+    terminal = decoded[-1].record
+    if not isinstance(terminal, EndRecord):
+        _sequence_error(source, "terminal-error support is not implemented")
+    outcome: TerminalOutcome = "success"
+    return OracleRun(
+        header=header,
+        initial=initial,
+        steps=steps,
+        terminal=terminal,
+        outcome=outcome,
+    )
