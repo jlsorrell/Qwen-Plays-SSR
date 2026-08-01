@@ -281,3 +281,105 @@ def test_canonical_json_optional_reads_null_or_value() -> None:
     value_reader = _CanonicalJsonReader(b'"North"', 1, source="optional")
     assert value_reader.read_optional(value_reader.read_string) == "North"
     value_reader.finish()
+
+
+from dataclasses import FrozenInstanceError
+
+from ssr_env.oracle_protocol import (
+    EndRecord,
+    ErrorRecord,
+    InitialRecord,
+    OracleCapture,
+    OracleRun,
+    RunHeader,
+    StepRecord,
+    _ERROR_MESSAGES,
+)
+
+
+def test_protocol_model_is_frozen_slotted_and_complete() -> None:
+    capture = OracleCapture(
+        raw_save="save",
+        state_identity="-17",
+        level="level",
+        overworld=False,
+        won=False,
+        returning=False,
+        have_ever_cooked_all=False,
+        lost_reason="",
+        display_name="name",
+        sausages_cooked=0,
+        movement_count=0,
+        pushes_to_try=0,
+    )
+    initial = InitialRecord(capture=capture)
+    step = StepRecord(
+        input_index=0,
+        input="West",
+        accepted=True,
+        movement_scheduled=True,
+        settle_frames=2,
+        state_replaced=False,
+        capture=capture,
+    )
+    end = EndRecord(
+        input_count=3,
+        finished_at_utc="2026-07-31T19:11:00.0000000Z",
+    )
+    trace = OracleRun(
+        header=RunHeader(
+            run_id="0123456789abcdef0123456789abcdef",
+            game_assembly_sha256=(
+                "886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564"
+            ),
+            started_at_utc="2026-07-31T19:09:50.3199100Z",
+        ),
+        initial=initial,
+        steps=(step,),
+        terminal=end,
+        outcome="success",
+    )
+    assert trace.initial == initial
+    assert trace.steps == (step,)
+    assert trace.terminal == end
+    assert not hasattr(capture, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        capture.level = "changed"  # type: ignore[misc]
+
+
+def test_error_record_allows_the_schema_null_forms() -> None:
+    record = ErrorRecord(
+        input_index=None,
+        input=None,
+        code="capture_failed",
+        message="game-state capture failed",
+        settle_frames=0,
+        last_capture=None,
+    )
+    assert record.input_index is None
+    assert record.input is None
+    assert record.last_capture is None
+
+
+def test_error_code_message_table_is_exact_private_and_immutable() -> None:
+    assert _ERROR_MESSAGES == {
+        "patch_install_failed": "observation patch installation failed",
+        "input_before_initial": "manual input arrived before initial capture",
+        "overlapping_input": "manual input arrived while settling",
+        "unexpected_input": "native input was outside the passive vocabulary",
+        "unscoped_process_input": (
+            "manual-looking input occurred outside the native poll scope"
+        ),
+        "hook_order_mismatch": "observation hook order mismatch",
+        "game_method_exception": "observed game method threw",
+        "observer_exception": "passive observer failed",
+        "capture_failed": "game-state capture failed",
+        "record_too_large": "encoded trace record exceeded its limit",
+        "initial_settle_timeout": "initial capture did not settle",
+        "settle_timeout": "input did not settle",
+        "state_replaced": "game state identity changed",
+        "save_path_changed": "isolated save path changed",
+    }
+    with pytest.raises(TypeError):
+        _ERROR_MESSAGES["capture_failed"] = "changed"  # type: ignore[index]
+    assert _ERROR_MESSAGES["capture_failed"] == "game-state capture failed"

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import BinaryIO, Iterator
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import BinaryIO, Iterator, Literal
 
 SCHEMA_VERSION = 1
 MAX_RECORD_BYTES = 16 * 1024 * 1024
@@ -231,3 +233,106 @@ class _CanonicalJsonReader:
     def finish(self) -> None:
         if self._offset != len(self._payload):
             self._fail("trailing bytes after record")
+
+
+InputName = Literal["North", "South", "West", "East", "Undo"]
+TerminalOutcome = Literal["success", "error"]
+
+
+@dataclass(frozen=True, slots=True)
+class RunHeader:
+    run_id: str
+    game_assembly_sha256: str
+    started_at_utc: str
+
+
+@dataclass(frozen=True, slots=True)
+class OracleCapture:
+    raw_save: str
+    state_identity: str
+    level: str
+    overworld: bool
+    won: bool
+    returning: bool
+    have_ever_cooked_all: bool
+    lost_reason: str
+    display_name: str
+    sausages_cooked: int
+    movement_count: int
+    pushes_to_try: int
+
+
+@dataclass(frozen=True, slots=True)
+class InitialRecord:
+    capture: OracleCapture
+
+
+@dataclass(frozen=True, slots=True)
+class StepRecord:
+    input_index: int
+    input: InputName
+    accepted: bool
+    movement_scheduled: bool
+    settle_frames: int
+    state_replaced: bool
+    capture: OracleCapture
+
+
+@dataclass(frozen=True, slots=True)
+class EndRecord:
+    input_count: int
+    finished_at_utc: str
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorRecord:
+    input_index: int | None
+    input: InputName | None
+    code: str
+    message: str
+    settle_frames: int
+    last_capture: OracleCapture | None
+
+
+@dataclass(frozen=True, slots=True)
+class OracleRun:
+    header: RunHeader
+    initial: InitialRecord | None
+    steps: tuple[StepRecord, ...]
+    terminal: EndRecord | ErrorRecord
+    outcome: TerminalOutcome
+
+
+OracleRecord = RunHeader | InitialRecord | StepRecord | EndRecord | ErrorRecord
+RecordKind = Literal["run", "initial", "step", "end", "error"]
+
+
+@dataclass(frozen=True, slots=True)
+class _DecodedLine:
+    kind: RecordKind
+    schema_version: int
+    run_id: str
+    record: OracleRecord
+
+
+INPUT_NAMES = frozenset({"North", "South", "West", "East", "Undo"})
+_ERROR_MESSAGES: Mapping[str, str] = MappingProxyType(
+    {
+        "patch_install_failed": "observation patch installation failed",
+        "input_before_initial": "manual input arrived before initial capture",
+        "overlapping_input": "manual input arrived while settling",
+        "unexpected_input": "native input was outside the passive vocabulary",
+        "unscoped_process_input": (
+            "manual-looking input occurred outside the native poll scope"
+        ),
+        "hook_order_mismatch": "observation hook order mismatch",
+        "game_method_exception": "observed game method threw",
+        "observer_exception": "passive observer failed",
+        "capture_failed": "game-state capture failed",
+        "record_too_large": "encoded trace record exceeded its limit",
+        "initial_settle_timeout": "initial capture did not settle",
+        "settle_timeout": "input did not settle",
+        "state_replaced": "game state identity changed",
+        "save_path_changed": "isolated save path changed",
+    }
+)
