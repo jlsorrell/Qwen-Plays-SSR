@@ -827,3 +827,24 @@ def test_record_decoder_accepts_valid_end_record() -> None:
         input_count=3,
         finished_at_utc="2026-07-31T19:11:00.0000000Z",
     )
+
+
+BAD_END_SEMANTIC_LINES = [
+    pytest.param(
+        END_LINE.replace(b'"input_count":3', b'"input_count":-1'),
+        id="end-count",
+    ),
+    pytest.param(
+        END_LINE.replace(
+            b"2026-07-31T19:11:00.0000000Z",
+            b"2026-07-31T19:11:00.000000Z",
+        ),
+        id="finish-timestamp",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_END_SEMANTIC_LINES)
+def test_record_decoder_rejects_invalid_end_semantics(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 6, source="bad-end-semantics")

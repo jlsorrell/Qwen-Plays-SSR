@@ -641,13 +641,25 @@ def _decode_end(reader: _CanonicalJsonReader) -> _DecodedLine:
         )
     )
     reader.finish()
+    schema_version, run_id = _validate_common(
+        reader, values, expected_kind="end"
+    )
+    input_count_value = cast(int, values["input_count"])
+    input_count = _located(
+        reader, lambda: _nonnegative(input_count_value, field="input_count")
+    )
+    finished_at_utc = cast(str, values["finished_at_utc"])
+    _located(
+        reader,
+        lambda: _timestamp_key(finished_at_utc, field="finished_at_utc"),
+    )
     return _DecodedLine(
-        kind=cast(RecordKind, values["kind"]),
-        schema_version=cast(int, values["schema_version"]),
-        run_id=cast(str, values["run_id"]),
+        kind="end",
+        schema_version=schema_version,
+        run_id=run_id,
         record=EndRecord(
-            input_count=cast(int, values["input_count"]),
-            finished_at_utc=cast(str, values["finished_at_utc"]),
+            input_count=input_count,
+            finished_at_utc=finished_at_utc,
         ),
     )
 
