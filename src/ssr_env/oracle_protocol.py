@@ -599,17 +599,32 @@ def _decode_step(reader: _CanonicalJsonReader) -> _DecodedLine:
         )
     )
     reader.finish()
+    schema_version, run_id = _validate_common(
+        reader, values, expected_kind="step"
+    )
+    index_value = cast(int, values["input_index"])
+    input_text = cast(str, values["input"])
+    settle_frames = cast(int, values["settle_frames"])
+    input_index = _located(
+        reader, lambda: _nonnegative(index_value, field="input_index")
+    )
+    input_name = _located(reader, lambda: _input_name(input_text))
+    if not 2 <= settle_frames <= 600:
+        _record_error(reader, "step settle_frames must be in 2..600")
+    state_replaced = cast(bool, values["state_replaced"])
+    if state_replaced:
+        _record_error(reader, "schema-v1 step state_replaced must be false")
     return _DecodedLine(
-        kind=cast(RecordKind, values["kind"]),
-        schema_version=cast(int, values["schema_version"]),
-        run_id=cast(str, values["run_id"]),
+        kind="step",
+        schema_version=schema_version,
+        run_id=run_id,
         record=StepRecord(
-            input_index=cast(int, values["input_index"]),
-            input=cast(InputName, values["input"]),
+            input_index=input_index,
+            input=input_name,
             accepted=cast(bool, values["accepted"]),
             movement_scheduled=cast(bool, values["movement_scheduled"]),
-            settle_frames=cast(int, values["settle_frames"]),
-            state_replaced=cast(bool, values["state_replaced"]),
+            settle_frames=settle_frames,
+            state_replaced=state_replaced,
             capture=cast(OracleCapture, values["capture"]),
         ),
     )

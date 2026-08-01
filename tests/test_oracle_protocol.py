@@ -662,6 +662,42 @@ def test_record_decoder_rejects_null_step_capture_structurally() -> None:
         _decode_record(payload, 3, source="null-step-capture")
 
 
+BAD_STEP_SEMANTIC_LINES = [
+    pytest.param(
+        STEP0_LINE.replace(b'"input":"West"', b'"input":"Jump"'),
+        id="input",
+    ),
+    pytest.param(
+        STEP0_LINE.replace(b'"input_index":0', b'"input_index":-1'),
+        id="index",
+    ),
+    pytest.param(
+        STEP0_LINE.replace(b'"settle_frames":2', b'"settle_frames":0'),
+        id="step-settle-zero",
+    ),
+    pytest.param(
+        STEP0_LINE.replace(b'"settle_frames":2', b'"settle_frames":1'),
+        id="step-settle-low",
+    ),
+    pytest.param(
+        STEP0_LINE.replace(b'"settle_frames":2', b'"settle_frames":601'),
+        id="step-settle-high",
+    ),
+    pytest.param(
+        STEP0_LINE.replace(
+            b'"state_replaced":false', b'"state_replaced":true'
+        ),
+        id="state-replaced",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_STEP_SEMANTIC_LINES)
+def test_record_decoder_rejects_invalid_step_semantics(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 3, source="bad-step-semantics")
+
+
 BAD_RUN_SEMANTIC_LINES = [
     pytest.param(
         RUN_LINE.replace(b'"schema_version":1', b'"schema_version":2'),
