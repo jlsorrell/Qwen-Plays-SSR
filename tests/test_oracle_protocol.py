@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import io
 from pathlib import Path
+import re
 
 import pytest
 
@@ -1038,3 +1039,78 @@ def test_trace_stream_accepts_every_other_error_prefix_length(
     assert len(trace.steps) == expected_count
     assert isinstance(trace.terminal, ErrorRecord)
     assert trace.terminal.input_index == expected_count
+
+
+BAD_SEQUENCE_BOUNDARY_TRACES = [
+    pytest.param(
+        b"",
+        "trace is empty; first record must be run",
+        id="empty",
+    ),
+    pytest.param(
+        _trace_bytes(INITIAL_LINE),
+        "first record must be run",
+        id="initial-before-run",
+    ),
+    pytest.param(
+        _trace_bytes(ERROR_LINE),
+        "first record must be run",
+        id="error-before-run",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, RUN_LINE, RUN_ONLY_ERROR_LINE),
+        "run record may appear only once",
+        id="two-runs",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, INITIAL_LINE, STEP0_LINE, STEP1_LINE, STEP2_LINE),
+        "trace has no terminal end or error record",
+        id="missing-terminal",
+    ),
+    pytest.param(
+        SUCCESS_TRACE_BYTES + STEP0_LINE + b"\n",
+        "record appears after terminal record",
+        id="record-after-end",
+    ),
+    pytest.param(
+        SUCCESS_TRACE_BYTES + ERROR_LINE + b"\n",
+        "record appears after terminal record",
+        id="error-after-end",
+    ),
+    pytest.param(
+        ERROR_TRACE_BYTES + STEP1_LINE + b"\n",
+        "record appears after terminal record",
+        id="record-after-error",
+    ),
+]
+
+
+@pytest.mark.parametrize(("payload", "message"), BAD_SEQUENCE_BOUNDARY_TRACES)
+def test_trace_stream_rejects_invalid_boundaries(
+    payload: bytes, message: str
+) -> None:
+    with pytest.raises(OracleProtocolError, match=re.escape(message)):
+        read_oracle_trace_stream(io.BytesIO(payload), source="bad-boundary")
+
+
+class _StopAfterTwoLines(io.BytesIO):
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self.readline_calls = 0
+
+    def readline(self, size: int = -1, /) -> bytes:
+        self.readline_calls += 1
+        if self.readline_calls > 2:
+            raise AssertionError("parser consumed the tail after a second run")
+        return super().readline(size)
+
+
+def test_trace_stream_stops_at_first_sequence_invalid_record() -> None:
+    stream = _StopAfterTwoLines(
+        _trace_bytes(RUN_LINE, RUN_LINE, *([STEP0_LINE] * 32))
+    )
+    with pytest.raises(
+        OracleProtocolError, match="run record may appear only once"
+    ):
+        read_oracle_trace_stream(stream, source="guarded-tail")
+    assert stream.readline_calls == 2

@@ -758,24 +758,46 @@ def _decode_trace_lines(
 def read_oracle_trace_stream(
     stream: BinaryIO, *, source: str
 ) -> OracleRun:
-    decoded = list(_decode_trace_lines(stream, source=source))
-    header = cast(RunHeader, decoded[0].record)
-    terminal = cast(EndRecord | ErrorRecord, decoded[-1].record)
-    if isinstance(terminal, ErrorRecord) and len(decoded) == 2:
-        initial = None
-        steps: tuple[StepRecord, ...] = ()
-    else:
-        initial = cast(InitialRecord, decoded[1].record)
-        steps = tuple(
-            cast(StepRecord, item.record) for item in decoded[2:-1]
-        )
+    header: RunHeader | None = None
+    initial: InitialRecord | None = None
+    steps: list[StepRecord] = []
+    terminal: EndRecord | ErrorRecord | None = None
+
+    for decoded in _decode_trace_lines(stream, source=source):
+        if terminal is not None:
+            _sequence_error(source, "record appears after terminal record")
+
+        if header is None:
+            if not isinstance(decoded.record, RunHeader):
+                _sequence_error(source, "first record must be run")
+            header = decoded.record
+            continue
+
+        record = decoded.record
+        if isinstance(record, RunHeader):
+            _sequence_error(source, "run record may appear only once")
+        if isinstance(record, InitialRecord):
+            initial = record
+            continue
+        if isinstance(record, StepRecord):
+            steps.append(record)
+            continue
+        if isinstance(record, (EndRecord, ErrorRecord)):
+            terminal = record
+            continue
+        raise AssertionError("unreachable record type")
+
+    if header is None:
+        _sequence_error(source, "trace is empty; first record must be run")
+    if terminal is None:
+        _sequence_error(source, "trace has no terminal end or error record")
     outcome: TerminalOutcome = (
-        "error" if isinstance(terminal, ErrorRecord) else "success"
+        "success" if isinstance(terminal, EndRecord) else "error"
     )
     return OracleRun(
         header=header,
         initial=initial,
-        steps=steps,
+        steps=tuple(steps),
         terminal=terminal,
         outcome=outcome,
     )
