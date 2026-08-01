@@ -660,3 +660,91 @@ def test_record_decoder_rejects_null_step_capture_structurally() -> None:
     payload = STEP0_LINE.replace(MOVED_CAPTURE_JSON.encode(), b"null")
     with pytest.raises(OracleProtocolError):
         _decode_record(payload, 3, source="null-step-capture")
+
+
+BAD_RUN_SEMANTIC_LINES = [
+    pytest.param(
+        RUN_LINE.replace(b'"schema_version":1', b'"schema_version":2'),
+        id="schema-version",
+    ),
+    pytest.param(
+        RUN_LINE.replace(RUN_ID.encode(), RUN_ID.upper().encode()),
+        id="run-id-uppercase",
+    ),
+    pytest.param(
+        RUN_LINE.replace(RUN_ID.encode(), RUN_ID[:-1].encode()),
+        id="run-id-short",
+    ),
+    pytest.param(
+        RUN_LINE.replace(RUN_ID.encode(), (RUN_ID + "0").encode()),
+        id="run-id-long",
+    ),
+    pytest.param(
+        RUN_LINE.replace(RUN_ID.encode(), ("g" + RUN_ID[1:]).encode()),
+        id="run-id-nonhex-32",
+    ),
+    pytest.param(
+        RUN_LINE.replace(b'"mode":"passive"', b'"mode":"replay"'),
+        id="mode",
+    ),
+    pytest.param(
+        RUN_LINE.replace(ASSEMBLY_HASH.encode(), b"0" * 64),
+        id="assembly-reviewed-value",
+    ),
+    pytest.param(
+        RUN_LINE.replace(ASSEMBLY_HASH.encode(), b"0" * 63),
+        id="assembly-length-short",
+    ),
+    pytest.param(
+        RUN_LINE.replace(ASSEMBLY_HASH.encode(), b"0" * 65),
+        id="assembly-length-long",
+    ),
+    pytest.param(
+        RUN_LINE.replace(ASSEMBLY_HASH.encode(), ASSEMBLY_HASH.upper().encode()),
+        id="assembly-uppercase",
+    ),
+    pytest.param(
+        RUN_LINE.replace(ASSEMBLY_HASH.encode(), b"g" * 64),
+        id="assembly-nonhex",
+    ),
+    pytest.param(
+        RUN_LINE.replace(b'"plugin_version":"0.2.0"', b'"plugin_version":"0.1.0"'),
+        id="plugin-version",
+    ),
+    pytest.param(
+        RUN_LINE.replace(b'"input_sha256":null', b'"input_sha256":"00"'),
+        id="input-hash",
+    ),
+    pytest.param(
+        RUN_LINE.replace(b'"expected_input_count":3', b'"expected_input_count":2'),
+        id="expected-input-count",
+    ),
+    pytest.param(
+        RUN_LINE.replace(
+            b"2026-07-31T19:09:50.3199100Z",
+            b"2026-02-30T19:09:50.3199100Z",
+        ),
+        id="start-timestamp",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_RUN_SEMANTIC_LINES)
+def test_record_decoder_rejects_invalid_run_semantics(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 1, source="bad-run-semantics")
+
+
+@pytest.mark.parametrize(
+    "unicode_year",
+    ["٢٠٢٦", "２０２６"],
+    ids=["arabic-indic-digits", "fullwidth-digits"],
+)
+def test_record_decoder_rejects_unicode_timestamp_digits(
+    unicode_year: str,
+) -> None:
+    payload = RUN_LINE.replace(
+        b"2026-07-31", f"{unicode_year}-07-31".encode("utf-8")
+    )
+    with pytest.raises(OracleProtocolError, match="canonical UTC"):
+        _decode_record(payload, 1, source="unicode-time")

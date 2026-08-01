@@ -472,6 +472,23 @@ def _read_capture(reader: _CanonicalJsonReader) -> OracleCapture:
     )
 
 
+def _validate_common(
+    reader: _CanonicalJsonReader,
+    values: dict[str, object],
+    *,
+    expected_kind: RecordKind,
+) -> tuple[int, str]:
+    kind = cast(str, values["kind"])
+    schema_version = cast(int, values["schema_version"])
+    run_id_text = cast(str, values["run_id"])
+    if kind != expected_kind:
+        _record_error(reader, f"kind must be {expected_kind!r}")
+    if schema_version != SCHEMA_VERSION:
+        _record_error(reader, f"schema_version must be {SCHEMA_VERSION}")
+    run_id = _located(reader, lambda: _validate_run_id(run_id_text))
+    return schema_version, run_id
+
+
 def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
     values = reader.read_object(
         (
@@ -487,18 +504,40 @@ def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
         )
     )
     reader.finish()
-    kind = cast(RecordKind, values["kind"])
-    run_id = cast(str, values["run_id"])
+    schema_version, run_id = _validate_common(
+        reader, values, expected_kind="run"
+    )
+    if cast(str, values["mode"]) != "passive":
+        _record_error(reader, "mode must be 'passive'")
+    assembly_text = cast(str, values["game_assembly_sha256"])
+    assembly_hash = _located(
+        reader,
+        lambda: _validate_hash(assembly_text, field="game_assembly_sha256"),
+    )
+    if assembly_hash != EXPECTED_ASSEMBLY_SHA256:
+        _record_error(reader, "game_assembly_sha256 is not the reviewed hash")
+    if cast(str, values["plugin_version"]) != "0.2.0":
+        _record_error(reader, "plugin_version must be '0.2.0'")
+    if values["input_sha256"] is not None:
+        _record_error(reader, "input_sha256 must be null in passive mode")
+    if cast(int, values["expected_input_count"]) != EXPECTED_INPUT_COUNT:
+        _record_error(
+            reader,
+            f"expected_input_count must be {EXPECTED_INPUT_COUNT}",
+        )
+    started_at_utc = cast(str, values["started_at_utc"])
+    _located(
+        reader,
+        lambda: _timestamp_key(started_at_utc, field="started_at_utc"),
+    )
     return _DecodedLine(
-        kind=kind,
-        schema_version=cast(int, values["schema_version"]),
+        kind="run",
+        schema_version=schema_version,
         run_id=run_id,
         record=RunHeader(
             run_id=run_id,
-            game_assembly_sha256=cast(
-                str, values["game_assembly_sha256"]
-            ),
-            started_at_utc=cast(str, values["started_at_utc"]),
+            game_assembly_sha256=assembly_hash,
+            started_at_utc=started_at_utc,
         ),
     )
 
