@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31
 
-**Status:** Conversational design approved; written-spec review pending
+**Status:** Written specification and offline implementation plans approved; implementation pending
 
 ## 1. Context
 
@@ -487,7 +487,12 @@ The marker-only startup/sink codes are exactly `invalid_mode`,
 `invalid_path`, `trace_exists`, `save_redirect_failed`, and `trace_io_failed`.
 They never appear in a successfully written error record. The canonical-log
 monitor accepts a failure marker only when its code belongs to the record-code
-table or this marker-only set.
+table or this marker-only set. A record-code marker is authenticated only
+after two stable descriptor-relative reads produce the same structurally valid
+closed terminal-error trace and that trace's final `ErrorRecord.code` equals
+the marker suffix. Marker-only codes deliberately do not require a valid
+trace: startup may precede trace creation, and `trace_io_failed` may leave only
+absent, partial, or malformed trace bytes.
 
 Error fields follow one rule for every code. Top-level Restart is the sole
 override: it always uses null input fields and reports the active attempt or
@@ -501,8 +506,9 @@ null input fields and the current initial frame count only while an initial
 budget is active, or zero when no budget is active. `last_capture` is the most
 recent successfully constructed, size-bounded complete capture in the current
 initial/attempt epoch, whether or not it formed a matching pair, and is null
-when none exists. An unknown native input therefore uses a null `input`,
-because it cannot be represented by the allowed enum.
+when none exists. When no attempt is pending, an unknown native input uses a
+null `input`, because it cannot be represented by the allowed enum; during a
+pending attempt, that attempt's input fields retain precedence.
 
 A terminal-error trace has exactly one error record last, has no end record,
 and may contain only the successfully flushed initial and contiguous step
@@ -782,8 +788,12 @@ budget, not a settling budget.
 
 ## 9. Python validation
 
-`read_oracle_trace(path)` performs lexical, per-record, and sequence parsing.
-It requires:
+`read_oracle_trace_stream(stream, *, source=...)` performs lexical, per-record,
+and sequence parsing on an already-authenticated binary stream without
+reopening its name. `read_oracle_trace(path)` is only a convenience wrapper
+that opens the path once and delegates to that stream API. The retained
+descriptor-relative runtime probe always uses the stream API. Parsing
+requires:
 
 - UTF-8 without BOM, LF-delimited complete JSON objects, and a final LF;
 - one run record first;
@@ -839,9 +849,23 @@ is not labeled a simulator bug.
 ## 10. Bounded runtime probe and evidence
 
 The runtime gate remains separately approved and executes exactly one launch.
-Before mutation it runs the complete read-only Tahoe preflight, reproducible
-plugin verification, trace-target absence check, installed healthy `official`
-check, and the ordinary-save proof defined below.
+The controller exposes that complete Tahoe/artifact/log/process/ordinary-save
+check as a standalone read-only preflight which allocates no evidence or save
+directory, performs no installer operation, and acquires no launcher. The
+operational gate runs it freshly before mutation; a successful older preflight
+is never treated as authorization or cached proof. The standalone preflight
+includes reproducible plugin verification, installed healthy `official`
+status, and the ordinary-save proof defined below. After private layout
+allocation, the in-run pre-mutation gate separately proves the newly selected
+exact trace target absent before any installer operation.
+
+The Tahoe check invokes absolute `/usr/bin/sw_vers -productVersion` with a
+fixed `C` locale and a five-second bound, accepts only the exact `26.6` product
+version, and retains that value in the standalone preflight result. A missing,
+failed, malformed, or different version stops before private allocation,
+installer mutation, or launcher acquisition. The same observed version is
+carried into the final `passive-probe.json` result on every safely publishable
+success or failure path.
 
 The approved operation is:
 
@@ -865,8 +889,9 @@ The approved operation is:
    instruction, then require the exact completion marker and a fully validated
    closed `passive-trace.ndjson`;
 8. terminate and reap the complete process group;
-9. stage and validate the canonical log, trace, generated-config hash,
-   isolated-save inventory, and before/after installer and signature snapshots;
+9. stage and validate the canonical log, any bounded stable trace bytes,
+   generated-config hash, isolated-save inventory, and four stage-specific
+   installer/signature snapshots;
 10. recapture the ordinary-save proof and require exact equality with the
     prelaunch proof;
 11. transactionally deploy the pinned Mode-off config through the installer;
@@ -893,19 +918,36 @@ The ordinary path is the pinned game's unmodified default,
 the current account without following links. An existing tree must contain
 only real directories and regular files, with at most 4,096 entries and 256
 MiB of regular-file bytes; otherwise preflight refuses the launch. Each sorted
-entry records relative path, type, device/inode identity, mode, size,
-nanosecond mtime/ctime, and SHA-256 for regular files, using descriptor-relative
-no-follow opens and before/after stat agreement. If the tree is absent, the
-proof records the first missing path component and its existing no-follow
-ancestor chain. Success requires an identical proof after the process exits
-and again in final verification. The isolated save path is canonicalized
-disjoint from the ordinary tree in both directions.
+entry, including every directory, records relative path, type, device/inode
+identity, mode, actual size, and nanosecond mtime/ctime; regular files also
+record SHA-256. The present root carries the same metadata, and an absent-tree
+proof gives every existing no-follow ancestor the same metadata before naming
+the first missing component. Descriptor-relative no-follow opens and
+before/after stat agreement are mandatory. This preserves observable directory
+changes even when a file is created and deleted between lifecycle snapshots.
+Success requires an identical proof after the process exits and again in final
+verification. The isolated save path is canonicalized disjoint from the
+ordinary tree in both directions.
 
 Both private directories are mode `0700`. After process termination and before
 publication, every retained regular evidence file is verified and secured to
 mode `0600`. The trace probe uses its own versioned `passive-probe.json`; it
 does not change the existing boot probe's schema-v1 payload or publish any
 canonical JSON before restoration and final verification finish.
+
+Each of the four passive lifecycle snapshots wraps the complete unchanged boot
+snapshot with the observed installed plugin SHA-256, observed installed config
+SHA-256, and the complete installer status/manifest evidence captured at that
+stage. The top-level requested artifact hashes never substitute for those
+observations. The legacy boot-probe payload remains byte-for-byte unchanged.
+
+After the launched group is reaped, evidence collection treats `passive.cfg`
+as required and `passive-trace.ndjson` as optional. If a stable bounded trace
+exists, it is secured and retained even when lexical or structural parsing
+fails; the private result records its hash, size, parse status, and nullable
+terminal outcome/error code. An absent optional trace is valid evidence for a
+startup failure. A symlink, special file, oversized file, or unstable identity
+still makes publication unsafe rather than being silently omitted.
 
 The process-absence check explicitly excludes the currently executing
 controller PID, which must remain alive to publish the final JSON. It requires
@@ -974,6 +1016,8 @@ The existing dependency-minimal harness covers:
 
 - every driver phase and legal transition;
 - two-sample initial and terminal debounce with epoch-scoped neutral resets;
+- candidate reset on every intervening active update without an eligible
+  quiescent capture;
 - frame/time boundary ordering, including success on the exact deadline;
 - accepted, refused, and undo semantics;
 - top-level Restart rejection before initial, while Ready, and while Settling,
@@ -996,6 +1040,8 @@ Tests and build checks cover:
 - exact method and field signatures against the pinned game assembly;
 - `DoPlayerInput`/`Playerinputstring` correlation and ignored internal
   `AutomaticPlayerTick -> ProcessInput` calls during settling;
+- immediate adapter-owned `Moving()` samples after `ProcessInput` and at
+  top-level Undo return;
 - read-only Harmony callbacks and exception firewalls that preserve original
   arguments, results, exception identity, and game control flow;
 - `Game.Update` original-exception handling when its normal postfix is skipped;
@@ -1011,22 +1057,29 @@ Tests and build checks cover:
   rejection;
 - original HOME/path authentication and save-directory separation before a
   game instance is used;
-- exact startup ordering and owner-scoped cleanup after partial patch failure;
+- exact Run-flush, patch-install, activation, and boot-marker startup ordering,
+  with owner-scoped cleanup after partial patch failure;
 - passive load-marker emission only after save isolation and patch startup;
 - the pinned Mode-off grammar and local ignored-fixture hash, with no config
   write, passive-key requirement, sink, save redirect, or observation patch;
+- missing/unreadable config mapping to one typed pre-sink failure marker;
+- an End/close followed by completion-reporter failure remaining immutable and
+  failing the outer marker gate without another trace write;
 - the existing load marker remaining unchanged;
 - two clean plugin builds producing byte-identical DLLs; and
-- the reviewed CLR v2/net35 reference surface.
+- a net35 compile gate for every Core increment and the reviewed CLR v2/net35
+  final reference surface.
 
 ### 12.3 Python tests
 
 Synthetic fixtures cover every valid record kind and reject malformed UTF-8,
 BOM, CRLF, duplicate/reordered/unknown keys, mixed run IDs, skipped or repeated
-indices, malformed hashes/timestamps/Unicode, missing initial/end, extra
-records, wrong counts or ranges, oversized lines/files, truncated lines,
-malformed terminal-error prefixes, error traces presented as success, and
-every failed three-step relation including an envelope-only mismatch.
+indices, malformed hashes/timestamps/Unicode, non-ASCII timestamp digits,
+missing initial/end, extra records, wrong counts or ranges, oversized
+lines/files, truncated lines, and named-path replacement after a descriptor is
+opened. They also cover malformed terminal-error prefixes, error traces
+presented as success, and every failed three-step relation including an
+envelope-only mismatch.
 
 The full repository suite, Python compilation, diff check, reproducible plugin
 build, fixture hashes, and read-only installed-state preflight run before any
@@ -1038,14 +1091,20 @@ Synthetic process/log/filesystem fixtures cover:
 
 - exclusive new empty save allocation and trace-target absence;
 - bounded no-follow ordinary-save inventories, absence proofs, and every
-  pre/post mismatch;
+  pre/post mismatch, including create-then-delete changes observable only in
+  present-root or absent-ancestor directory metadata;
 - boot-authenticated menu prompting, all three progress markers, control-release
   guidance, and complete operator-prompt ordering;
+- matching closed terminal-error traces for record-code markers, plus absent,
+  partial, malformed, and mismatched failure traces;
 - prompt termination on plugin, numbered-log, preloader-log, early-exit, and
   global-timeout failures;
+- standalone preflight proof that no allocation, installer mutation, or
+  launcher acquisition occurs;
 - full process-group reaping before installed-tree cleanup;
 - staging before restoration and exclusive JSON publication only after final
-  verification; and
+  verification, with observed plugin/config hashes and full installer status
+  in every reached lifecycle snapshot; and
 - explicit failure payloads, secondary cleanup errors, and preservation when
   publication is unsafe.
 
