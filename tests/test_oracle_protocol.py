@@ -1114,3 +1114,95 @@ def test_trace_stream_stops_at_first_sequence_invalid_record() -> None:
     ):
         read_oracle_trace_stream(stream, source="guarded-tail")
     assert stream.readline_calls == 2
+
+
+MIXED_STEP0_LINE = STEP0_LINE.replace(RUN_ID.encode(), OTHER_RUN_ID.encode())
+REPEATED_STEP_LINE = STEP1_LINE.replace(b'"input_index":1', b'"input_index":0')
+SKIPPED_STEP_LINE = STEP1_LINE.replace(b'"input_index":1', b'"input_index":2')
+FOURTH_STEP_LINE = (
+    STEP2_LINE.replace(b'"input_index":2', b'"input_index":3')
+    .replace(b'"input":"Undo"', b'"input":"East"')
+)
+
+BAD_SEQUENCE_ORDER_TRACES = [
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            MIXED_STEP0_LINE,
+            STEP1_LINE,
+            STEP2_LINE,
+            END_LINE,
+        ),
+        "record run_id does not match the run header",
+        id="mixed-run-id",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, STEP0_LINE, STEP1_LINE, STEP2_LINE, END_LINE),
+        "step record requires an initial record",
+        id="step-without-initial",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            STEP1_LINE,
+            STEP2_LINE,
+            END_LINE,
+        ),
+        "initial record must appear exactly second",
+        id="duplicate-initial",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            SKIPPED_STEP_LINE,
+            STEP2_LINE,
+            END_LINE,
+        ),
+        "step input_index is not contiguous",
+        id="skipped-index",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            REPEATED_STEP_LINE,
+            STEP2_LINE,
+            END_LINE,
+        ),
+        "step input_index is not contiguous",
+        id="repeated-index",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, INITIAL_LINE, STEP1_LINE, ERROR_LINE),
+        "step input_index is not contiguous",
+        id="error-prefix-gap",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            STEP1_LINE,
+            STEP2_LINE,
+            FOURTH_STEP_LINE,
+            END_LINE,
+        ),
+        "trace contains more than three steps",
+        id="fourth-step",
+    ),
+]
+
+
+@pytest.mark.parametrize(("payload", "message"), BAD_SEQUENCE_ORDER_TRACES)
+def test_trace_stream_rejects_invalid_identity_or_order(
+    payload: bytes, message: str
+) -> None:
+    with pytest.raises(OracleProtocolError, match=re.escape(message)):
+        read_oracle_trace_stream(io.BytesIO(payload), source="bad-order")

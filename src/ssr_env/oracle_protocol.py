@@ -773,13 +773,24 @@ def read_oracle_trace_stream(
             header = decoded.record
             continue
 
+        if decoded.run_id != header.run_id:
+            _sequence_error(source, "record run_id does not match the run header")
+
         record = decoded.record
         if isinstance(record, RunHeader):
             _sequence_error(source, "run record may appear only once")
         if isinstance(record, InitialRecord):
+            if initial is not None or steps:
+                _sequence_error(source, "initial record must appear exactly second")
             initial = record
             continue
         if isinstance(record, StepRecord):
+            if initial is None:
+                _sequence_error(source, "step record requires an initial record")
+            if len(steps) >= EXPECTED_INPUT_COUNT:
+                _sequence_error(source, "trace contains more than three steps")
+            if record.input_index != len(steps):
+                _sequence_error(source, "step input_index is not contiguous")
             steps.append(record)
             continue
         if isinstance(record, (EndRecord, ErrorRecord)):
