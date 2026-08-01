@@ -630,6 +630,28 @@ def _decode_step(reader: _CanonicalJsonReader) -> _DecodedLine:
     )
 
 
+def _decode_end(reader: _CanonicalJsonReader) -> _DecodedLine:
+    values = reader.read_object(
+        (
+            ("kind", reader.read_string),
+            ("schema_version", reader.read_integer),
+            ("run_id", reader.read_string),
+            ("input_count", reader.read_integer),
+            ("finished_at_utc", reader.read_string),
+        )
+    )
+    reader.finish()
+    return _DecodedLine(
+        kind=cast(RecordKind, values["kind"]),
+        schema_version=cast(int, values["schema_version"]),
+        run_id=cast(str, values["run_id"]),
+        record=EndRecord(
+            input_count=cast(int, values["input_count"]),
+            finished_at_utc=cast(str, values["finished_at_utc"]),
+        ),
+    )
+
+
 def _decode_record(
     payload: bytes, line_number: int, *, source: str
 ) -> _DecodedLine:
@@ -640,5 +662,7 @@ def _decode_record(
         return _decode_initial(reader)
     if payload.startswith(b'{"kind":"step",'):
         return _decode_step(reader)
+    if payload.startswith(b'{"kind":"end",'):
+        return _decode_end(reader)
     _record_error(reader, "kind must be the first key and use a schema-v1 value")
     raise AssertionError("unreachable")

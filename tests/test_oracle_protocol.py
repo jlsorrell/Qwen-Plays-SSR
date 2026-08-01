@@ -819,3 +819,11 @@ def test_record_decoder_rejects_long_state_identity_before_conversion() -> None:
         OracleProtocolError, match="state_identity exceeds 11 characters"
     ):
         _decode_record(payload, 2, source="long-state-identity")
+
+
+def test_record_decoder_accepts_valid_end_record() -> None:
+    end = _decode_record(END_LINE, 6, source="literal")
+    assert end.record == EndRecord(
+        input_count=3,
+        finished_at_utc="2026-07-31T19:11:00.0000000Z",
+    )
