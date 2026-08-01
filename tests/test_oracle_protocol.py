@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import io
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from ssr_env.oracle_protocol import (
     OracleProtocolError,
     _read_record_lines,
 )
+from ssr_env.oracle_protocol import _CanonicalJsonReader
 
 
 def _read_lines(path: Path) -> list[tuple[int, bytes]]:
@@ -124,3 +127,45 @@ def test_record_reader_never_requests_an_unbounded_read() -> None:
     assert list(_read_record_lines(stream, source="memory")) == [(1, b"{}")]
     assert stream.requests
     assert all(0 < size <= MAX_RECORD_BYTES + 1 for size in stream.requests)
+
+
+def _read_token(payload: bytes, method_name: str) -> object:
+    reader = _CanonicalJsonReader(payload, 1, source="token")
+    method = getattr(reader, method_name)
+    value = method()
+    reader.finish()
+    return value
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (b'"plain"', "plain"),
+        ('"é/雪"'.encode("utf-8"), "é/雪"),
+        (b'"\\\"\\\\\\b\\f\\n\\r\\t\\u0000\\u001f"', '"\\\b\f\n\r\t\x00\x1f'),
+    ],
+)
+def test_canonical_json_accepts_canonical_strings(
+    payload: bytes, expected: str
+) -> None:
+    assert _read_token(payload, "read_string") == expected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'"\\/"',
+        b'"\\u0061"',
+        b'"\\u00AF"',
+        b'"\\u0008"',
+        b'"\\u000a"',
+        b'"\x01"',
+        b'"\\v"',
+        b'"\\ud800"',
+        b'"\\udfff"',
+        b'"\xed\xa0\x80"',
+    ],
+)
+def test_canonical_json_rejects_noncanonical_strings(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _read_token(payload, "read_string")
