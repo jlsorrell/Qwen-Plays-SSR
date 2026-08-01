@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import re
 from types import MappingProxyType
 from typing import BinaryIO, Iterator, Literal
 
@@ -336,3 +338,84 @@ _ERROR_MESSAGES: Mapping[str, str] = MappingProxyType(
         "save_path_changed": "isolated save path changed",
     }
 )
+
+_RUN_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+_HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
+_SIGNED_DECIMAL_RE = re.compile(r"(?:0|-[1-9][0-9]*|[1-9][0-9]*)\Z")
+_TIMESTAMP_RE = re.compile(
+    r"(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})T"
+    r"(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}):(?P<second>[0-9]{2})\."
+    r"(?P<fraction>[0-9]{7})Z\Z"
+)
+
+
+def _timestamp_key(
+    value: str, *, field: str = "timestamp"
+) -> tuple[int, int, int, int, int, int, int]:
+    match = _TIMESTAMP_RE.fullmatch(value)
+    if match is None:
+        raise OracleProtocolError(f"{field} is not canonical UTC O-format text")
+    parts = tuple(int(match.group(name)) for name in (
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "fraction",
+    ))
+    year, month, day, hour, minute, second, fraction = parts
+    try:
+        datetime(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            fraction // 10,
+            tzinfo=timezone.utc,
+        )
+    except ValueError as exc:
+        raise OracleProtocolError(f"{field} has invalid calendar values") from exc
+    return year, month, day, hour, minute, second, fraction
+
+
+def _validate_run_id(value: str) -> str:
+    if _RUN_ID_RE.fullmatch(value) is None:
+        raise OracleProtocolError("run_id must be 32 lowercase hexadecimal characters")
+    return value
+
+
+def _validate_hash(value: str, *, field: str) -> str:
+    if _HASH_RE.fullmatch(value) is None:
+        raise OracleProtocolError(
+            f"{field} must be 64 lowercase hexadecimal characters"
+        )
+    return value
+
+
+def _validate_state_identity(value: str) -> str:
+    if len(value) > 11:
+        raise OracleProtocolError("state_identity exceeds 11 characters")
+    if _SIGNED_DECIMAL_RE.fullmatch(value) is None:
+        raise OracleProtocolError("state_identity is not canonical signed decimal")
+    parsed = int(value)
+    if not -(2**31) <= parsed <= 2**31 - 1:
+        raise OracleProtocolError("state_identity is outside signed 32-bit range")
+    if str(parsed) != value:
+        raise OracleProtocolError("state_identity does not round-trip canonically")
+    return value
+
+
+def _nonnegative(value: int, *, field: str, maximum: int = 2**31 - 1) -> int:
+    if not 0 <= value <= maximum:
+        raise OracleProtocolError(f"{field} must be in 0..{maximum}")
+    return value
+
+
+def _input_name(value: str, *, allow_none: bool = False) -> InputName:
+    if value not in INPUT_NAMES:
+        suffix = " or null" if allow_none else ""
+        raise OracleProtocolError(f"input must use the passive vocabulary{suffix}")
+    return value  # type: ignore[return-value]

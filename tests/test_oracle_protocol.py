@@ -383,3 +383,58 @@ def test_error_code_message_table_is_exact_private_and_immutable() -> None:
     with pytest.raises(TypeError):
         _ERROR_MESSAGES["capture_failed"] = "changed"  # type: ignore[index]
     assert _ERROR_MESSAGES["capture_failed"] == "game-state capture failed"
+
+
+from ssr_env.oracle_protocol import _timestamp_key, _validate_state_identity
+
+
+def test_timestamp_preserves_the_seventh_fractional_digit() -> None:
+    assert _timestamp_key("2026-07-31T19:09:50.3199107Z") == (
+        2026,
+        7,
+        31,
+        19,
+        9,
+        50,
+        3199107,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-07-31T19:09:50.319910Z",
+        "2026-07-31T19:09:50.3199100+00:00",
+        "2026-07-31T19:09:50.3199100z",
+        "2026-02-30T19:09:50.3199100Z",
+        "0000-07-31T19:09:50.3199100Z",
+        "٢٠٢٦-07-31T19:09:50.3199100Z",
+        "２０２６-07-31T19:09:50.3199100Z",
+    ],
+)
+def test_timestamp_rejects_noncanonical_or_unicode_digits(value: str) -> None:
+    with pytest.raises(OracleProtocolError):
+        _timestamp_key(value)
+
+
+@pytest.mark.parametrize(
+    "value", ["0", "1", "-1", "2147483647", "-2147483648"]
+)
+def test_state_identity_accepts_canonical_signed_32_bit_text(value: str) -> None:
+    assert _validate_state_identity(value) == value
+
+
+@pytest.mark.parametrize(
+    "value", ["-0", "+1", "01", "١", "2147483648", "-2147483649"]
+)
+def test_state_identity_rejects_noncanonical_text(value: str) -> None:
+    with pytest.raises(OracleProtocolError):
+        _validate_state_identity(value)
+
+
+@pytest.mark.parametrize("value", ["9" * 100_000, "-" + "9" * 100_000])
+def test_state_identity_rejects_long_decimal_before_conversion(value: str) -> None:
+    with pytest.raises(
+        OracleProtocolError, match="state_identity exceeds 11 characters"
+    ):
+        _validate_state_identity(value)
