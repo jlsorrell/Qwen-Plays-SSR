@@ -21,6 +21,7 @@ from ssr_env.oracle_protocol import (
     InitialRecord,
     OracleCapture,
     RunHeader,
+    StepRecord,
     _CanonicalJsonReader,
 )
 
@@ -623,3 +624,39 @@ def test_record_decoder_preserves_long_integer_lexer_guard() -> None:
         OracleProtocolError, match="integer lexeme exceeds 11 bytes"
     ):
         _decode_record(payload, 1, source="long-integer")
+
+
+import ast
+
+import ssr_env.oracle_protocol as oracle_protocol
+
+
+def test_record_decoder_accepts_valid_step_record() -> None:
+    step = _decode_record(STEP0_LINE, 3, source="literal")
+    assert step.record == StepRecord(
+        input_index=0,
+        input="West",
+        accepted=True,
+        movement_scheduled=True,
+        settle_frames=2,
+        state_replaced=False,
+        capture=_expected_capture("moved"),
+    )
+
+
+def test_decoder_source_has_exactly_one_record_dispatcher() -> None:
+    source = Path(oracle_protocol.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    definitions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_decode_record"
+    ]
+    assert len(definitions) == 1
+
+
+def test_record_decoder_rejects_null_step_capture_structurally() -> None:
+    payload = STEP0_LINE.replace(MOVED_CAPTURE_JSON.encode(), b"null")
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 3, source="null-step-capture")

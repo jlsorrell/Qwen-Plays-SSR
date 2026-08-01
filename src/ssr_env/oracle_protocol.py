@@ -522,6 +522,38 @@ def _decode_initial(reader: _CanonicalJsonReader) -> _DecodedLine:
     )
 
 
+def _decode_step(reader: _CanonicalJsonReader) -> _DecodedLine:
+    values = reader.read_object(
+        (
+            ("kind", reader.read_string),
+            ("schema_version", reader.read_integer),
+            ("run_id", reader.read_string),
+            ("input_index", reader.read_integer),
+            ("input", reader.read_string),
+            ("accepted", reader.read_boolean),
+            ("movement_scheduled", reader.read_boolean),
+            ("settle_frames", reader.read_integer),
+            ("state_replaced", reader.read_boolean),
+            ("capture", lambda: _read_capture(reader)),
+        )
+    )
+    reader.finish()
+    return _DecodedLine(
+        kind=cast(RecordKind, values["kind"]),
+        schema_version=cast(int, values["schema_version"]),
+        run_id=cast(str, values["run_id"]),
+        record=StepRecord(
+            input_index=cast(int, values["input_index"]),
+            input=cast(InputName, values["input"]),
+            accepted=cast(bool, values["accepted"]),
+            movement_scheduled=cast(bool, values["movement_scheduled"]),
+            settle_frames=cast(int, values["settle_frames"]),
+            state_replaced=cast(bool, values["state_replaced"]),
+            capture=cast(OracleCapture, values["capture"]),
+        ),
+    )
+
+
 def _decode_record(
     payload: bytes, line_number: int, *, source: str
 ) -> _DecodedLine:
@@ -530,5 +562,7 @@ def _decode_record(
         return _decode_run(reader)
     if payload.startswith(b'{"kind":"initial",'):
         return _decode_initial(reader)
+    if payload.startswith(b'{"kind":"step",'):
+        return _decode_step(reader)
     _record_error(reader, "kind must be the first key and use a schema-v1 value")
     raise AssertionError("unreachable")
