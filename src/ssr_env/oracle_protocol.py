@@ -682,16 +682,43 @@ def _decode_error(reader: _CanonicalJsonReader) -> _DecodedLine:
         )
     )
     reader.finish()
+    schema_version, run_id = _validate_common(
+        reader, values, expected_kind="error"
+    )
+    raw_index = cast(int | None, values["input_index"])
+    input_index = (
+        None
+        if raw_index is None
+        else _located(
+            reader, lambda: _nonnegative(raw_index, field="input_index")
+        )
+    )
+    raw_input = cast(str | None, values["input"])
+    input_name = (
+        None
+        if raw_input is None
+        else _located(reader, lambda: _input_name(raw_input, allow_none=True))
+    )
+    code = cast(str, values["code"])
+    message = cast(str, values["message"])
+    expected_message = _ERROR_MESSAGES.get(code)
+    if expected_message is None:
+        _record_error(reader, "error code is not in the schema-v1 record table")
+    if message != expected_message:
+        _record_error(reader, "error code/message pair is not canonical")
+    settle_frames = cast(int, values["settle_frames"])
+    if not 0 <= settle_frames <= 600:
+        _record_error(reader, "error settle_frames must be in 0..600")
     return _DecodedLine(
-        kind=cast(RecordKind, values["kind"]),
-        schema_version=cast(int, values["schema_version"]),
-        run_id=cast(str, values["run_id"]),
+        kind="error",
+        schema_version=schema_version,
+        run_id=run_id,
         record=ErrorRecord(
-            input_index=cast(int | None, values["input_index"]),
-            input=cast(InputName | None, values["input"]),
-            code=cast(str, values["code"]),
-            message=cast(str, values["message"]),
-            settle_frames=cast(int, values["settle_frames"]),
+            input_index=input_index,
+            input=input_name,
+            code=code,
+            message=message,
+            settle_frames=settle_frames,
             last_capture=cast(
                 OracleCapture | None, values["last_capture"]
             ),

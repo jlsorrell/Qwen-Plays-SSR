@@ -867,3 +867,38 @@ def test_record_decoder_rejects_incomplete_error_last_capture() -> None:
     payload = ERROR_LINE.replace(MOVED_CAPTURE_JSON.encode(), b"{}")
     with pytest.raises(OracleProtocolError):
         _decode_record(payload, 4, source="incomplete-error-capture")
+
+
+BAD_ERROR_SEMANTIC_LINES = [
+    pytest.param(
+        ERROR_LINE.replace(b'"settle_frames":600', b'"settle_frames":-1'),
+        id="error-settle-low",
+    ),
+    pytest.param(
+        ERROR_LINE.replace(b'"settle_frames":600', b'"settle_frames":601'),
+        id="error-settle-high",
+    ),
+    pytest.param(
+        ERROR_LINE.replace(
+            b'"message":"input did not settle"', b'"message":"wrong"'
+        ),
+        id="error-message-pair",
+    ),
+    pytest.param(
+        ERROR_LINE.replace(
+            b'"code":"settle_timeout","message":"input did not settle"',
+            b'"code":"invalid_mode","message":"input did not settle"',
+        ),
+        id="marker-only-code",
+    ),
+    pytest.param(
+        ERROR_LINE.replace(b'"input":"North"', b'"input":"Jump"'),
+        id="error-input",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_ERROR_SEMANTIC_LINES)
+def test_record_decoder_rejects_invalid_error_semantics(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 4, source="bad-error-semantics")
