@@ -664,6 +664,41 @@ def _decode_end(reader: _CanonicalJsonReader) -> _DecodedLine:
     )
 
 
+def _decode_error(reader: _CanonicalJsonReader) -> _DecodedLine:
+    values = reader.read_object(
+        (
+            ("kind", reader.read_string),
+            ("schema_version", reader.read_integer),
+            ("run_id", reader.read_string),
+            ("input_index", lambda: reader.read_optional(reader.read_integer)),
+            ("input", lambda: reader.read_optional(reader.read_string)),
+            ("code", reader.read_string),
+            ("message", reader.read_string),
+            ("settle_frames", reader.read_integer),
+            (
+                "last_capture",
+                lambda: reader.read_optional(lambda: _read_capture(reader)),
+            ),
+        )
+    )
+    reader.finish()
+    return _DecodedLine(
+        kind=cast(RecordKind, values["kind"]),
+        schema_version=cast(int, values["schema_version"]),
+        run_id=cast(str, values["run_id"]),
+        record=ErrorRecord(
+            input_index=cast(int | None, values["input_index"]),
+            input=cast(InputName | None, values["input"]),
+            code=cast(str, values["code"]),
+            message=cast(str, values["message"]),
+            settle_frames=cast(int, values["settle_frames"]),
+            last_capture=cast(
+                OracleCapture | None, values["last_capture"]
+            ),
+        ),
+    )
+
+
 def _decode_record(
     payload: bytes, line_number: int, *, source: str
 ) -> _DecodedLine:
@@ -676,5 +711,7 @@ def _decode_record(
         return _decode_step(reader)
     if payload.startswith(b'{"kind":"end",'):
         return _decode_end(reader)
+    if payload.startswith(b'{"kind":"error",'):
+        return _decode_error(reader)
     _record_error(reader, "kind must be the first key and use a schema-v1 value")
     raise AssertionError("unreachable")

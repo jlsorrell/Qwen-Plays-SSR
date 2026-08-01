@@ -18,6 +18,7 @@ from ssr_env.oracle_protocol import (
     _read_record_lines,
 )
 from ssr_env.oracle_protocol import (
+    ErrorRecord,
     InitialRecord,
     OracleCapture,
     RunHeader,
@@ -848,3 +849,21 @@ BAD_END_SEMANTIC_LINES = [
 def test_record_decoder_rejects_invalid_end_semantics(payload: bytes) -> None:
     with pytest.raises(OracleProtocolError):
         _decode_record(payload, 6, source="bad-end-semantics")
+
+
+def test_record_decoder_accepts_valid_error_record() -> None:
+    error = _decode_record(ERROR_LINE, 4, source="literal")
+    assert error.record == ErrorRecord(
+        input_index=1,
+        input="North",
+        code="settle_timeout",
+        message="input did not settle",
+        settle_frames=600,
+        last_capture=_expected_capture("moved"),
+    )
+
+
+def test_record_decoder_rejects_incomplete_error_last_capture() -> None:
+    payload = ERROR_LINE.replace(MOVED_CAPTURE_JSON.encode(), b"{}")
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 4, source="incomplete-error-capture")
