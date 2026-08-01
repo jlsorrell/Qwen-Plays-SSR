@@ -173,3 +173,111 @@ def test_canonical_json_rejects_noncanonical_strings(
         _read_token(payload, "read_string")
     if byte_number is not None:
         assert f"byte {byte_number}:" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (b"0", 0),
+        (b"1", 1),
+        (b"-1", -1),
+        (b"2147483647", 2147483647),
+        (b"-2147483648", -2147483648),
+    ],
+)
+def test_canonical_json_accepts_signed_32_bit_integers(
+    payload: bytes, expected: int
+) -> None:
+    assert _read_token(payload, "read_integer") == expected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"-0",
+        b"+0",
+        b"00",
+        b"01",
+        b"1.0",
+        b"1e0",
+        b"NaN",
+        b"Infinity",
+        b"true",
+        b"2147483648",
+        b"-2147483649",
+    ],
+)
+def test_canonical_json_rejects_noncanonical_integers(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _read_token(payload, "read_integer")
+
+
+@pytest.mark.parametrize("payload", [b"9" * 100_000, b"-" + b"9" * 100_000])
+def test_canonical_json_rejects_long_integer_before_conversion(
+    payload: bytes,
+) -> None:
+    with pytest.raises(
+        OracleProtocolError, match="integer lexeme exceeds 11 bytes"
+    ):
+        _read_token(payload, "read_integer")
+
+
+@pytest.mark.parametrize(
+    ("payload", "method_name", "expected"),
+    [
+        (b"true", "read_boolean", True),
+        (b"false", "read_boolean", False),
+        (b"null", "read_null", None),
+    ],
+)
+def test_canonical_json_accepts_exact_literals(
+    payload: bytes, method_name: str, expected: object
+) -> None:
+    assert _read_token(payload, method_name) is expected
+
+
+def _read_pair(payload: bytes) -> dict[str, object]:
+    reader = _CanonicalJsonReader(payload, 4, source="pair")
+    values = reader.read_object(
+        (("count", reader.read_integer), ("ready", reader.read_boolean))
+    )
+    reader.finish()
+    return values
+
+
+def test_canonical_json_accepts_compact_ordered_object() -> None:
+    assert _read_pair(b'{"count":1,"ready":false}') == {
+        "count": 1,
+        "ready": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"ready":false,"count":1}',
+        b'{"count":1,"count":1}',
+        b'{"count":1,"extra":false}',
+        b'{"count":1}',
+        b'{"count":1,"ready":false,"extra":0}',
+        b'{ "count":1,"ready":false}',
+        b'{"count" :1,"ready":false}',
+        b'{"count": 1,"ready":false}',
+        b'{"count":1, "ready":false}',
+        b'{"count":1,"ready":false }',
+        b'{"count":1,"ready":false}\t',
+    ],
+)
+def test_canonical_json_rejects_noncanonical_objects(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _read_pair(payload)
+
+
+def test_canonical_json_optional_reads_null_or_value() -> None:
+    null_reader = _CanonicalJsonReader(b"null", 1, source="optional")
+    assert null_reader.read_optional(null_reader.read_string) is None
+    null_reader.finish()
+
+    value_reader = _CanonicalJsonReader(b'"North"', 1, source="optional")
+    assert value_reader.read_optional(value_reader.read_string) == "North"
+    value_reader.finish()

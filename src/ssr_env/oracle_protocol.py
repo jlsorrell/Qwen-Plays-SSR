@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from typing import BinaryIO, Iterator
 
 SCHEMA_VERSION = 1
@@ -162,6 +163,70 @@ class _CanonicalJsonReader:
             self._fail("control character requires its short escape")
         self._offset = end
         return chr(codepoint)
+
+    def read_object(
+        self, fields: Sequence[tuple[str, Callable[[], object]]]
+    ) -> dict[str, object]:
+        self._expect(ord("{"))
+        values: dict[str, object] = {}
+        for index, (expected_key, read_value) in enumerate(fields):
+            if index != 0:
+                self._expect(ord(","))
+            actual_key = self.read_string()
+            if actual_key != expected_key:
+                self._fail(
+                    f"expected key {expected_key!r}, got {actual_key!r}"
+                )
+            self._expect(ord(":"))
+            values[expected_key] = read_value()
+        self._expect(ord("}"))
+        return values
+
+    def read_integer(self) -> int:
+        start = self._offset
+        while (
+            self._offset < len(self._payload)
+            and self._payload[self._offset] not in (ord(","), ord("}"))
+        ):
+            if self._offset - start >= 11:
+                self._fail("integer lexeme exceeds 11 bytes")
+            self._offset += 1
+        token = self._payload[start:self._offset]
+        if token == b"0":
+            value = 0
+        elif token.startswith(b"-"):
+            digits = token[1:]
+            if not digits or digits[0] == ord("0") or not digits.isdigit():
+                self._fail("noncanonical integer")
+            value = -int(digits)
+        else:
+            if not token or token[0] == ord("0") or not token.isdigit():
+                self._fail("noncanonical integer")
+            value = int(token)
+        if not -(2**31) <= value <= 2**31 - 1:
+            self._fail("integer is outside signed 32-bit range")
+        return value
+
+    def read_boolean(self) -> bool:
+        if self._starts_with(b"true"):
+            self._offset += 4
+            return True
+        if self._starts_with(b"false"):
+            self._offset += 5
+            return False
+        self._fail("expected boolean")
+        raise AssertionError("unreachable")
+
+    def read_null(self) -> None:
+        if not self._starts_with(b"null"):
+            self._fail("expected null")
+        self._offset += 4
+        return None
+
+    def read_optional(self, reader: Callable[[], object]) -> object | None:
+        if self._starts_with(b"null"):
+            return self.read_null()
+        return reader()
 
     def finish(self) -> None:
         if self._offset != len(self._payload):
