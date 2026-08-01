@@ -456,9 +456,15 @@ def _read_capture(reader: _CanonicalJsonReader) -> OracleCapture:
             ("pushes_to_try", reader.read_integer),
         )
     )
+    state_identity_text = cast(str, values["state_identity"])
+    sausages_cooked_value = cast(int, values["sausages_cooked"])
+    movement_count_value = cast(int, values["movement_count"])
+    pushes_to_try_value = cast(int, values["pushes_to_try"])
     return OracleCapture(
         raw_save=cast(str, values["raw_save"]),
-        state_identity=cast(str, values["state_identity"]),
+        state_identity=_located(
+            reader, lambda: _validate_state_identity(state_identity_text)
+        ),
         level=cast(str, values["level"]),
         overworld=cast(bool, values["overworld"]),
         won=cast(bool, values["won"]),
@@ -466,9 +472,20 @@ def _read_capture(reader: _CanonicalJsonReader) -> OracleCapture:
         have_ever_cooked_all=cast(bool, values["have_ever_cooked_all"]),
         lost_reason=cast(str, values["lost_reason"]),
         display_name=cast(str, values["display_name"]),
-        sausages_cooked=cast(int, values["sausages_cooked"]),
-        movement_count=cast(int, values["movement_count"]),
-        pushes_to_try=cast(int, values["pushes_to_try"]),
+        sausages_cooked=_located(
+            reader,
+            lambda: _nonnegative(
+                sausages_cooked_value, field="sausages_cooked"
+            ),
+        ),
+        movement_count=_located(
+            reader,
+            lambda: _nonnegative(movement_count_value, field="movement_count"),
+        ),
+        pushes_to_try=_located(
+            reader,
+            lambda: _nonnegative(pushes_to_try_value, field="pushes_to_try"),
+        ),
     )
 
 
@@ -553,10 +570,15 @@ def _decode_initial(reader: _CanonicalJsonReader) -> _DecodedLine:
         )
     )
     reader.finish()
+    schema_version, run_id = _validate_common(
+        reader, values, expected_kind="initial"
+    )
+    if values["input_index"] is not None:
+        _record_error(reader, "initial input_index must be null")
     return _DecodedLine(
-        kind=cast(RecordKind, values["kind"]),
-        schema_version=cast(int, values["schema_version"]),
-        run_id=cast(str, values["run_id"]),
+        kind="initial",
+        schema_version=schema_version,
+        run_id=run_id,
         record=InitialRecord(capture=cast(OracleCapture, values["capture"])),
     )
 

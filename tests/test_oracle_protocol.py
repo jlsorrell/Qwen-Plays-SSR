@@ -748,3 +748,38 @@ def test_record_decoder_rejects_unicode_timestamp_digits(
     )
     with pytest.raises(OracleProtocolError, match="canonical UTC"):
         _decode_record(payload, 1, source="unicode-time")
+
+
+BAD_INITIAL_CAPTURE_SEMANTIC_LINES = [
+    pytest.param(
+        INITIAL_LINE.replace(b'"input_index":null', b'"input_index":0'),
+        id="initial-index",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(b'"state_identity":"17"', b'"state_identity":"01"'),
+        id="state-identity",
+    ),
+    pytest.param(
+        INITIAL_LINE.replace(b'"movement_count":0', b'"movement_count":-1'),
+        id="negative-capture-integer",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_INITIAL_CAPTURE_SEMANTIC_LINES)
+def test_record_decoder_rejects_invalid_initial_or_capture_semantics(
+    payload: bytes,
+) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 2, source="bad-capture-semantics")
+
+
+def test_record_decoder_rejects_long_state_identity_before_conversion() -> None:
+    payload = INITIAL_LINE.replace(
+        b'"state_identity":"17"',
+        b'"state_identity":"' + b"9" * 100_000 + b'"',
+    )
+    with pytest.raises(
+        OracleProtocolError, match="state_identity exceeds 11 characters"
+    ):
+        _decode_record(payload, 2, source="long-state-identity")
