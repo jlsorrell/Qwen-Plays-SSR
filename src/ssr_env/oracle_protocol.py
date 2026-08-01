@@ -760,14 +760,18 @@ def read_oracle_trace_stream(
 ) -> OracleRun:
     decoded = list(_decode_trace_lines(stream, source=source))
     header = cast(RunHeader, decoded[0].record)
-    initial = cast(InitialRecord, decoded[1].record)
-    steps = tuple(
-        cast(StepRecord, item.record) for item in decoded[2:-1]
+    terminal = cast(EndRecord | ErrorRecord, decoded[-1].record)
+    if isinstance(terminal, ErrorRecord) and len(decoded) == 2:
+        initial = None
+        steps: tuple[StepRecord, ...] = ()
+    else:
+        initial = cast(InitialRecord, decoded[1].record)
+        steps = tuple(
+            cast(StepRecord, item.record) for item in decoded[2:-1]
+        )
+    outcome: TerminalOutcome = (
+        "error" if isinstance(terminal, ErrorRecord) else "success"
     )
-    terminal = decoded[-1].record
-    if not isinstance(terminal, EndRecord):
-        _sequence_error(source, "terminal-error support is not implemented")
-    outcome: TerminalOutcome = "success"
     return OracleRun(
         header=header,
         initial=initial,

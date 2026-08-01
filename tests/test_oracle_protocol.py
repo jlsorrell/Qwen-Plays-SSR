@@ -980,3 +980,61 @@ def test_trace_stream_accepts_complete_success_shape() -> None:
         finished_at_utc="2026-07-31T19:11:00.0000000Z",
     )
     assert trace.outcome == "success"
+
+
+def test_trace_stream_accepts_initial_step_error_prefix() -> None:
+    trace = read_oracle_trace_stream(
+        io.BytesIO(ERROR_TRACE_BYTES), source="error-memory"
+    )
+    assert trace.initial == InitialRecord(capture=_expected_capture("initial"))
+    assert len(trace.steps) == 1
+    assert trace.steps[0].input_index == 0
+    assert trace.terminal == ErrorRecord(
+        input_index=1,
+        input="North",
+        code="settle_timeout",
+        message="input did not settle",
+        settle_frames=600,
+        last_capture=_expected_capture("moved"),
+    )
+    assert trace.outcome == "error"
+
+
+def test_trace_stream_accepts_run_error_shape() -> None:
+    trace = read_oracle_trace_stream(
+        io.BytesIO(_trace_bytes(RUN_LINE, RUN_ONLY_ERROR_LINE)),
+        source="startup-error-memory",
+    )
+    assert trace.initial is None
+    assert trace.steps == ()
+    assert trace.terminal == ErrorRecord(
+        input_index=None,
+        input=None,
+        code="capture_failed",
+        message="game-state capture failed",
+        settle_frames=0,
+        last_capture=None,
+    )
+    assert trace.outcome == "error"
+
+
+@pytest.mark.parametrize(
+    ("steps", "error_line", "expected_count"),
+    [
+        ((), ERROR_INDEX_0_LINE, 0),
+        ((STEP0_LINE, STEP1_LINE), ERROR_INDEX_2_LINE, 2),
+        ((STEP0_LINE, STEP1_LINE, STEP2_LINE), ERROR_INDEX_3_LINE, 3),
+    ],
+    ids=["zero", "two", "three"],
+)
+def test_trace_stream_accepts_every_other_error_prefix_length(
+    steps: tuple[bytes, ...], error_line: bytes, expected_count: int
+) -> None:
+    payload = _trace_bytes(RUN_LINE, INITIAL_LINE, *steps, error_line)
+    trace = read_oracle_trace_stream(
+        io.BytesIO(payload), source=f"prefix-{expected_count}"
+    )
+    assert trace.outcome == "error"
+    assert len(trace.steps) == expected_count
+    assert isinstance(trace.terminal, ErrorRecord)
+    assert trace.terminal.input_index == expected_count
