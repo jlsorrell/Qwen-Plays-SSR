@@ -163,7 +163,7 @@ def test_canonical_json_accepts_canonical_strings(
         (b'"a\\v"', 4),
         (b'"\\ud800"', None),
         (b'"\\udfff"', None),
-        (b'"a\x80"', 3),
+        (b'"a\xed\xa0\x80"', 3),
     ],
 )
 def test_canonical_json_rejects_noncanonical_strings(
