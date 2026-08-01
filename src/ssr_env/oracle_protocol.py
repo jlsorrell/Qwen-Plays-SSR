@@ -86,10 +86,11 @@ class _CanonicalJsonReader:
         self.line_number = line_number
         self.source = source
 
-    def _fail(self, message: str) -> None:
+    def _fail(self, message: str, *, offset: int | None = None) -> None:
+        error_offset = self._offset if offset is None else offset
         raise OracleProtocolError(
             f"{self.source}: line {self.line_number}, "
-            f"byte {self._offset + 1}: {message}"
+            f"byte {error_offset + 1}: {message}"
         )
 
     def _expect(self, expected: int) -> None:
@@ -124,7 +125,9 @@ class _CanonicalJsonReader:
                 elif escape == ord("u"):
                     pieces.append(self._read_control_escape())
                 else:
-                    self._fail("noncanonical string escape")
+                    self._fail(
+                        "noncanonical string escape", offset=self._offset - 1
+                    )
                 literal_start = self._offset
                 continue
             if byte < 0x20:
@@ -137,8 +140,11 @@ class _CanonicalJsonReader:
         try:
             return self._payload[start:end].decode("utf-8", errors="strict")
         except UnicodeDecodeError as exc:
-            self._fail("invalid UTF-8 in string")
-            raise AssertionError("unreachable") from exc
+            error_offset = start + exc.start
+            raise OracleProtocolError(
+                f"{self.source}: line {self.line_number}, "
+                f"byte {error_offset + 1}: invalid UTF-8 in string"
+            ) from exc
 
     def _read_control_escape(self) -> str:
         end = self._offset + 4

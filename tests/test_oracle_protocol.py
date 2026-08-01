@@ -169,3 +169,17 @@ def test_canonical_json_accepts_canonical_strings(
 def test_canonical_json_rejects_noncanonical_strings(payload: bytes) -> None:
     with pytest.raises(OracleProtocolError):
         _read_token(payload, "read_string")
+
+
+@pytest.mark.parametrize(
+    ("payload", "byte_number"),
+    [
+        (b'"a\\v"', 4),
+        (b'"a\x80"', 3),
+    ],
+)
+def test_canonical_json_reports_the_offending_string_byte(
+    payload: bytes, byte_number: int
+) -> None:
+    with pytest.raises(OracleProtocolError, match=fr"byte {byte_number}:"):
+        _read_token(payload, "read_string")
