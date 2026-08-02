@@ -849,3 +849,45 @@ def read_oracle_trace(path: Path) -> OracleRun:
         ) from exc
     with stream:
         return read_oracle_trace_stream(stream, source=source)
+
+
+_DIRECTIONS = frozenset({"North", "South", "West", "East"})
+
+
+def require_passive_success(trace: OracleRun) -> None:
+    if trace.outcome != "success" or not isinstance(trace.terminal, EndRecord):
+        raise OracleProtocolError("passive success requires an end record")
+    if trace.initial is None:
+        raise OracleProtocolError("passive success requires an initial record")
+    if trace.terminal.input_count != EXPECTED_INPUT_COUNT:
+        raise OracleProtocolError("passive success end input_count must be three")
+    if len(trace.steps) != EXPECTED_INPUT_COUNT:
+        raise OracleProtocolError("passive success requires exactly three steps")
+    if tuple(step.input_index for step in trace.steps) != (0, 1, 2):
+        raise OracleProtocolError("passive success requires indices 0, 1, 2")
+
+    initial_capture = trace.initial.capture
+    step_zero, step_one, step_two = trace.steps
+
+    if step_zero.input not in _DIRECTIONS:
+        raise OracleProtocolError("step 0 must be a direction")
+    if not step_zero.accepted:
+        raise OracleProtocolError("step 0 must be accepted")
+    if not step_zero.movement_scheduled:
+        raise OracleProtocolError("step 0 must schedule movement")
+    if step_zero.capture.raw_save == initial_capture.raw_save:
+        raise OracleProtocolError("step 0 raw_save must change")
+
+    if step_one.input not in _DIRECTIONS:
+        raise OracleProtocolError("step 1 must be a direction")
+    if step_one.accepted:
+        raise OracleProtocolError("step 1 must be refused")
+    if step_one.movement_scheduled:
+        raise OracleProtocolError("step 1 must not schedule movement")
+
+    if step_two.input != "Undo":
+        raise OracleProtocolError("step 2 must be Undo")
+    if not step_two.accepted:
+        raise OracleProtocolError("step 2 Undo must be accepted")
+    if step_two.movement_scheduled:
+        raise OracleProtocolError("step 2 Undo must not schedule movement")

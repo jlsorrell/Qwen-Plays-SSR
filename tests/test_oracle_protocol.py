@@ -1399,3 +1399,168 @@ def test_path_wrapper_translates_open_failure(tmp_path: Path) -> None:
     with pytest.raises(OracleProtocolError, match="could not open trace") as caught:
         read_oracle_trace(missing)
     assert isinstance(caught.value.__cause__, OSError)
+
+
+from dataclasses import replace
+
+from ssr_env.oracle_protocol import require_passive_success
+
+
+def _relation_trace() -> OracleRun:
+    initial_capture = _expected_capture("initial")
+    moved_capture = _expected_capture("moved")
+    return OracleRun(
+        header=RunHeader(
+            run_id=RUN_ID,
+            game_assembly_sha256=ASSEMBLY_HASH,
+            started_at_utc="2026-07-31T19:09:50.3199100Z",
+        ),
+        initial=InitialRecord(capture=initial_capture),
+        steps=(
+            StepRecord(
+                input_index=0,
+                input="West",
+                accepted=True,
+                movement_scheduled=True,
+                settle_frames=2,
+                state_replaced=False,
+                capture=moved_capture,
+            ),
+            StepRecord(
+                input_index=1,
+                input="North",
+                accepted=False,
+                movement_scheduled=False,
+                settle_frames=2,
+                state_replaced=False,
+                capture=moved_capture,
+            ),
+            StepRecord(
+                input_index=2,
+                input="Undo",
+                accepted=True,
+                movement_scheduled=False,
+                settle_frames=2,
+                state_replaced=False,
+                capture=initial_capture,
+            ),
+        ),
+        terminal=EndRecord(
+            input_count=3,
+            finished_at_utc="2026-07-31T19:11:00.0000000Z",
+        ),
+        outcome="success",
+    )
+
+
+def _replace_step(trace: OracleRun, index: int, step: StepRecord) -> OracleRun:
+    steps = list(trace.steps)
+    steps[index] = step
+    return replace(trace, steps=tuple(steps))
+
+
+def test_require_passive_success_accepts_exact_relation() -> None:
+    assert require_passive_success(_relation_trace()) is None
+
+
+def test_require_passive_success_rejects_terminal_error() -> None:
+    trace = _relation_trace()
+    error = ErrorRecord(
+        input_index=3,
+        input=None,
+        code="capture_failed",
+        message="game-state capture failed",
+        settle_frames=0,
+        last_capture=trace.steps[-1].capture,
+    )
+    with pytest.raises(OracleProtocolError, match="requires an end record"):
+        require_passive_success(replace(trace, terminal=error, outcome="error"))
+
+
+@pytest.mark.parametrize(
+    "trace",
+    [
+        replace(_relation_trace(), steps=_relation_trace().steps[:2]),
+        replace(_relation_trace(), initial=None),
+        replace(
+            _relation_trace(),
+            terminal=EndRecord(
+                input_count=2,
+                finished_at_utc="2026-07-31T19:11:00.0000000Z",
+            ),
+        ),
+        replace(
+            _relation_trace(),
+            steps=(
+                _relation_trace().steps[0],
+                replace(_relation_trace().steps[1], input_index=2),
+                _relation_trace().steps[2],
+            ),
+        ),
+    ],
+    ids=["step-count", "missing-initial", "end-count", "indices"],
+)
+def test_require_passive_success_rejects_wrong_shape(trace: OracleRun) -> None:
+    with pytest.raises(OracleProtocolError):
+        require_passive_success(trace)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"input": "Undo"},
+        {"accepted": False},
+        {"movement_scheduled": False},
+    ],
+    ids=["undo", "refused", "no-movement"],
+)
+def test_require_passive_success_rejects_step_zero_flags(
+    changes: dict[str, object],
+) -> None:
+    trace = _relation_trace()
+    changed = replace(trace.steps[0], **changes)
+    with pytest.raises(OracleProtocolError):
+        require_passive_success(_replace_step(trace, 0, changed))
+
+
+def test_require_passive_success_rejects_unchanged_step_zero_save() -> None:
+    trace = _relation_trace()
+    changed = replace(trace.steps[0], capture=trace.initial.capture)
+    with pytest.raises(OracleProtocolError, match="raw_save must change"):
+        require_passive_success(_replace_step(trace, 0, changed))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"input": "Undo"},
+        {"accepted": True},
+        {"movement_scheduled": True},
+    ],
+    ids=["undo", "accepted", "movement"],
+)
+def test_require_passive_success_rejects_step_one_flags(
+    changes: dict[str, object],
+) -> None:
+    trace = _relation_trace()
+    changed = replace(trace.steps[1], **changes)
+    with pytest.raises(OracleProtocolError):
+        require_passive_success(_replace_step(trace, 1, changed))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"input": "East"},
+        {"accepted": False},
+        {"movement_scheduled": True},
+    ],
+    ids=["direction", "refused", "movement"],
+)
+def test_require_passive_success_rejects_step_two_flags(
+    changes: dict[str, object],
+) -> None:
+    trace = _relation_trace()
+    changed = replace(trace.steps[2], **changes)
+    with pytest.raises(OracleProtocolError):
+        require_passive_success(_replace_step(trace, 2, changed))
