@@ -1564,3 +1564,79 @@ def test_require_passive_success_rejects_step_two_flags(
     changed = replace(trace.steps[2], **changes)
     with pytest.raises(OracleProtocolError):
         require_passive_success(_replace_step(trace, 2, changed))
+
+
+CAPTURE_FIELD_MUTATIONS = {
+    "raw_save": "different",
+    "state_identity": "18",
+    "level": "different",
+    "overworld": True,
+    "won": True,
+    "returning": True,
+    "have_ever_cooked_all": True,
+    "lost_reason": "different",
+    "display_name": "different",
+    "sausages_cooked": 1,
+    "movement_count": 1,
+    "pushes_to_try": 1,
+}
+
+
+@pytest.mark.parametrize("step_index", [1, 2], ids=["step-one", "step-two"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    list(CAPTURE_FIELD_MUTATIONS.items()),
+    ids=list(CAPTURE_FIELD_MUTATIONS),
+)
+def test_require_passive_success_compares_every_capture_field(
+    step_index: int, field: str, value: object
+) -> None:
+    trace = _relation_trace()
+    changed_capture = replace(trace.steps[step_index].capture, **{field: value})
+    changed_step = replace(trace.steps[step_index], capture=changed_capture)
+    with pytest.raises(OracleProtocolError, match="complete capture"):
+        require_passive_success(_replace_step(trace, step_index, changed_step))
+
+
+@pytest.mark.parametrize("field", ["movement_count", "pushes_to_try"])
+def test_require_passive_success_rejects_nonquiescent_initial_pair(
+    field: str,
+) -> None:
+    trace = _relation_trace()
+    changed_initial = replace(trace.initial.capture, **{field: 1})
+    changed_step_two = replace(trace.steps[2], capture=changed_initial)
+    changed = replace(
+        trace,
+        initial=InitialRecord(capture=changed_initial),
+        steps=(trace.steps[0], trace.steps[1], changed_step_two),
+    )
+    with pytest.raises(OracleProtocolError, match="quiescent"):
+        require_passive_success(changed)
+
+
+@pytest.mark.parametrize("field", ["movement_count", "pushes_to_try"])
+def test_require_passive_success_rejects_nonquiescent_moved_pair(
+    field: str,
+) -> None:
+    trace = _relation_trace()
+    changed_moved = replace(trace.steps[0].capture, **{field: 1})
+    changed = replace(
+        trace,
+        steps=(
+            replace(trace.steps[0], capture=changed_moved),
+            replace(trace.steps[1], capture=changed_moved),
+            trace.steps[2],
+        ),
+    )
+    with pytest.raises(OracleProtocolError, match="quiescent"):
+        require_passive_success(changed)
+
+
+@pytest.mark.parametrize("step_index", [0, 1, 2])
+def test_require_passive_success_defensively_rejects_state_replaced(
+    step_index: int,
+) -> None:
+    trace = _relation_trace()
+    changed_step = replace(trace.steps[step_index], state_replaced=True)
+    with pytest.raises(OracleProtocolError, match="state_replaced"):
+        require_passive_success(_replace_step(trace, step_index, changed_step))

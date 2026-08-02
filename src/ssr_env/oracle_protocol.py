@@ -884,6 +884,10 @@ def require_passive_success(trace: OracleRun) -> None:
         raise OracleProtocolError("step 1 must be refused")
     if step_one.movement_scheduled:
         raise OracleProtocolError("step 1 must not schedule movement")
+    if step_one.capture != step_zero.capture:
+        raise OracleProtocolError(
+            "step 1 complete capture must equal step 0 complete capture"
+        )
 
     if step_two.input != "Undo":
         raise OracleProtocolError("step 2 must be Undo")
@@ -891,3 +895,16 @@ def require_passive_success(trace: OracleRun) -> None:
         raise OracleProtocolError("step 2 Undo must be accepted")
     if step_two.movement_scheduled:
         raise OracleProtocolError("step 2 Undo must not schedule movement")
+    if step_two.capture != initial_capture:
+        raise OracleProtocolError(
+            "step 2 complete capture must equal the initial complete capture"
+        )
+
+    captures = (initial_capture,) + tuple(step.capture for step in trace.steps)
+    if any(
+        capture.movement_count != 0 or capture.pushes_to_try != 0
+        for capture in captures
+    ):
+        raise OracleProtocolError("every accepted capture must be quiescent")
+    if any(step.state_replaced for step in trace.steps):
+        raise OracleProtocolError("every step state_replaced must be false")
