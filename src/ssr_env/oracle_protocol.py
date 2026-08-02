@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
+import sys
 from types import MappingProxyType
 from typing import BinaryIO, Iterator, Literal, NoReturn, TypeVar, cast
 
@@ -908,3 +911,50 @@ def require_passive_success(trace: OracleRun) -> None:
         raise OracleProtocolError("every accepted capture must be quiescent")
     if any(step.state_replaced for step in trace.steps):
         raise OracleProtocolError("every step state_replaced must be false")
+
+
+def _summary(trace: OracleRun) -> dict[str, object]:
+    error_code = (
+        trace.terminal.code if isinstance(trace.terminal, ErrorRecord) else None
+    )
+    record_count = 1 + int(trace.initial is not None) + len(trace.steps) + 1
+    return {
+        "error_code": error_code,
+        "outcome": trace.outcome,
+        "record_count": record_count,
+        "step_count": len(trace.steps),
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="oracle_trace_check.py")
+    parser.add_argument(
+        "--structural-only",
+        action="store_true",
+        help="accept either structurally valid terminal shape",
+    )
+    parser.add_argument("trace", type=Path)
+    arguments = parser.parse_args(argv)
+
+    try:
+        trace = read_oracle_trace(arguments.trace)
+    except OracleProtocolError as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 2
+
+    if not arguments.structural_only:
+        try:
+            require_passive_success(trace)
+        except OracleProtocolError as exc:
+            sys.stderr.write(f"error: {exc}\n")
+            return 1
+
+    encoded = json.dumps(
+        _summary(trace),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    sys.stdout.write(encoded + "\n")
+    return 0

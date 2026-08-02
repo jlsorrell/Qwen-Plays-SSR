@@ -1640,3 +1640,178 @@ def test_require_passive_success_defensively_rejects_state_replaced(
     changed_step = replace(trace.steps[step_index], state_replaced=True)
     with pytest.raises(OracleProtocolError, match="state_replaced"):
         require_passive_success(_replace_step(trace, step_index, changed_step))
+
+
+from ssr_env.oracle_protocol import main
+
+
+def _write_trace(tmp_path: Path, name: str, payload: bytes) -> Path:
+    path = tmp_path / name
+    path.write_bytes(payload)
+    return path
+
+
+def test_main_reports_relational_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write_trace(tmp_path, "success.ndjson", SUCCESS_TRACE_BYTES)
+    assert main([str(path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        '{"error_code":null,"outcome":"success",'
+        '"record_count":6,"step_count":3}\n'
+    )
+    assert captured.err == ""
+
+
+def test_main_structural_only_reports_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write_trace(tmp_path, "success.ndjson", SUCCESS_TRACE_BYTES)
+    assert main(["--structural-only", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        '{"error_code":null,"outcome":"success",'
+        '"record_count":6,"step_count":3}\n'
+    )
+    assert captured.err == ""
+
+
+def test_main_default_rejects_terminal_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write_trace(tmp_path, "error.ndjson", ERROR_TRACE_BYTES)
+    assert main([str(path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: passive success requires an end record\n"
+
+
+def test_main_structural_only_reports_terminal_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write_trace(tmp_path, "error.ndjson", ERROR_TRACE_BYTES)
+    assert main(["--structural-only", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        '{"error_code":"settle_timeout","outcome":"error",'
+        '"record_count":4,"step_count":1}\n'
+    )
+    assert captured.err == ""
+
+
+def test_main_default_rejects_structural_success_with_wrong_relation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wrong_step_one = STEP1_LINE.replace(b'"accepted":false', b'"accepted":true')
+    payload = _trace_bytes(
+        RUN_LINE,
+        INITIAL_LINE,
+        STEP0_LINE,
+        wrong_step_one,
+        STEP2_LINE,
+        END_LINE,
+    )
+    path = _write_trace(tmp_path, "wrong-relation.ndjson", payload)
+    assert main([str(path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: step 1 must be refused\n"
+
+
+def test_main_structural_only_accepts_success_with_wrong_relation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wrong_step_one = STEP1_LINE.replace(b'"accepted":false', b'"accepted":true')
+    payload = _trace_bytes(
+        RUN_LINE,
+        INITIAL_LINE,
+        STEP0_LINE,
+        wrong_step_one,
+        STEP2_LINE,
+        END_LINE,
+    )
+    path = _write_trace(tmp_path, "structural-success.ndjson", payload)
+    assert main(["--structural-only", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        '{"error_code":null,"outcome":"success",'
+        '"record_count":6,"step_count":3}\n'
+    )
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("flags", [[], ["--structural-only"]])
+def test_main_reports_malformed_trace_as_exit_two(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    flags: list[str],
+) -> None:
+    path = _write_trace(tmp_path, "malformed.ndjson", b"{}\n")
+    assert main([*flags, str(path)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"error: {path}: line 1: kind must be the first key and use a "
+        "schema-v1 value\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            SUCCESS_TRACE_BYTES.replace(
+                b'"expected_input_count":3',
+                b'"expected_input_count":' + b"9" * 100_000,
+                1,
+            ),
+            "integer lexeme exceeds 11 bytes",
+        ),
+        (
+            SUCCESS_TRACE_BYTES.replace(
+                b'"state_identity":"17"',
+                b'"state_identity":"' + b"9" * 100_000 + b'"',
+                1,
+            ),
+            "state_identity exceeds 11 characters",
+        ),
+    ],
+    ids=["integer", "state-identity"],
+)
+def test_main_reports_long_decimal_as_protocol_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload: bytes,
+    message: str,
+) -> None:
+    path = _write_trace(tmp_path, "long-decimal.ndjson", payload)
+    assert main([str(path)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(f"error: {path}:")
+    assert message in captured.err
+
+
+@pytest.mark.parametrize("argv", [[], ["one.ndjson", "two.ndjson"]])
+def test_main_preserves_argparse_usage_errors(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(argv)
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage: oracle_trace_check.py" in captured.err
+
+
+def test_main_preserves_argparse_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["--help"])
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.startswith("usage: oracle_trace_check.py")
+    assert "--structural-only" in captured.out
