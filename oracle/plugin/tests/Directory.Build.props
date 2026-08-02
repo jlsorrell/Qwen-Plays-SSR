@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'SsrOracle.Core.Net35'">
+    <BaseIntermediateOutputPath>obj/core-net35/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>obj/core-net35/</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>
