@@ -17,6 +17,9 @@ from ssr_env.oracle_protocol import (
     SCHEMA_VERSION,
     _decode_record,
     _read_record_lines,
+    main,
+    read_oracle_trace,
+    require_passive_success,
 )
 from ssr_env.oracle_protocol import (
     ErrorRecord,
@@ -1851,3 +1854,47 @@ def test_wrapper_preserves_argparse_exit_two() -> None:
     assert completed.returncode == 2
     assert completed.stdout == ""
     assert "usage: oracle_trace_check.py" in completed.stderr
+
+
+FIXTURE_DIRECTORY = Path(__file__).parent / "fixtures/oracle_trace"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("passive-success.ndjson", SUCCESS_TRACE_BYTES),
+        ("passive-error.ndjson", ERROR_TRACE_BYTES),
+    ],
+)
+def test_golden_fixture_bytes_are_exact(name: str, expected: bytes) -> None:
+    payload = (FIXTURE_DIRECTORY / name).read_bytes()
+    assert payload == expected
+    assert payload.endswith(b"\n")
+    assert b"\r" not in payload
+    assert not payload.startswith(b"\xef\xbb\xbf")
+
+
+def test_golden_success_fixture_passes_relational_gate() -> None:
+    trace = read_oracle_trace(FIXTURE_DIRECTORY / "passive-success.ndjson")
+    assert trace.outcome == "success"
+    assert len(trace.steps) == 3
+    assert require_passive_success(trace) is None
+
+
+def test_golden_error_fixture_is_structural_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = FIXTURE_DIRECTORY / "passive-error.ndjson"
+    trace = read_oracle_trace(path)
+    assert trace.outcome == "error"
+    assert isinstance(trace.terminal, ErrorRecord)
+    assert trace.terminal.code == "settle_timeout"
+    with pytest.raises(OracleProtocolError, match="requires an end record"):
+        require_passive_success(trace)
+    assert main(["--structural-only", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        '{"error_code":"settle_timeout","outcome":"error",'
+        '"record_count":4,"step_count":1}\n'
+    )
+    assert captured.err == ""
