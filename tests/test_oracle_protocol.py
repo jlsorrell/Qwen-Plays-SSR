@@ -1263,3 +1263,86 @@ def test_trace_stream_rejects_invalid_success_terminal(
 ) -> None:
     with pytest.raises(OracleProtocolError, match=re.escape(message)):
         read_oracle_trace_stream(io.BytesIO(payload), source="bad-success")
+
+
+WRONG_ERROR_INDEX_LINE = ERROR_LINE.replace(
+    b'"input_index":1', b'"input_index":2'
+)
+
+BAD_ERROR_TERMINAL_TRACES = [
+    pytest.param(
+        _trace_bytes(RUN_LINE, INITIAL_LINE, STEP0_LINE, WRONG_ERROR_INDEX_LINE),
+        "error input_index must equal the flushed-step count",
+        id="error-index-mismatch",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, ERROR_LINE),
+        "error input_index must equal the flushed-step count",
+        id="run-error-index-mismatch",
+    ),
+]
+
+
+@pytest.mark.parametrize(("payload", "message"), BAD_ERROR_TERMINAL_TRACES)
+def test_trace_stream_rejects_invalid_error_terminal(
+    payload: bytes, message: str
+) -> None:
+    with pytest.raises(OracleProtocolError, match=re.escape(message)):
+        read_oracle_trace_stream(io.BytesIO(payload), source="bad-error")
+
+
+BAD_RECORD_IN_SEQUENCE_TRACES = [
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE.replace(b'"settle_frames":2', b'"settle_frames":0'),
+            ERROR_LINE,
+        ),
+        id="error-prefix-step-settle-zero",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE.replace(b'"settle_frames":2', b'"settle_frames":1'),
+            ERROR_LINE,
+        ),
+        id="error-prefix-step-settle-one",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE.replace(b'"settle_frames":2', b'"settle_frames":601'),
+            ERROR_LINE,
+        ),
+        id="error-prefix-step-settle-high",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE.replace(
+                b'"state_replaced":false', b'"state_replaced":true'
+            ),
+            ERROR_LINE,
+        ),
+        id="error-prefix-state-replaced",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            ERROR_LINE.replace(b'"settle_frames":600', b'"settle_frames":601'),
+        ),
+        id="error-prefix-error-settle-high",
+    ),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_RECORD_IN_SEQUENCE_TRACES)
+def test_trace_stream_preserves_record_validation(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        read_oracle_trace_stream(io.BytesIO(payload), source="bad-record")

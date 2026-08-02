@@ -807,6 +807,14 @@ def read_oracle_trace_stream(
             terminal = record
             continue
         if isinstance(record, ErrorRecord):
+            if (
+                record.input_index is not None
+                and record.input_index != len(steps)
+            ):
+                _sequence_error(
+                    source,
+                    "error input_index must equal the flushed-step count",
+                )
             terminal = record
             continue
         raise AssertionError("unreachable record type")
