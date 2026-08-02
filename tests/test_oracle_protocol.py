@@ -1815,3 +1815,39 @@ def test_main_preserves_argparse_help(
     assert captured.err == ""
     assert captured.out.startswith("usage: oracle_trace_check.py")
     assert "--structural-only" in captured.out
+
+
+import subprocess
+import sys
+
+
+def test_wrapper_reports_success(tmp_path: Path) -> None:
+    path = _write_trace(tmp_path, "success.ndjson", SUCCESS_TRACE_BYTES)
+    repository = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [sys.executable, str(repository / "tools/oracle_trace_check.py"), str(path)],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == (
+        '{"error_code":null,"outcome":"success",'
+        '"record_count":6,"step_count":3}\n'
+    )
+    assert completed.stderr == ""
+
+
+def test_wrapper_preserves_argparse_exit_two() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [sys.executable, str(repository / "tools/oracle_trace_check.py")],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "usage: oracle_trace_check.py" in completed.stderr
