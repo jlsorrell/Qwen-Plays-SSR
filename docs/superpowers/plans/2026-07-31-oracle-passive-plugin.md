@@ -56,7 +56,8 @@ b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3  UnityEngine.Co
   code-quality verdicts. Critical/Important findings are corrected in
   follow-up fix commits and scoped re-reviews; no task commit is amended after
   review. This post-commit sequence is normative anywhere older wording below
-  refers to reviews. The frozen task-base hashes are:
+  refers to reviews. The initial branch-base hashes, frozen before Task 1.1,
+  are:
 
 ```text
 8c02cafd15da09ccdc4c3a1ff5d2387baf00aee7543b5406fe8a3695dc40afb9  oracle/plugin/Plugin.cs
@@ -888,9 +889,25 @@ approval before Task 1.2.
 
 - [ ] **Step 1: Freeze the current sources and write the three remaining RED protocol tests**
 
-Run the four `shasum` checks from Global Constraints. Add this exact registration
-and test to `ProtocolTests.cs`, then register it from `Program.Main` before the
-success line:
+Before changing any Task 1.2 source, verify the reviewed post-Task-1.1 source
+state with these task-aware pins. `Plugin.cs`, both project files, and their
+pins are unchanged from the initial branch base; `Program.cs` intentionally
+uses the reviewed Task 1.1 hash rather than its pre-Task-1.1 hash:
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Plugin.cs | awk '{print $1}')" = \
+  "8c02cafd15da09ccdc4c3a1ff5d2387baf00aee7543b5406fe8a3695dc40afb9"
+test "$(shasum -a 256 oracle/plugin/SsrOracle.Plugin.csproj | awk '{print $1}')" = \
+  "566779ae0f171daaaba34477e8e7f878cddd11d1218f79acfcd9d0fc8e63e233"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "8e97b9b7e0f6fee6b7d7198d3465bcaba05f335a09d5e78638ac8830061784d0"
+test "$(shasum -a 256 oracle/plugin/tests/SsrOracle.UnitTests.csproj | awk '{print $1}')" = \
+  "f048869e73157e88513e6338776411bb64bf4c0f74ec50d9cfc6d77b4870d96d"
+```
+
+All four commands must exit zero. Add this exact registration and test to
+`ProtocolTests.cs`, then register it from `Program.Main` before the success
+line:
 
 ```csharp
 using System;
