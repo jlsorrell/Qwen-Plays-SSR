@@ -12,6 +12,12 @@
 
 - The authoritative design is `docs/superpowers/specs/2026-07-31-oracle-passive-trace-capture-design.md`, especially sections 5-8 and 11-12.
 - Complete this plan offline. Do not deploy to, mutate, or launch the installed game.
+- Every `uv` invocation in this plan sets `UV_OFFLINE=1`. A cache miss is a
+  hard failure; it never authorizes dependency acquisition or network access.
+- Execute every multi-command gate in a fail-fast Bash process beginning with
+  `set -euo pipefail`, or issue each command separately and check its exit
+  status before continuing. A later successful command never masks an earlier
+  restore, build, test, or hash failure.
 - Preserve Mode-off behavior: read existing config bytes without `Config.Bind` or save, require only the original three compatibility methods, emit exactly `SSR oracle boot probe loaded`, and install no patches, sink, or save redirect.
 - The ignored Mode-off fixture must retain SHA-256 `cd0f6f26a4f49d8eec9ca9bbf8a91aacf35d03c3f09f4cf52d193bd5036f787d` and remain byte-identical across plugin startup/destruction.
 - Passive mode requires the exact seven-key configuration and fixed values from design section 6. Reject `replay` and every other mode.
@@ -42,7 +48,15 @@ f8bc81e00aa5f4372cbebe4951e5be7b21e54ba5f978e21c53ae2e8713ca3ca0  UnityEngine.dl
 b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3  UnityEngine.CoreModule.dll
 ```
 
-- Use strict TDD and a fresh reviewer gate for every task. The frozen task-base hashes are:
+- Use strict TDD and the selected `superpowers:subagent-driven-development`
+  workflow for every task. The implementer records RED and GREEN evidence,
+  makes exactly the task's named commit, and only then may the controller
+  generate an immutable `BASE..HEAD` review package. One fresh independent
+  task reviewer returns separate, explicit specification-compliance and
+  code-quality verdicts. Critical/Important findings are corrected in
+  follow-up fix commits and scoped re-reviews; no task commit is amended after
+  review. This post-commit sequence is normative anywhere older wording below
+  refers to reviews. The frozen task-base hashes are:
 
 ```text
 8c02cafd15da09ccdc4c3a1ff5d2387baf00aee7543b5406fe8a3695dc40afb9  oracle/plugin/Plugin.cs
@@ -56,9 +70,10 @@ f048869e73157e88513e6338776411bb64bf4c0f74ec50d9cfc6d77b4870d96d  oracle/plugin/
 The coordinator's ten plugin tracks remain stable, but this document contains
 twenty-four executable tasks numbered `1.1` through `10.1`.  A coordinator
 instruction to execute plugin “Tasks 1-10” means execute every decimal task in
-each corresponding track, in numerical order.  Every decimal task has its own
-RED, GREEN, net35 gate when Core changes, commit, specification review, and
-code-quality review.  No decimal tasks may be batched into one commit.
+each corresponding track, in numerical order. Every decimal task has its own
+RED, GREEN, net35 gate when Core changes, exact commit, and post-commit task
+review with separate specification and code-quality verdicts. No decimal
+tasks may be batched into one commit.
 
 | File | Sole responsibility |
 | --- | --- |
@@ -97,22 +112,23 @@ startup=7 reporter=4 assembly=4 plugin=6 total=82
 ```
 
 `TestRegistry.VerifyManifest` in Task 1.1 rejects a missing, duplicate, extra,
-or mis-cohorted registration before executing any selected test.  The final
+or mis-cohorted registration before executing any selected test. The final
 Python accounting task does not guess the protocol track's evolving item
-count: it records the literal post-protocol collection manifest and then uses
-a pytest accounting plugin to prove that every collected node is exactly one
-of pass, the frozen 120 XFAIL nodes, or the frozen six named XPASS nodes, with
-zero failures, errors, or skips.
+count: it records the literal collection counts, compares the complete frozen
+120-node XFAIL identity manifest, checks all six named XPASS identities, and
+proves by exact arithmetic that every other collected node passed, with zero
+failures, errors, or skips.
 
 ### Exact 24-task ledger
 
-This ledger is normative.  The detailed track sections below supply the
+This ledger is normative. The detailed track sections below supply the
 complete source and test bodies; this table supplies the non-batchable
 execution boundary.  For every row, first add only the named tests and run the
 RED command until a named test fails for the stated missing behavior.  Then add
 only that row's product slice, run the GREEN command, run `git diff --check`,
-request specification and code-quality review, and make exactly the listed
-commit.  `core-gate` means the selected cohort followed by the net35 Core
+make exactly the listed commit, generate the immutable review package from the
+recorded task base to that commit, and require both reviewer verdicts before
+starting the next row. `core-gate` means the selected cohort followed by the net35 Core
 compile command from Task 1.2; `plugin-gate` means the selected cohort followed
 by the real net35 plugin build.  A later task may extend a file created earlier,
 but may not weaken or rename an earlier registration.
@@ -187,8 +203,9 @@ committed, and lets Task 10.1 compare the identities of all 120 XFAIL nodes
 rather than merely comparing their count:
 
 ```bash
+set -euo pipefail
 mkdir -p data/oracle/plugin-plan-evidence
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
   > data/oracle/plugin-plan-evidence/pre-plugin-pytest.txt
 sed -n 's/^XFAIL \([^ ]*\).*/\1/p' \
   data/oracle/plugin-plan-evidence/pre-plugin-pytest.txt | LC_ALL=C sort \
@@ -539,11 +556,11 @@ internal static class Check
 }
 ```
 
-- [ ] **Step 5: Run GREEN and obtain both fresh reviews**
+- [ ] **Step 5: Run GREEN and record immutable review evidence**
 
 Run `--cohort protocol`, require the one temporary test and exact success
-stdout, run the diff check, and obtain both reviews before adding a product
-DTO:
+stdout, and run the diff check. Record the RED/GREEN output in the task report
+for the post-commit reviewer:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -559,6 +576,10 @@ git add oracle/plugin/tests/TestSupport.cs oracle/plugin/tests/ProtocolTests.cs 
   oracle/plugin/tests/Program.cs oracle/plugin/tests/SsrOracle.UnitTests.csproj
 git commit -m "test: install oracle unit harness"
 ```
+
+After the commit, the controller generates the Task 1.1 `BASE..HEAD` review
+package and requires explicit specification-compliance and code-quality
+approval before Task 1.2.
 
 #### Task 1.2: Define and validate the closed protocol model
 
@@ -1264,7 +1285,7 @@ internal static class OracleMarkerErrors
 }
 ```
 
-- [ ] **Step 5: Run GREEN, both target-framework gates, and both fresh reviews**
+- [ ] **Step 5: Run GREEN and both target-framework gates**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
@@ -1279,9 +1300,8 @@ internal static class OracleMarkerErrors
 git diff --check
 ```
 
-Require the four-test protocol manifest and both builds to pass, obtain fresh
-specification and code-quality approval, and rerun the gates after resolving
-every finding.
+Require the four-test protocol manifest and both builds to pass, and retain
+their pristine output in the task report for post-commit review.
 
 - [ ] **Step 6: Commit only the Task 1.2 protocol-model slice**
 
@@ -1829,10 +1849,11 @@ internal static class CanonicalJson
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 Run `encoding=3`, then the net35 Core gate. Require exact fixture/scalar/
-surrogate behavior, run the diff check, and obtain both reviews:
+surrogate behavior, run the diff check, and retain the output for post-commit
+review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -2034,7 +2055,7 @@ internal static class CaptureSignature
 }
 ```
 
-- [ ] **Step 4: Run both framework gates and obtain both fresh reviews**
+- [ ] **Step 4: Run both framework gates**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -2046,8 +2067,8 @@ internal static class CaptureSignature
 git diff --check
 ```
 
-Require both GREEN outputs and resolve every specification and code-quality
-finding before the commit.
+Require both GREEN outputs and retain them in the task report for post-commit
+review.
 
 - [ ] **Step 5: Commit only the Task 2.2 signature slice**
 
@@ -2518,10 +2539,10 @@ internal sealed class NdjsonTraceSink : ITraceSink
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
-Run the sink cohort, the net35 Core gate, and `git diff --check`; then obtain
-both fresh reviewer approvals:
+Run the sink cohort, the net35 Core gate, and `git diff --check`; retain all
+output in the task report for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -2818,7 +2839,7 @@ before `WriteEncoded`, `CanonicalEncodingException` and
 close, invalid-progress, and cumulative-budget failure permanently blocks
 later records; one best-effort Close remains legal after a write/flush failure.
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -2830,7 +2851,8 @@ later records; one best-effort Close remains legal after a write/flush failure.
 git diff --check
 ```
 
-Require all six sink registrations to pass and resolve both fresh reviews.
+Require all six sink registrations to pass and retain the pristine output in
+the task report for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 3.2 sink slice**
 
@@ -3204,7 +3226,7 @@ internal interface IPassiveReporter
 
 ~~~
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ~~~bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -3664,6 +3686,25 @@ internal static class PassiveDriverInitialTests
             PassivePhase.Ready,
             fixture.Driver.Phase,
             "ready after flushed pair");
+
+        DriverFixture failedMarker = DriverFixture.Active();
+        failedMarker.Reporter.ReadyFailure =
+            new InvalidOperationException("ready marker");
+        failedMarker.Observe(
+            failedMarker.State, failedMarker.State, 1.0, true,
+            ProtocolSamples.InitialCapture);
+        failedMarker.Neutral();
+        failedMarker.Observe(
+            failedMarker.State, failedMarker.State, 2.0, true,
+            ProtocolSamples.InitialCapture);
+        failedMarker.Observe(
+            failedMarker.State, failedMarker.State, 3.0, true,
+            ProtocolSamples.InitialCapture);
+        ErrorRecord markerError = failedMarker.Sink.ErrorRecords[0];
+        Check.Equal("observer_exception", markerError.Code,
+            "initial Ready failure code");
+        Check.True(markerError.LastCapture == null,
+            "completed initial epoch is not retained as last_capture");
     }
 
     private static void NotInspectedBreaksPair()
@@ -4771,10 +4812,10 @@ internal sealed partial class PassiveDriver : IDisposable
         currentFrames = 0;
         neutralSeen = false;
         candidateSignature = null;
+        lastCapture = null;
         try
         {
             reporter.Ready(0);
-            lastCapture = null;
         }
         catch (Exception)
         {
@@ -5166,7 +5207,7 @@ internal sealed partial class PassiveDriver : IDisposable
 }
 ~~~
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ~~~bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -5749,6 +5790,7 @@ internal sealed partial class PassiveDriver
         completedInputs++;
         stableState = attemptState;
         ClearAttemptAfterStep();
+        lastCapture = null;
 
         if (completedInputs == expectedInputCount)
         {
@@ -5766,7 +5808,6 @@ internal sealed partial class PassiveDriver
         try
         {
             reporter.Ready(completedInputs);
-            lastCapture = null;
         }
         catch (Exception)
         {
@@ -5785,10 +5826,9 @@ internal sealed partial class PassiveDriver
 git diff --check
 ~~~
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 5: Inspect the task diff and commit**
 
-Review the full diff and obtain spec-compliance plus code-quality approval.
-Then run exactly:
+Inspect the full diff, retain it with the task report, and then run exactly:
 
 ~~~bash
 git diff -- oracle/plugin/Core/PassiveDriverInput.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
@@ -6184,9 +6224,9 @@ SetGameState patch without dereferencing game types.
 git diff --check
 ~~~
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 5: Inspect the task diff and commit**
 
-Obtain spec-compliance and code-quality approval, then run exactly:
+Retain the complete task diff and GREEN evidence, then run exactly:
 
 ~~~bash
 git diff -- oracle/plugin/Core/PassiveDriverLifecycleHooks.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
@@ -6308,6 +6348,18 @@ internal static class PassiveDriverTerminalTests
         Check.Equal(1, during.SettleFrames, "pending frames");
         Check.Same(ProtocolSamples.MovedCapture, during.LastCapture,
             "latest bounded capture");
+
+        DriverFixture failedProgress = DriverFixture.Ready();
+        failedProgress.Reporter.ReadyFailure =
+            new InvalidOperationException("ready marker");
+        failedProgress.OpenDirection(2, true, true, 10.0);
+        failedProgress.SettleCurrent(
+            ProtocolSamples.MovedCapture, 11.0);
+        ErrorRecord progressError = failedProgress.Sink.ErrorRecords[0];
+        Check.Equal("observer_exception", progressError.Code,
+            "intermediate Ready failure code");
+        Check.True(progressError.LastCapture == null,
+            "completed step epoch is not retained as last_capture");
 
         DriverFixture restart = DriverFixture.Ready();
         restart.OpenDirection(2, true, true, 10.0);
@@ -6572,9 +6624,9 @@ internal sealed partial class PassiveDriver
 git diff --check
 ~~~
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 5: Inspect the task diff and commit**
 
-Obtain spec-compliance and code-quality approval, then run exactly:
+Retain the complete task diff and GREEN evidence, then run exactly:
 
 ~~~bash
 git diff -- oracle/plugin/Core/PassiveDriverCompletion.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverTerminalTests.cs oracle/plugin/tests/PassiveDriverTests.cs oracle/plugin/tests/Program.cs
@@ -7562,14 +7614,13 @@ Expected: all six selected config tests pass in both runs, including the
 261-byte pinned fixture in the second run; stdout contains only the harness
 success line, stderr is empty, and the net35 build has zero warnings/errors.
 
-- [ ] **Step 5: Pass both fresh review gates**
+- [ ] **Step 5: Freeze Task 6.1 review evidence**
 
-Dispatch a fresh specification reviewer with the Task 6.1 diff, this task
-body, and design Sections 5.1 and 6. Require explicit `APPROVE` for exact
-Off/passive grammar, typed codes, byte identity, fixed values, and absence of
-writes. Then dispatch a separate fresh code-quality reviewer with the same
-diff and both framework outputs. Resolve every finding and rerun Step 4; do
-not combine either review with Task 6.2.
+Record the Task 6.1 diff, this task body, design Sections 5.1 and 6, and both
+framework outputs in the task report. The post-commit reviewer must return
+explicit verdicts for exact Off/passive grammar, typed codes, byte identity,
+fixed values, absence of writes, and code quality. Task 6.2 receives its own
+fresh reviewer.
 
 - [ ] **Step 6: Make only the Task 6.1 ledger commit**
 
@@ -7689,6 +7740,20 @@ internal static class PhysicalPathTests
             Check.Sequence(new string[0], identity.MissingComponents,
                 "existing missing suffix");
         }
+
+        Check.Equal(
+            "/tmp/é/雪",
+            MacPhysicalPathOperations.DecodeNativePath(new byte[]
+            {
+                0x2f, 0x74, 0x6d, 0x70, 0x2f,
+                0xc3, 0xa9, 0x2f, 0xe9, 0x9b, 0xaa
+            }),
+            "native path bytes decode as strict UTF-8");
+        Check.Throws<System.IO.IOException>(delegate
+        {
+            MacPhysicalPathOperations.DecodeNativePath(
+                new byte[] { 0xff });
+        }, "invalid native path UTF-8");
     }
 
     private static void MissingSuffixIsPreserved()
@@ -8139,6 +8204,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 internal enum PhysicalPathComponentKind
 {
@@ -8221,6 +8287,9 @@ internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations
     internal static readonly MacPhysicalPathOperations Instance =
         new MacPhysicalPathOperations();
 
+    private static readonly UTF8Encoding StrictUtf8 =
+        new UTF8Encoding(false, true);
+
     private MacPhysicalPathOperations() { }
 
     public PhysicalPathComponentKind Classify(string path)
@@ -8255,14 +8324,34 @@ internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations
         }
         try
         {
-            string value = Marshal.PtrToStringAnsi(pointer);
-            if (String.IsNullOrEmpty(value))
-                throw new IOException("realpath returned an empty path");
-            return value;
+            ulong nativeLength = strlen(pointer).ToUInt64();
+            if (nativeLength > Int32.MaxValue)
+                throw new IOException("realpath returned an oversized path");
+            byte[] bytes = new byte[(int)nativeLength];
+            if (bytes.Length != 0)
+                Marshal.Copy(pointer, bytes, 0, bytes.Length);
+            return DecodeNativePath(bytes);
         }
         finally
         {
             free(pointer);
+        }
+    }
+
+    internal static string DecodeNativePath(byte[] bytes)
+    {
+        if (bytes == null)
+            throw new ArgumentNullException("bytes");
+        try
+        {
+            string value = StrictUtf8.GetString(bytes);
+            if (String.IsNullOrEmpty(value) || value.IndexOf('\0') >= 0)
+                throw new IOException("realpath returned an invalid path");
+            return value;
+        }
+        catch (DecoderFallbackException error)
+        {
+            throw new IOException("realpath returned invalid UTF-8", error);
         }
     }
 
@@ -8275,6 +8364,9 @@ internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations
         CharSet = CharSet.Ansi)]
     private static extern IntPtr readlink(
         string path, byte[] buffer, UIntPtr bufferSize);
+
+    [DllImport("/usr/lib/libSystem.B.dylib")]
+    private static extern UIntPtr strlen(IntPtr value);
 
     [DllImport("/usr/lib/libSystem.B.dylib")]
     private static extern void free(IntPtr pointer);
@@ -8647,16 +8739,14 @@ Expected: all six path tests and all six retained config tests pass; each run
 prints only the harness success line with empty stderr, and the net35 build has
 zero warnings/errors.
 
-- [ ] **Step 6: Pass both fresh review gates**
+- [ ] **Step 6: Freeze Task 6.2 review evidence**
 
-Dispatch a fresh specification reviewer with the Task 6.2 diff, this task
-body, and design Section 6. Require explicit `APPROVE` for per-component
-`readlink`, allocated `realpath` cleanup, lexical missing-suffix handling,
-boundary containment, exact standard config overloads, and all four
-deterministic between-scan changes. Then dispatch a separate fresh
-code-quality reviewer with the same diff and all three framework outputs.
-Resolve every finding and rerun Step 5; neither approval may be reused from
-Task 6.1.
+Record the Task 6.2 diff, this task body, design Section 6, and all three
+framework outputs in the task report. The post-commit reviewer must return
+explicit verdicts for per-component `readlink`, allocated `realpath` cleanup,
+strict UTF-8 native-path decoding, lexical missing-suffix handling, boundary
+containment, exact standard config overloads, all four deterministic
+between-scan changes, and code quality. Task 6.1 approval is not reusable.
 
 - [ ] **Step 7: Make only the Task 6.2 ledger commit**
 
@@ -8682,6 +8772,9 @@ git commit -m "feat: validate physical oracle paths"
 **Interfaces:**
 - Produces: `GameContract.ValidatePassiveSurface() -> void` and preserves
   `GameContract.ValidateLegacySurface() -> void` for Mode-off.
+- Pins the native `Direction` constants used by Core attribution exactly:
+  `North=0`, `South=1`, `West=2`, `East=3`, and `None=8`, both in the
+  external metadata characterization and passive runtime validation.
 - Produces Unity-free `GameGateValues`, `CaptureValues`,
   `GameObservationPolicy.IsQuiescent(GameGateValues)`, and
   `CaptureMapping.Create(CaptureValues) -> CaptureRecord`; invalid mapping
@@ -8995,7 +9088,7 @@ internal static class CaptureMapping
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -9007,9 +9100,8 @@ internal static class CaptureMapping
 git diff --check
 ```
 
-Require the exact harness success line and a clean net35 build. Send this
-Task 7.1 diff and both outputs to fresh specification and code-quality
-reviewers, resolve every finding, and rerun the commands before committing.
+Require the exact harness success line and a clean net35 build. Retain the
+Task 7.1 diff and both outputs in the task report for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 7.1 observation-policy slice**
 
@@ -9513,6 +9605,50 @@ internal sealed class MetadataImage : IDisposable
             new FieldShape(owner, name, visibility, isStatic, fieldType));
     }
 
+    internal int RequireInt32EnumConstant(string owner, string name)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        FieldDefinitionHandle found = default(FieldDefinitionHandle);
+        foreach (FieldDefinitionHandle handle in definition.GetFields())
+        {
+            FieldDefinition field = Reader.GetFieldDefinition(handle);
+            if (Reader.GetString(field.Name) != name)
+                continue;
+            if (!found.IsNil)
+                throw new InvalidOperationException(
+                    "duplicate enum constant: " + owner + "::" + name);
+            found = handle;
+        }
+        if (found.IsNil)
+            throw new InvalidOperationException(
+                "missing enum constant: " + owner + "::" + name);
+
+        FieldDefinition value = Reader.GetFieldDefinition(found);
+        FieldAttributes required = FieldAttributes.Public
+            | FieldAttributes.Static
+            | FieldAttributes.Literal
+            | FieldAttributes.HasDefault;
+        if ((value.Attributes & required) != required
+            || value.DecodeSignature(provider, null) != owner)
+        {
+            throw new InvalidOperationException(
+                "invalid enum constant shape: " + owner + "::" + name);
+        }
+        ConstantHandle constantHandle = value.GetDefaultValue();
+        if (constantHandle.IsNil)
+            throw new InvalidOperationException(
+                "missing enum constant value: " + owner + "::" + name);
+        Constant constant = Reader.GetConstant(constantHandle);
+        if (constant.TypeCode != ConstantTypeCode.Int32)
+            throw new InvalidOperationException(
+                "enum constant is not Int32: " + owner + "::" + name);
+        BlobReader bytes = Reader.GetBlobReader(constant.Value);
+        int result = bytes.ReadInt32();
+        if (bytes.RemainingBytes != 0)
+            throw new BadImageFormatException("trailing enum constant bytes");
+        return result;
+    }
+
     internal bool HasCustomAttribute(
         CustomAttributeHandleCollection attributes,
         string expectedType)
@@ -9899,6 +10035,21 @@ internal static class AssemblySurfaceTests
                 {
                     P("System.Boolean"), P("System.Boolean")
                 });
+            Check.Equal(0,
+                image.RequireInt32EnumConstant("Direction", "North"),
+                "Direction.North");
+            Check.Equal(1,
+                image.RequireInt32EnumConstant("Direction", "South"),
+                "Direction.South");
+            Check.Equal(2,
+                image.RequireInt32EnumConstant("Direction", "West"),
+                "Direction.West");
+            Check.Equal(3,
+                image.RequireInt32EnumConstant("Direction", "East"),
+                "Direction.East");
+            Check.Equal(8,
+                image.RequireInt32EnumConstant("Direction", "None"),
+                "Direction.None");
         }
     }
 
@@ -10953,6 +11104,11 @@ internal static class GameContract
     internal static void ValidatePassiveSurface()
     {
         ValidateLegacySurface();
+        RequireDirectionValue("North", 0);
+        RequireDirectionValue("South", 1);
+        RequireDirectionValue("West", 2);
+        RequireDirectionValue("East", 3);
+        RequireDirectionValue("None", 8);
         RequireMethod(typeof(Game), "Update",
             BindingFlags.Instance | BindingFlags.NonPublic,
             typeof(void), new Type[0]);
@@ -11034,6 +11190,25 @@ internal static class GameContract
             throw new MissingMethodException(type.FullName, name);
     }
 
+    private static void RequireDirectionValue(string name, int expected)
+    {
+        FieldInfo field = typeof(Direction).GetField(
+            name, BindingFlags.Public | BindingFlags.Static);
+        if (field == null || !field.IsLiteral
+            || field.FieldType != typeof(Direction))
+        {
+            throw new MissingFieldException(
+                typeof(Direction).FullName, name);
+        }
+        object raw = field.GetRawConstantValue();
+        if (raw == null || raw.GetType() != typeof(int)
+            || (int)raw != expected)
+        {
+            throw new InvalidOperationException(
+                "unexpected Direction value: " + name);
+        }
+    }
+
     private static void RequireField(
         Type type, string name, BindingFlags flags, Type fieldType)
     {
@@ -11072,12 +11247,11 @@ errors, proving the newly created `GameContract.cs` compiles before its Task
 assembly/assets file/metadata reader is not GREEN, and the old name-only plugin
 checks are not sufficient. Do not load or launch the plugin.
 
-- [ ] **Step 5: Obtain both fresh reviews of the pinned metadata contract**
+- [ ] **Step 5: Freeze the pinned-metadata review evidence**
 
-Require the exact harness success line. Send the Task 7.2-only diff, the
+Require the exact harness success line. Retain the Task 7.2-only diff, the
 zero-warning pinned plugin compile, and the external characterization output
-to fresh specification and code-quality reviewers; resolve every finding,
-rerun Step 4, and check the final diff:
+in the task report for post-commit review, then check the final diff:
 
 ```bash
 git diff --check
@@ -11473,7 +11647,7 @@ This task proves Unity pseudo-null, `activeSelf`, `Save(false, false)` argument
 constants, and absence of `GameState.Lost()`. Task 9.2 adds the two exclusive
 controller-to-adapter movement caller checks when that caller exists.
 
-- [ ] **Step 4: Run every GREEN gate and obtain both fresh reviews**
+- [ ] **Step 4: Run every GREEN gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -11504,10 +11678,9 @@ fi
 ```
 
 Require the exact success line from all three harness runs and a successful
-real plugin build. Send the Task 7.3-only diff plus all three GREEN outputs to
-fresh specification and code-quality reviewers. Resolve every finding and
-rerun this complete gate; approvals from Tasks 7.1 or 7.2 do not carry
-forward.
+real plugin build. Retain the Task 7.3-only diff plus all three GREEN outputs
+in the task report. Its post-commit review is fresh; Task 7.1 or 7.2 approval
+does not carry forward.
 
 - [ ] **Step 5: Commit only the adapter surface**
 
@@ -11827,7 +12000,7 @@ internal static class PatchBoundary
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -11839,8 +12012,8 @@ internal static class PatchBoundary
 git diff --check
 ```
 
-Require the exact five registrations, then obtain fresh specification and
-code-quality approval and rerun this gate after resolving every finding.
+Require the exact five registrations and retain the pristine output for
+post-commit review.
 
 - [ ] **Step 5: Commit only the Task 8.1 firewall slice**
 
@@ -11966,7 +12139,7 @@ internal static class PluginModePolicy
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -11978,8 +12151,7 @@ internal static class PluginModePolicy
 git diff --check
 ```
 
-Require both tests, obtain fresh specification and code-quality approval, and
-rerun this gate after resolving every finding.
+Require both tests and retain the pristine output for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 8.2 Off-policy slice**
 
@@ -12495,7 +12667,7 @@ internal sealed class PassiveStartup : IDisposable
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -12507,8 +12679,7 @@ internal sealed class PassiveStartup : IDisposable
 git diff --check
 ```
 
-Require `startup=7`, then obtain fresh specification and code-quality
-approval and rerun this gate after resolving every finding.
+Require `startup=7` and retain the pristine output for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 8.3 startup slice**
 
@@ -12713,10 +12884,10 @@ internal sealed class PassiveLogReporter : IPassiveReporter
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 Run `--cohort reporter` plus the net35 Core gate, require all four exact tests,
-run the diff check, and obtain both fresh reviews before adding Harmony:
+run the diff check, and retain the output for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -13402,12 +13573,12 @@ internal sealed class PassiveController :
 }
 ```
 
-- [ ] **Step 4: Run the real plugin GREEN gate and both fresh reviews**
+- [ ] **Step 4: Run the real plugin GREEN gate**
 
 Run the two cumulative plugin tests and real build, then require the
 metadata call graph to show `PassiveUpdateBoundary.Observe` and no direct
-gate/capture/complete call from `PassiveController.ObserveUpdate`. Obtain both
-fresh reviews and resolve every finding before the commit:
+gate/capture/complete call from `PassiveController.ObserveUpdate`. Retain the
+diff and output for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
@@ -13782,10 +13953,10 @@ internal static class SetGameStatePatch
 }
 ```
 
-- [ ] **Step 4: Run the real plugin GREEN gate and both fresh reviews**
+- [ ] **Step 4: Run the real plugin GREEN gate**
 
 Build the real net35 plugin and require all three cumulative plugin tests to
-pass. Obtain both fresh reviews and resolve every finding before the commit:
+pass. Retain the diff and output for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
@@ -14031,7 +14202,7 @@ namespace SsrOracle
 }
 ```
 
-- [ ] **Step 4: Build, run exact GREEN gates, and obtain both fresh reviews**
+- [ ] **Step 4: Build and run the exact GREEN gates**
 
 ```bash
 if test ! -f oracle/plugin/obj/project.assets.json; then
@@ -14058,7 +14229,7 @@ fi
 Require both harness runs to print exactly the success line. The plugin
 cohort asserts positional `__0` parameters, tokenless Update finalizer,
 adapter movement/capture call sites, exact metadata pins, and typed config
-load. Obtain both fresh reviews, resolve every finding, and rerun this gate.
+load. Retain the diff and every gate output for post-commit review.
 
 - [ ] **Step 5: Commit only the typed plugin and metadata slice**
 
@@ -14109,6 +14280,16 @@ shasum -a 256 \
   "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.dll" \
   "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.CoreModule.dll" \
   "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll"
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core/BepInEx.dll" | awk '{print $1}')" = \
+  19eb836818955e4f86818306aaf2baaee989be566d7da697f835b429ab585149
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core/0Harmony.dll" | awk '{print $1}')" = \
+  1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.dll" | awk '{print $1}')" = \
+  f8bc81e00aa5f4372cbebe4951e5be7b21e54ba5f978e21c53ae2e8713ca3ca0
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.CoreModule.dll" | awk '{print $1}')" = \
+  b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll" | awk '{print $1}')" = \
+  886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564
 ```
 
 Authenticate the exact package bytes consumed by every net35 restore, then
@@ -14229,6 +14410,10 @@ test "$(rg -o '^                    \{ "[a-z-]+", [0-9]+ \},?$' oracle/plugin/te
 ```
 
 ```bash
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/SsrOracle.Plugin.csproj -c Release --no-restore -warnaserror \
+  -p:GameManagedDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed" \
+  -p:BepInExCoreDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core"
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
   -c Release --no-restore -- \
@@ -14247,7 +14432,7 @@ Require the one exact success line and no stderr.
 Use two `mktemp -d` roots. Restore each root independently with matching
 `BaseIntermediateOutputPath` and `MSBuildProjectExtensionsPath`; a restore in
 the default `obj` directory cannot support `--no-restore` in a fresh root.
-The default Task 9.4 build must remain in place: do not clean source-tree
+The default Step 2 build must remain in place: do not clean source-tree
 `obj/` or `bin/`. First prove that generated C# is present and that the project
 has stable explicit exclusions; this makes the independent-root build test the
 previously dangerous dirty-source-tree case. Then pass the same two properties
@@ -14413,16 +14598,65 @@ MaxSettleSeconds = 30
 Run the offline gates from the repository root:
 
 ```bash
+set -euo pipefail
+SSR_GAME_MANAGED_DIR="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed"
+SSR_BEPINEX_CORE_DIR="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core"
+SSR_PLUGIN_PACKAGES=$(mktemp -d /tmp/ssr-plugin-readme-packages.XXXXXX)
+SSR_MODE_OFF_SOURCE="/Users/jlsor/Documents/Research/SSR/.worktrees/ssr-executable-oracle/data/oracle/boot-probe.cfg"
+SSR_MODE_OFF_DESTINATION="$PWD/data/oracle/boot-probe.cfg"
+readonly SSR_GAME_MANAGED_DIR SSR_BEPINEX_CORE_DIR SSR_PLUGIN_PACKAGES \
+  SSR_MODE_OFF_SOURCE SSR_MODE_OFF_DESTINATION
+chmod 700 "$SSR_PLUGIN_PACKAGES"
+test "$(shasum -a 256 "$SSR_BEPINEX_CORE_DIR/BepInEx.dll" | awk '{print $1}')" = \
+  19eb836818955e4f86818306aaf2baaee989be566d7da697f835b429ab585149
+test "$(shasum -a 256 "$SSR_BEPINEX_CORE_DIR/0Harmony.dll" | awk '{print $1}')" = \
+  1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031
+test "$(shasum -a 256 "$SSR_GAME_MANAGED_DIR/UnityEngine.dll" | awk '{print $1}')" = \
+  f8bc81e00aa5f4372cbebe4951e5be7b21e54ba5f978e21c53ae2e8713ca3ca0
+test "$(shasum -a 256 "$SSR_GAME_MANAGED_DIR/UnityEngine.CoreModule.dll" | awk '{print $1}')" = \
+  b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3
+test "$(shasum -a 256 "$SSR_GAME_MANAGED_DIR/Assembly-CSharp.dll" | awk '{print $1}')" = \
+  886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564
+test "$(shasum -a 256 "$PWD/data/oracle/compat/feed/microsoft.netframework.referenceassemblies.1.0.3.nupkg" | awk '{print $1}')" = \
+  141a093f90c7645d101ccd312e6f727781c965540eb92a52280f95411a698441
+test "$(shasum -a 256 "$PWD/data/oracle/compat/feed/microsoft.netframework.referenceassemblies.net35.1.0.3.nupkg" | awk '{print $1}')" = \
+  b16156111a88670d91a757fbd465fcb4856e034b1a4d523ae2c41a470f3578f9
+test "$(shasum -a 256 "$SSR_MODE_OFF_SOURCE" | awk '{print $1}')" = \
+  cd0f6f26a4f49d8eec9ca9bbf8a91aacf35d03c3f09f4cf52d193bd5036f787d
+if test -e "$SSR_MODE_OFF_DESTINATION"; then
+  test "$SSR_MODE_OFF_SOURCE" -ef "$SSR_MODE_OFF_DESTINATION"
+else
+  mkdir -p "$PWD/data/oracle"
+  ln "$SSR_MODE_OFF_SOURCE" "$SSR_MODE_OFF_DESTINATION"
+fi
+git check-ignore "$SSR_MODE_OFF_DESTINATION"
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
+  oracle/plugin/SsrOracle.Plugin.csproj \
+  --source "$PWD/data/oracle/compat/feed" \
+  --packages "$SSR_PLUGIN_PACKAGES" --no-http-cache \
+  -p:GameManagedDir="$SSR_GAME_MANAGED_DIR" \
+  -p:BepInExCoreDir="$SSR_BEPINEX_CORE_DIR"
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  --source "$PWD/data/oracle/compat/feed" \
+  --packages "$SSR_PLUGIN_PACKAGES" --no-http-cache
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  --source "$PWD/data/oracle/compat/feed" \
+  --packages "$SSR_PLUGIN_PACKAGES" --no-http-cache
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/SsrOracle.Plugin.csproj -c Release --no-restore -warnaserror \
+  -p:GameManagedDir="$SSR_GAME_MANAGED_DIR" \
+  -p:BepInExCoreDir="$SSR_BEPINEX_CORE_DIR"
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
   -c Release --no-restore -- \
-  --assembly "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll" \
+  --assembly "$SSR_GAME_MANAGED_DIR/Assembly-CSharp.dll" \
   --plugin "$PWD/oracle/plugin/bin/Release/net35/SsrOracle.Plugin.dll" \
-  --mode-off-fixture "$PWD/data/oracle/boot-probe.cfg"
+  --mode-off-fixture "$SSR_MODE_OFF_DESTINATION"
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
-  oracle/plugin/SsrOracle.Plugin.csproj -c Release --no-restore -warnaserror \
-  -p:GameManagedDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed" \
-  -p:BepInExCoreDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core"
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror
 ```
 
 The offline harness must finish with exactly `SSR oracle unit harness ready`. Runtime progress markers are `SSR oracle passive trace ready: 0/3`, `SSR oracle passive trace ready: 1/3`, and `SSR oracle passive trace ready: 2/3`; success is `SSR oracle passive trace complete`; failure begins with `SSR oracle passive trace failed: ` and ends with one exact code from the closed schema-v1 record-code or marker-only tables. Real traces, generated configs, isolated saves, recovery trees, and probe evidence remain ignored below `data/oracle/`.
@@ -14453,19 +14687,20 @@ rg -n 'Mode = passive|SSR oracle passive trace ready:|SSR oracle passive trace c
   oracle/README.md
 ```
 
-- [ ] **Step 6: Run complete offline acceptance and both final reviews**
+- [ ] **Step 6: Run complete offline acceptance**
 
 ```bash
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
+set -euo pipefail
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
   tests/test_oracle_protocol.py \
   > data/oracle/plugin-plan-evidence/protocol-collection.txt
 rg -q '^240 tests collected in ' \
   data/oracle/plugin-plan-evidence/protocol-collection.txt
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
   > data/oracle/plugin-plan-evidence/full-collection.txt
 rg -q '^1948 tests collected in ' \
   data/oracle/plugin-plan-evidence/full-collection.txt
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
   > data/oracle/plugin-plan-evidence/post-plugin-pytest.txt
 test "$(rg -o '[0-9]+ passed' \
   data/oracle/plugin-plan-evidence/post-plugin-pytest.txt | tail -n 1)" = '1822 passed'
@@ -14482,9 +14717,11 @@ cmp data/oracle/plugin-plan-evidence/pre-plugin-xfail-nodeids.txt \
   data/oracle/plugin-plan-evidence/post-plugin-xfail-nodeids.txt
 test "$(rg -c '^XPASS ' \
   data/oracle/plugin-plan-evidence/post-plugin-pytest.txt)" = 6
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python -m compileall -q src tools tests
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python -m compileall -q src tools tests
 git diff --check
-git diff --name-status origin/main..HEAD
+SSR_PLUGIN_BRANCH_BASE=$(git merge-base main HEAD)
+readonly SSR_PLUGIN_BRANCH_BASE
+git diff --name-status "$SSR_PLUGIN_BRANCH_BASE"
 git status --short --branch
 ```
 
@@ -14519,9 +14756,9 @@ done
 ```
 
 Every other collected item must pass. Verify no `bin`, `obj`, real trace,
-config, save, decompiled source, or user path fixture is tracked. Send the
-complete Tasks 1-10 diff and all acceptance evidence to fresh specification
-and code-quality reviewers, resolve every finding, and rerun the affected gate.
+config, save, decompiled source, or user path fixture is tracked. Retain the
+complete Tasks 1-10 diff and all acceptance evidence for Task 10.1's
+post-commit review and the separate final whole-branch review.
 
 - [ ] **Step 7: Commit only the literal reviewed runbook evidence**
 
