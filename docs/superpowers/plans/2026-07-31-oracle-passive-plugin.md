@@ -1213,8 +1213,11 @@ fi
   oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore
 ```
 
-Require nonzero exit and a compiler diagnostic naming `OracleError` or
-`OracleErrors`. A missing assets file, fixture, or SDK is not the intended RED.
+Require nonzero exit and a compiler diagnostic naming `CaptureRecord`,
+`OracleError`, or `OracleErrors`. The complete frozen protocol tests resolve
+the missing `CaptureRecord` return type before the error-table symbols, so
+`CaptureRecord` is an equally valid missing-product-symbol RED. A missing
+assets file, fixture, or SDK is not the intended RED.
 
 - [ ] **Step 3: Link the product sources and add the net35 compile-only project**
 
