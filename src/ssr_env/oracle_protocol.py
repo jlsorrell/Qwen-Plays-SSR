@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import BinaryIO, Iterator, Literal, NoReturn, TypeVar, cast
@@ -836,3 +837,15 @@ def read_oracle_trace_stream(
         terminal=terminal,
         outcome=outcome,
     )
+
+
+def read_oracle_trace(path: Path) -> OracleRun:
+    source = str(path)
+    try:
+        stream = path.open("rb")
+    except OSError as exc:
+        raise OracleProtocolError(
+            f"{source}: could not open trace: {exc}"
+        ) from exc
+    with stream:
+        return read_oracle_trace_stream(stream, source=source)

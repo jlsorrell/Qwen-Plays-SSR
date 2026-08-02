@@ -1346,3 +1346,56 @@ BAD_RECORD_IN_SEQUENCE_TRACES = [
 def test_trace_stream_preserves_record_validation(payload: bytes) -> None:
     with pytest.raises(OracleProtocolError):
         read_oracle_trace_stream(io.BytesIO(payload), source="bad-record")
+
+
+import os
+
+from ssr_env.oracle_protocol import read_oracle_trace
+
+
+def test_descriptor_stream_ignores_named_path_replacement_after_open(
+    tmp_path: Path,
+) -> None:
+    trace_path = tmp_path / "trace.ndjson"
+    replacement_path = tmp_path / "replacement.ndjson"
+    trace_path.write_bytes(SUCCESS_TRACE_BYTES)
+    replacement_path.write_bytes(b"not-json\n")
+
+    with trace_path.open("rb") as authenticated_stream:
+        os.replace(replacement_path, trace_path)
+        trace = read_oracle_trace_stream(
+            authenticated_stream, source=str(trace_path)
+        )
+
+    assert trace.outcome == "success"
+    assert trace_path.read_bytes() == b"not-json\n"
+
+
+def test_path_wrapper_opens_before_delegating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace_path = tmp_path / "trace.ndjson"
+    replacement_path = tmp_path / "replacement.ndjson"
+    trace_path.write_bytes(SUCCESS_TRACE_BYTES)
+    replacement_path.write_bytes(b"not-json\n")
+    real_stream_reader = oracle_protocol.read_oracle_trace_stream
+
+    def replace_name_then_read(stream: object, *, source: str) -> OracleRun:
+        assert hasattr(stream, "readline")
+        os.replace(replacement_path, trace_path)
+        return real_stream_reader(stream, source=source)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        oracle_protocol, "read_oracle_trace_stream", replace_name_then_read
+    )
+    trace = oracle_protocol.read_oracle_trace(trace_path)
+
+    assert trace.outcome == "success"
+    assert trace_path.read_bytes() == b"not-json\n"
+
+
+def test_path_wrapper_translates_open_failure(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.ndjson"
+    with pytest.raises(OracleProtocolError, match="could not open trace") as caught:
+        read_oracle_trace(missing)
+    assert isinstance(caught.value.__cause__, OSError)
