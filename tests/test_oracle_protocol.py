@@ -1206,3 +1206,60 @@ def test_trace_stream_rejects_invalid_identity_or_order(
 ) -> None:
     with pytest.raises(OracleProtocolError, match=re.escape(message)):
         read_oracle_trace_stream(io.BytesIO(payload), source="bad-order")
+
+
+WRONG_END_COUNT_LINE = END_LINE.replace(b'"input_count":3', b'"input_count":2')
+EARLY_END_LINE = END_LINE.replace(
+    b"2026-07-31T19:11:00.0000000Z",
+    b"2026-07-31T19:09:50.3199099Z",
+)
+
+BAD_SUCCESS_TERMINAL_TRACES = [
+    pytest.param(
+        _trace_bytes(RUN_LINE, INITIAL_LINE, STEP0_LINE, STEP1_LINE, END_LINE),
+        "success requires exactly three steps",
+        id="success-missing-step",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            STEP1_LINE,
+            STEP2_LINE,
+            WRONG_END_COUNT_LINE,
+        ),
+        "end input_count must be three",
+        id="wrong-end-count",
+    ),
+    pytest.param(
+        _trace_bytes(
+            RUN_LINE,
+            INITIAL_LINE,
+            STEP0_LINE,
+            STEP1_LINE,
+            STEP2_LINE,
+            EARLY_END_LINE,
+        ),
+        "finish time precedes start time",
+        id="finish-before-start",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, END_LINE),
+        "end record requires an initial record",
+        id="end-before-initial",
+    ),
+    pytest.param(
+        _trace_bytes(RUN_LINE, INITIAL_LINE, STEP0_LINE, END_LINE),
+        "success requires exactly three steps",
+        id="end-before-third-step",
+    ),
+]
+
+
+@pytest.mark.parametrize(("payload", "message"), BAD_SUCCESS_TERMINAL_TRACES)
+def test_trace_stream_rejects_invalid_success_terminal(
+    payload: bytes, message: str
+) -> None:
+    with pytest.raises(OracleProtocolError, match=re.escape(message)):
+        read_oracle_trace_stream(io.BytesIO(payload), source="bad-success")

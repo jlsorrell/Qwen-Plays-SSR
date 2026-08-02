@@ -793,7 +793,20 @@ def read_oracle_trace_stream(
                 _sequence_error(source, "step input_index is not contiguous")
             steps.append(record)
             continue
-        if isinstance(record, (EndRecord, ErrorRecord)):
+        if isinstance(record, EndRecord):
+            if initial is None:
+                _sequence_error(source, "end record requires an initial record")
+            if len(steps) != EXPECTED_INPUT_COUNT:
+                _sequence_error(source, "success requires exactly three steps")
+            if record.input_count != EXPECTED_INPUT_COUNT:
+                _sequence_error(source, "end input_count must be three")
+            if _timestamp_key(
+                record.finished_at_utc, field="finished_at_utc"
+            ) < _timestamp_key(header.started_at_utc, field="started_at_utc"):
+                _sequence_error(source, "finish time precedes start time")
+            terminal = record
+            continue
+        if isinstance(record, ErrorRecord):
             terminal = record
             continue
         raise AssertionError("unreachable record type")
@@ -802,6 +815,9 @@ def read_oracle_trace_stream(
         _sequence_error(source, "trace is empty; first record must be run")
     if terminal is None:
         _sequence_error(source, "trace has no terminal end or error record")
+    if isinstance(terminal, EndRecord):
+        if initial is None or len(steps) != EXPECTED_INPUT_COUNT:
+            _sequence_error(source, "success terminal shape is incomplete")
     outcome: TerminalOutcome = (
         "success" if isinstance(terminal, EndRecord) else "error"
     )
