@@ -6222,8 +6222,32 @@ git diff --check
 - [ ] **Step 7: Commit only the Task 3.2 sink slice**
 
 ```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
 git add oracle/plugin/Core/NdjsonTraceSink.cs \
   oracle/plugin/tests/TraceSinkTests.cs oracle/plugin/tests/Program.cs
+test -z "$(git diff --name-only)"
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'M  oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'M  oracle/plugin/tests/Program.cs' \
+  'M  oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --cached --check
 git commit -m "feat: flush bounded oracle traces"
 ```
 
