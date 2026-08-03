@@ -3293,6 +3293,14 @@ registering the retained trace.
 
 #### Task 3.1: Open trace files atomically with typed collisions
 
+Retain the completed platform preflight in the task report: on macOS 26.6,
+arm64, .NET 10.0.8, a real existing-file `FileMode.CreateNew` collision raised
+`System.IO.IOException` with `HResult` and `Marshal.GetHRForException` both
+equal to decimal 17 in 32 of 32 isolated attempts, while preserving the
+existing bytes. The exact four-argument `FileStream` constructor and
+`FileShare.None` also compiled against the installed net35 reference
+assemblies. Do not repeat that separate platform probe during implementation.
+
 - [ ] **Step 1: Add the first three exact RED sink tests**
 
 Create `TraceSinkTests.cs` exactly as follows:
@@ -3382,6 +3390,7 @@ internal static class TraceSinkTests
         Check.Equal(FileAccess.Write, factory.Access, "write access");
         Check.Equal(FileShare.None, factory.Share, "exclusive sharing");
         sink.Close();
+        Check.Equal(1, factory.Output.CloseCalls, "owned close");
     }
 
     private static void NullFactoryOutputIsTyped()
@@ -3415,18 +3424,41 @@ internal static class TraceSinkTests
             Path.GetTempPath(), "ssr-oracle-sink-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, "passive-trace.ndjson");
+        NdjsonTraceSink unexpected = null;
         try
         {
             NdjsonTraceSink sink = NdjsonTraceSink.Create(directory, "passive-trace");
             sink.Close();
-            byte[] before = File.ReadAllBytes(path);
+            byte[] sentinel = new byte[] { 0x00, 0x7f, 0x80, 0xff };
+            File.WriteAllBytes(path, sentinel);
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision sentinel written");
             Check.Throws<TraceExistsException>(
-                delegate { NdjsonTraceSink.Create(directory, "passive-trace"); },
+                delegate
+                {
+                    unexpected = NdjsonTraceSink.Create(
+                        directory, "passive-trace");
+                },
                 "atomic create-new collision");
-            Check.Bytes(before, File.ReadAllBytes(path), "collision preserves bytes");
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision preserves bytes");
         }
         finally
         {
+            if (unexpected != null)
+            {
+                try
+                {
+                    unexpected.Close();
+                }
+                catch (Exception)
+                {
+                }
+            }
             if (Directory.Exists(directory))
                 Directory.Delete(directory, true);
         }
@@ -3515,8 +3547,25 @@ internal static class TraceSinkTests
 }
 ```
 
-Register `TraceSinkTests`, then require the exact current manifest
-`protocol=4`, `encoding=5`, `sink=3`.
+Register `TraceSinkTests` after `CaptureSignatureTests`, then require the exact
+current manifest `protocol=4`, `encoding=5`, `sink=3` with this exact patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/tests/Program.cs
+@@
+         EncodingTests.Register(tests);
+         CaptureSignatureTests.Register(tests);
++        TraceSinkTests.Register(tests);
+         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+         {
+             { "protocol", 4 },
+-            { "encoding", 5 }
++            { "encoding", 5 },
++            { "sink", 3 }
+         });
+*** End Patch
+```
 
 - [ ] **Step 2: Run RED**
 
@@ -3531,12 +3580,61 @@ SDK, or filesystem-permission failure is not the intended RED.
 
 - [ ] **Step 3: Implement atomic create-new ownership**
 
-Create the interfaces and typed exceptions printed at the start of Track 3
-and add this complete Task 3.1 implementation. It deliberately supports only atomic
-creation and owned close; the three unregistered write-policy methods in the
-test file compile against its constructors but remain dormant until Task 3.2.
+Create `NdjsonTraceSink.cs` exactly as follows. The complete source repeats the
+Track 3 imports, interfaces, and typed exceptions so this task's extracted
+brief is self-contained. It deliberately supports only atomic creation and
+owned close; the three unregistered write-policy methods in the test file
+compile against its constructors but remain dormant until Task 3.2.
 
 ```csharp
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+internal interface ITraceSink
+{
+    void WriteRun(RunRecord record);
+    void WriteInitial(InitialRecord record);
+    void WriteStep(StepRecord record);
+    void WriteEnd(EndRecord record);
+    void WriteError(ErrorRecord record);
+    void Close();
+}
+
+internal sealed class TraceIoException : Exception
+{
+    internal TraceIoException(string message, Exception inner)
+        : base(message, inner)
+    {
+    }
+
+    internal TraceIoException(string message)
+        : base(message)
+    {
+    }
+}
+
+internal sealed class TraceExistsException : Exception
+{
+    internal TraceExistsException(string path, Exception inner)
+        : base("trace target already exists: " + path, inner)
+    {
+    }
+}
+
+internal interface ITraceOutput
+{
+    int Write(byte[] buffer, int offset, int count);
+    void Flush();
+    void Close();
+}
+
+internal interface ITraceFileFactory
+{
+    ITraceOutput CreateNew(
+        string path, FileMode mode, FileAccess access, FileShare share);
+}
+
 internal sealed class NdjsonTraceSink : ITraceSink
 {
     private sealed class FileTraceFactory : ITraceFileFactory
@@ -3674,22 +3772,292 @@ internal sealed class NdjsonTraceSink : ITraceSink
 }
 ```
 
-- [ ] **Step 4: Run GREEN and the net35 gate**
+- [ ] **Step 4: Run the provisional GREEN and net35 gate**
 
-Run the sink cohort, the net35 Core gate, and `git diff --check`; retain all
-output in the task report for post-commit review:
+Run the sink cohort and net35 Core gate in one fail-fast process. Require the
+exact harness stdout, zero build warnings and errors, the three planned source
+hashes, an empty index, and exactly the intended unstaged Task 3.1 slice:
 
 ```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
 git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short)" = "$(printf '%s\n' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
-- [ ] **Step 5: Commit only the Task 3.1 create-new slice**
+- [ ] **Step 5: Prove the hardened assertions with three controlled mutants**
+
+Apply every mutant separately with `apply_patch`, run only the sink cohort with
+`--no-restore`, require nonzero plus the exact test identity and intended
+assertion text, and immediately apply the exact inverse patch. Never stage a
+mutant. Before the first mutant and after every inverse, require the three
+reviewed source hashes, an empty index, and exactly the intended unstaged Task
+3.1 slice.
+
+Run the initial pristine gate:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short)" = "$(printf '%s\n' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Delete the owned-output close:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         try
+         {
+-            output.Close();
+         }
+         catch (Exception error)
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "owned-close mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'factory arguments are exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"owned close"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         try
+         {
++            output.Close();
+         }
+         catch (Exception error)
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short)" = "$(printf '%s\n' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Make only the real file adapter overwrite instead of creating atomically. The
+fake factory must still observe `FileMode.CreateNew`, so the first registration
+continues to pass and the real-collision registration detects the defect:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+                 return new FileTraceOutput(
+-                    new FileStream(path, mode, access, share));
++                    new FileStream(path, FileMode.Create, access, share));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "non-atomic create mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'real collision is typed'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"atomic create-new collision: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+                 return new FileTraceOutput(
+-                    new FileStream(path, FileMode.Create, access, share));
++                    new FileStream(path, mode, access, share));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short)" = "$(printf '%s\n' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Truncate an existing path immediately before the otherwise-correct atomic
+open. The second create must still be typed as a collision, after which the
+sentinel assertion detects the destructive pre-open write:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         {
+             try
+             {
++                if (File.Exists(path))
++                    File.WriteAllBytes(path, new byte[0]);
+                 return new FileTraceOutput(
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "pre-collision truncation mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'real collision is typed'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"collision preserves bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         {
+             try
+             {
+-                if (File.Exists(path))
+-                    File.WriteAllBytes(path, new byte[0]);
+                 return new FileTraceOutput(
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short)" = "$(printf '%s\n' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+- [ ] **Step 6: Run the final framework gates**
+
+```bash
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short)" = "$(printf '%s\n' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Require exact stdout `SSR oracle unit harness ready`, net35 `Build succeeded.`
+with `0 Warning(s)` and `0 Error(s)`, exact planned source hashes, an empty
+index, the exact three-file unstaged slice, and an empty `git diff --check`.
+Retain all outputs in the task report for post-commit review.
+
+- [ ] **Step 7: Commit only the Task 3.1 create-new slice**
 
 ```bash
 git add oracle/plugin/Core/NdjsonTraceSink.cs \
