@@ -2567,8 +2567,11 @@ git commit -m "feat: encode canonical oracle json"
 - [ ] **Step 1: Add the final two RED registrations and boundary tests**
 
 Create `CaptureSignatureTests.cs` exactly as follows and register it after
-`EncodingTests`.  This is the complete two-test increment; it also proves that
-strict surrogate handling applies to the signature path.
+`EncodingTests`. This complete C# 7.3 two-test increment retains the existing
+registration identities and ordering, pins three externally calculated
+digests, proves that every capture field affects the signature, exercises all
+reachable unrestricted-string surrogate paths, and derives the line limit
+directly without a search loop.
 
 ```csharp
 using System;
@@ -2595,34 +2598,137 @@ internal static class CaptureSignatureTests
         return bytes;
     }
 
+    private static bool SameSignature(CaptureRecord left, CaptureRecord right)
+    {
+        return Convert.ToBase64String(CaptureSignature.Compute(left)) ==
+            Convert.ToBase64String(CaptureSignature.Compute(right));
+    }
+
     private static void ExactSignature()
     {
+        CaptureRecord left = new CaptureRecord(
+            "a", "12", "c", false, false, false, false, "", "", 0, 0, 0);
+        CaptureRecord right = new CaptureRecord(
+            "a1", "2", "c", false, false, false, false, "", "", 0, 0, 0);
+        Check.False(
+            SameSignature(left, right),
+            "length prefixes prevent concatenation collision");
+
+        CaptureRecord vectorB = new CaptureRecord(
+            "r2", "42", "l2", false, true, true, false, "lost2", "display2",
+            1, 2, 3);
+        CaptureRecord[] variants = new CaptureRecord[]
+        {
+            new CaptureRecord(
+                "r3", "42", "l2", false, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "43", "l2", false, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l3", false, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", true, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, false, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, false, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, true,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost3", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display3", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display2", 4, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display2", 1, 5, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display2", 1, 2, 6)
+        };
+        string[] fieldMessages = new string[]
+        {
+            "signature binds raw_save",
+            "signature binds state_identity",
+            "signature binds level",
+            "signature binds overworld",
+            "signature binds won",
+            "signature binds returning",
+            "signature binds have_ever_cooked_all",
+            "signature binds lost_reason",
+            "signature binds display_name",
+            "signature binds sausages_cooked",
+            "signature binds movement_count",
+            "signature binds pushes_to_try"
+        };
+        Check.Equal(12, variants.Length, "one variant per capture field");
+        Check.Equal(12, fieldMessages.Length, "one message per capture field");
+        for (int index = 0; index < variants.Length; index++)
+        {
+            Check.False(
+                SameSignature(vectorB, variants[index]),
+                fieldMessages[index]);
+        }
+
         Check.Bytes(
             Hex("c870e028a5a526efc0e8af5f78bcea1ff89198b29b16a875715c65f78649c6b7"),
             CaptureSignature.Compute(ProtocolSamples.InitialCapture),
             "fixed length-prefixed signature");
-        CaptureRecord multibyte = new CaptureRecord(
+
+        CaptureRecord vectorA = new CaptureRecord(
             "é/雪", "-2147483648", "x", true, false, true, false, "", "z",
             Int32.MaxValue, 0, 0);
-        Check.False(
-            Convert.ToBase64String(CaptureSignature.Compute(multibyte)) ==
-            Convert.ToBase64String(
-                CaptureSignature.Compute(ProtocolSamples.InitialCapture)),
-            "all fields affect signature");
-        CaptureRecord left = new CaptureRecord(
-            "ab", "1", "c", false, false, false, false, "", "", 0, 0, 0);
-        CaptureRecord right = new CaptureRecord(
-            "a", "1", "bc", false, false, false, false, "", "", 0, 0, 0);
-        Check.False(
-            Convert.ToBase64String(CaptureSignature.Compute(left)) ==
-            Convert.ToBase64String(CaptureSignature.Compute(right)),
-            "length prefixes prevent concatenation collision");
+        Check.Bytes(
+            Hex("6e924d4765c53622d9f734126cdf960fd525cc8a491068fe606606fb0833eac6"),
+            CaptureSignature.Compute(vectorA),
+            "fixed signature vector A");
+        Check.Bytes(
+            Hex("2ad1bf134d02a71476f3b7c220d817700079c10051607ab2796a2126406dde8d"),
+            CaptureSignature.Compute(vectorB),
+            "fixed signature vector B");
+
         Check.Throws<CanonicalEncodingException>(
             delegate
             {
-                CaptureSignature.Compute(ProtocolSamples.Capture("\ud800"));
+                CaptureSignature.Compute(new CaptureRecord(
+                    "\ud800", "7", "level", false, false, false, false,
+                    "lost", "display", 4, 5, 6));
             },
-            "signature rejects an unpaired surrogate");
+            "signature rejects raw_save unpaired surrogate");
+        Check.Throws<CanonicalEncodingException>(
+            delegate
+            {
+                CaptureSignature.Compute(new CaptureRecord(
+                    "raw", "7", "\ud800", false, false, false, false,
+                    "lost", "display", 4, 5, 6));
+            },
+            "signature rejects level unpaired surrogate");
+        Check.Throws<CanonicalEncodingException>(
+            delegate
+            {
+                CaptureSignature.Compute(new CaptureRecord(
+                    "raw", "7", "level", false, false, false, false,
+                    "\ud800", "display", 4, 5, 6));
+            },
+            "signature rejects lost_reason unpaired surrogate");
+        Check.Throws<CanonicalEncodingException>(
+            delegate
+            {
+                CaptureSignature.Compute(new CaptureRecord(
+                    "raw", "7", "level", false, false, false, false,
+                    "lost", "\ud800", 4, 5, 6));
+            },
+            "signature rejects display_name unpaired surrogate");
     }
 
     private static ErrorRecord ErrorWithRawSaveLength(int length)
@@ -2638,34 +2744,32 @@ internal static class CaptureSignatureTests
 
     private static void ExactLineLimit()
     {
-        int low = 0;
-        int high = 16 * 1024 * 1024;
-        int accepted = -1;
-        while (low <= high)
+        byte[] zeroLength = CanonicalJson.EncodeError(
+            ErrorWithRawSaveLength(0));
+        Check.Equal(421, zeroLength.Length, "zero-length boundary record bytes");
+
+        const int AcceptedRawSaveLength = 16776794;
+        byte[] exact;
+        try
         {
-            int middle = low + ((high - low) / 2);
-            try
-            {
-                CanonicalJson.EncodeError(ErrorWithRawSaveLength(middle));
-                accepted = middle;
-                low = middle + 1;
-            }
-            catch (RecordTooLargeException)
-            {
-                high = middle - 1;
-            }
+            exact = CanonicalJson.EncodeError(
+                ErrorWithRawSaveLength(AcceptedRawSaveLength));
         }
-        byte[] exact = CanonicalJson.EncodeError(
-            ErrorWithRawSaveLength(accepted));
+        catch (RecordTooLargeException error)
+        {
+            throw new InvalidOperationException(
+                "exact record boundary is accepted", error);
+        }
+        Check.Equal(16777215, exact.Length, "exact JSON length before LF");
         Check.Equal(
-            16 * 1024 * 1024,
+            16777216,
             exact.Length + 1,
             "record boundary includes LF");
         Check.Throws<RecordTooLargeException>(
             delegate
             {
                 CanonicalJson.EncodeError(
-                    ErrorWithRawSaveLength(accepted + 1));
+                    ErrorWithRawSaveLength(AcceptedRawSaveLength + 1));
             },
             "one byte beyond record boundary");
     }
@@ -2744,22 +2848,364 @@ internal static class CaptureSignature
 }
 ```
 
-- [ ] **Step 4: Run both framework gates**
+- [ ] **Step 4: Prove the hardened assertions with six controlled mutants**
+
+Apply every mutant separately with `apply_patch`, run only the encoding cohort
+with `--no-restore`, require nonzero plus the exact test identity and intended
+assertion/error text, and immediately apply the exact inverse patch. Never
+stage a mutant. After each inverse, the fail-fast pristine gate pins both
+production hashes and requires an empty index.
+
+Before applying the first mutant, require the reviewed production hashes and
+an empty index in one fail-fast gate:
 
 ```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Delete the four-byte prefix feed:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-        hash.TransformBlock(prefix, 0, prefix.Length, prefix, 0);
+         if (value.Length != 0)
+             hash.TransformBlock(value, 0, value.Length, value, 0);
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort encoding
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "length-prefix mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"length prefixes prevent concatenation collision"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
++        hash.TransformBlock(prefix, 0, prefix.Length, prefix, 0);
+         if (value.Length != 0)
+             hash.TransformBlock(value, 0, value.Length, value, 0);
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Delete the `DisplayName` feed:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
+             Feed(hash, Integer(capture.SausagesCooked));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "display_name omission mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"signature binds display_name"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
++            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
+             Feed(hash, Integer(capture.SausagesCooked));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Swap the `Overworld` and `Returning` feeds. Vector A intentionally remains
+unchanged because both values are `true`; vector B must fail its fixed digest:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, Boolean(capture.Overworld));
++            Feed(hash, Boolean(capture.Returning));
+             Feed(hash, Boolean(capture.Won));
+-            Feed(hash, Boolean(capture.Returning));
++            Feed(hash, Boolean(capture.Overworld));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "boolean-position swap mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"fixed signature vector B"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, Boolean(capture.Returning));
++            Feed(hash, Boolean(capture.Overworld));
+             Feed(hash, Boolean(capture.Won));
+-            Feed(hash, Boolean(capture.Overworld));
++            Feed(hash, Boolean(capture.Returning));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Replace strict `DisplayName` encoding with permissive framework UTF-8:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
++            Feed(hash, Encoding.UTF8.GetBytes(capture.DisplayName));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "display_name permissive-UTF-8 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"signature rejects display_name unpaired surrogate: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, Encoding.UTF8.GetBytes(capture.DisplayName));
++            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Make the canonical line bound ignore the final LF:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
++        if ((long)encoded.Length > 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "LF-omission bound mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'record line limit includes LF'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"one byte beyond record boundary"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length > 16L * 1024L * 1024L)
++        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Make the canonical line bound reject equality:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
++        if ((long)encoded.Length + 1L >= 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "inclusive bound mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'record line limit includes LF'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"exact record boundary is accepted"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length + 1L >= 16L * 1024L * 1024L)
++        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+- [ ] **Step 5: Run both framework gates**
+
+```bash
+set -euo pipefail
+encoding_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding)"
+test "$encoding_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$encoding_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
 git diff --check
 ```
 
-Require both GREEN outputs and retain them in the task report for post-commit
-review.
+Require exact stdout `SSR oracle unit harness ready`, net35 `Build succeeded.`
+with `0 Warning(s)` and `0 Error(s)`, and an empty `git diff --check` result.
+Retain the outputs in the task report for post-commit review.
 
-- [ ] **Step 5: Commit only the Task 2.2 signature slice**
+- [ ] **Step 6: Commit only the Task 2.2 signature slice**
 
 ```bash
 git add oracle/plugin/Core/CaptureSignature.cs \
