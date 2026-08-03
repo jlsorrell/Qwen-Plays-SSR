@@ -2336,6 +2336,7 @@ First require that `CanonicalJson.cs` is byte-for-byte the exact implementation
 from Step 3:
 
 ```bash
+set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
   "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
 test -z "$(git diff --cached --name-only)"
@@ -2383,6 +2384,7 @@ Restore with the exact inverse `apply_patch`, then require the planned hash:
 ```
 
 ```bash
+set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
   "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
 test -z "$(git diff --cached --name-only)"
@@ -2432,6 +2434,7 @@ Restore with the exact inverse `apply_patch`, then require the planned hash:
 ```
 
 ```bash
+set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
   "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
 test -z "$(git diff --cached --name-only)"
@@ -2479,6 +2482,7 @@ Restore with the exact inverse `apply_patch`, then require the planned hash:
 ```
 
 ```bash
+set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
   "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
 test -z "$(git diff --cached --name-only)"
@@ -2527,6 +2531,7 @@ more, and confirm that no mutant was staged:
 ```
 
 ```bash
+set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
   "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
 test -z "$(git diff --cached --name-only)"
@@ -2539,6 +2544,7 @@ surrogate behavior, run the diff check, and retain the output for post-commit
 review:
 
 ```bash
+set -euo pipefail
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
   -c Release --no-restore -- --cohort encoding
