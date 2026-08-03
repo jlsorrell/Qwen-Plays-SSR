@@ -11,10 +11,11 @@ private static int Main(string[] args)
         TestRegistry tests = new TestRegistry();
         ProtocolTests.Register(tests);
         EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
             { "protocol", 4 },
-            { "encoding", 3 }
+            { "encoding", 5 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)
