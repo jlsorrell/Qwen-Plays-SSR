@@ -6334,7 +6334,7 @@ The exact final source hashes are:
 - `PassiveDriverBoundaries.cs`:
   `0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09`;
 - `PassiveDriverBoundaryTests.cs`:
-  `dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727`;
+  `20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc`;
 - cumulative `Program.cs`:
   `6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd`.
 
@@ -6369,30 +6369,48 @@ report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.m
 progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
 test -f "$progress_path"
-test "$(grep -c '^Task 4.1 execution base: ' "$report_path")" = "1"
-test "$(grep -c '^Task 4.1 execution parent: ' "$report_path")" = "1"
-test "$(grep -c '^Task 4.1 execution subject: ' "$report_path")" = "1"
-test "$(grep -c '^Task 4.1 amended plan SHA-256: ' "$report_path")" = "1"
-test "$(grep -c '^Task 4.1 regenerated brief SHA-256: ' "$report_path")" = "1"
-test "$(grep -c '^Task 4.1 approved design SHA-256: ' "$report_path")" = "1"
-dispatch_base="$(sed -n 's/^Task 4.1 execution base: //p' "$report_path")"
-dispatch_parent="$(sed -n 's/^Task 4.1 execution parent: //p' "$report_path")"
-dispatch_subject="$(sed -n 's/^Task 4.1 execution subject: //p' "$report_path")"
-dispatch_plan_sha="$(sed -n 's/^Task 4.1 amended plan SHA-256: //p' "$report_path")"
-dispatch_brief_sha="$(sed -n 's/^Task 4.1 regenerated brief SHA-256: //p' "$report_path")"
-dispatch_design_sha="$(sed -n 's/^Task 4.1 approved design SHA-256: //p' "$report_path")"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$report_path")"
+dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$report_path")"
+dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$report_path")"
+dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$report_path")"
+dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+progress_dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$progress_path")"
+progress_dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$progress_path")"
+progress_dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$progress_path")"
+progress_dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$progress_path")"
+progress_dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$progress_path")"
 test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
 test "$(printf '%s\n' "$dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
 test -n "$dispatch_subject"
 test "$(printf '%s\n' "$dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
 test "$(printf '%s\n' "$dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
 test "$(printf '%s\n' "$dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
-grep -F -x "Task 4.1 execution base: $dispatch_base" "$progress_path"
-grep -F -x "Task 4.1 execution parent: $dispatch_parent" "$progress_path"
-grep -F -x "Task 4.1 execution subject: $dispatch_subject" "$progress_path"
-grep -F -x "Task 4.1 amended plan SHA-256: $dispatch_plan_sha" "$progress_path"
-grep -F -x "Task 4.1 regenerated brief SHA-256: $dispatch_brief_sha" "$progress_path"
-grep -F -x "Task 4.1 approved design SHA-256: $dispatch_design_sha" "$progress_path"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$progress_dispatch_subject"
+test "$(printf '%s\n' "$progress_dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_dispatch_parent" = "$dispatch_parent"
+test "$progress_dispatch_subject" = "$dispatch_subject"
+test "$progress_dispatch_plan_sha" = "$dispatch_plan_sha"
+test "$progress_dispatch_brief_sha" = "$dispatch_brief_sha"
+test "$progress_dispatch_design_sha" = "$dispatch_design_sha"
 test "$(git rev-parse HEAD)" = "$dispatch_base"
 test "$(git rev-parse HEAD^)" = "$dispatch_parent"
 test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
@@ -6411,17 +6429,17 @@ test -z "$(git status --short --untracked-files=all)"
 git diff --check
 sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink)"
+  -c Release --no-restore -- --cohort sink 2>&1)"
 test "$sink_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$sink_output"
 full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore)"
+  -c Release --no-restore 2>&1)"
 test "$full_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$full_output"
 build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror)"
+  -c Release --no-restore -warnaserror 2>&1)"
 printf '%s\n' "$build_output"
 case "$build_output" in
   *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
@@ -6469,7 +6487,7 @@ internal sealed class EqualOwner
     }
 }
 
-internal sealed class FakePassiveReporter : IPassiveReporter
+internal sealed class BoundaryFakePassiveReporter : IPassiveReporter
 {
     internal int ReadyCalls;
     internal int CompletedInputs;
@@ -7525,7 +7543,7 @@ internal static class PassiveDriverBoundaryTests
             new Type[] { typeof(string) },
             new string[] { "message" });
 
-        FakePassiveReporter fake = new FakePassiveReporter();
+        BoundaryFakePassiveReporter fake = new BoundaryFakePassiveReporter();
         IPassiveReporter contract = fake;
         Check.Same(fake, contract, "fake reporter implements interface");
         fake.Ready(6);
@@ -7859,7 +7877,7 @@ Apply only those two working-tree changes and do not stage them. Require:
 
 ```bash
 set -euo pipefail
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test ! -e oracle/plugin/Core/CaptureException.cs
 test ! -e oracle/plugin/Core/PassiveDriverBoundaries.cs
@@ -7934,6 +7952,17 @@ case "$red_output" in
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|*"NU1"*|\
   *"package"*|*"Package"*|*"restore"*) exit 1 ;;
 esac
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test ! -e oracle/plugin/Core/CaptureException.cs
+test ! -e oracle/plugin/Core/PassiveDriverBoundaries.cs
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "oracle/plugin/tests/PassiveDriverBoundaryTests.cs"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
 ```
 
 The only accepted compiler code is `CS0246`; the only accepted source
@@ -8242,17 +8271,17 @@ metadata reads are not concurrent operations.
 set -euo pipefail
 focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary)"
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
 test "$focused_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$focused_output"
 full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore)"
+  -c Release --no-restore 2>&1)"
 test "$full_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$full_output"
 build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror)"
+  -c Release --no-restore -warnaserror 2>&1)"
 printf '%s\n' "$build_output"
 case "$build_output" in
   *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
@@ -8268,7 +8297,7 @@ $build_output" in
 esac
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8305,10 +8334,12 @@ identical injected inner reference is the first corrupted observation.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8342,6 +8373,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -8374,7 +8406,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8406,6 +8438,7 @@ case "$mutation_status" in
     printf '%s\n' "M01 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -8415,7 +8448,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -8437,10 +8470,12 @@ therefore the closed numeric vector rather than the preceding names check.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8471,6 +8506,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -8500,7 +8536,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8532,6 +8568,7 @@ case "$mutation_status" in
     printf '%s\n' "M02 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -8541,7 +8578,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -8562,10 +8599,12 @@ rule is the first behavior changed.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8599,6 +8638,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -8635,7 +8675,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8667,6 +8707,7 @@ case "$mutation_status" in
     printf '%s\n' "M03 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -8676,7 +8717,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -8700,10 +8741,12 @@ wait/join timeouts and a `finally` release of their start gate.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8762,6 +8805,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -8819,7 +8863,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8851,6 +8895,7 @@ case "$mutation_status" in
     printf '%s\n' "M04 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -8860,7 +8905,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -8881,10 +8926,12 @@ direct `Active` shape assertion is the first changed observation.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8919,6 +8966,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -8952,7 +9000,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -8984,6 +9032,7 @@ case "$mutation_status" in
     printf '%s\n' "M05 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -8993,7 +9042,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9016,10 +9065,12 @@ consuming operation.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9055,6 +9106,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9089,7 +9141,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9121,6 +9173,7 @@ case "$mutation_status" in
     printf '%s\n' "M06 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9130,7 +9183,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9151,10 +9204,12 @@ issued-failure transition returns false instead of claiming stage 0.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9188,6 +9243,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9220,7 +9276,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9252,6 +9308,7 @@ case "$mutation_status" in
     printf '%s\n' "M07 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9261,7 +9318,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9283,10 +9340,12 @@ required assertion order makes this deterministic and targeted.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9327,6 +9386,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9366,7 +9426,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9398,6 +9458,7 @@ case "$mutation_status" in
     printf '%s\n' "M08 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9407,7 +9468,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9429,10 +9490,12 @@ now make an issued rebase return normally at the named oracle.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9472,6 +9535,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9510,7 +9574,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9542,6 +9606,7 @@ case "$mutation_status" in
     printf '%s\n' "M09 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9551,7 +9616,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9572,10 +9637,12 @@ correct; exactly the required `-1` frame boundary is admitted.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9607,6 +9674,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9637,7 +9705,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9669,6 +9737,7 @@ case "$mutation_status" in
     printf '%s\n' "M10 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9678,7 +9747,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9699,10 +9768,12 @@ only the closed-factory null boundary is lost.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9737,6 +9808,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9770,7 +9842,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9802,6 +9874,7 @@ case "$mutation_status" in
     printf '%s\n' "M11 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9811,7 +9884,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9833,10 +9906,12 @@ succeed. Reflection over `IPassiveReporter` alone exposes the missing member.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt'
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9870,6 +9945,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -9902,7 +9978,7 @@ The capture block deliberately exits zero after attempting both evidence writes.
 set -euo pipefail
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -9934,6 +10010,7 @@ case "$mutation_status" in
     printf '%s\n' "M12 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -9943,7 +10020,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -9963,17 +10040,17 @@ from Step 5.
 set -euo pipefail
 focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary)"
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
 test "$focused_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$focused_output"
 full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore)"
+  -c Release --no-restore 2>&1)"
 test "$full_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$full_output"
 build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror)"
+  -c Release --no-restore -warnaserror 2>&1)"
 printf '%s\n' "$build_output"
 case "$build_output" in
   *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
@@ -9989,7 +10066,7 @@ $build_output" in
 esac
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -10014,17 +10091,17 @@ net35, hash, index, scope, status, and diff preconditions:
 set -euo pipefail
 focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary)"
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
 test "$focused_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$focused_output"
 full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore)"
+  -c Release --no-restore 2>&1)"
 test "$full_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$full_output"
 build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror)"
+  -c Release --no-restore -warnaserror 2>&1)"
 printf '%s\n' "$build_output"
 case "$build_output" in
   *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
@@ -10040,7 +10117,7 @@ $build_output" in
 esac
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
@@ -10054,6 +10131,59 @@ test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '
   '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
   '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
 git diff --check
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$report_path")"
+dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$report_path")"
+dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$report_path")"
+dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$report_path")"
+dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+progress_dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$progress_path")"
+progress_dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$progress_path")"
+progress_dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$progress_path")"
+progress_dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$progress_path")"
+progress_dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$dispatch_subject"
+test "$(printf '%s\n' "$dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$progress_dispatch_subject"
+test "$(printf '%s\n' "$progress_dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_dispatch_parent" = "$dispatch_parent"
+test "$progress_dispatch_subject" = "$dispatch_subject"
+test "$progress_dispatch_plan_sha" = "$dispatch_plan_sha"
+test "$progress_dispatch_brief_sha" = "$dispatch_brief_sha"
+test "$progress_dispatch_design_sha" = "$dispatch_design_sha"
+test "$(git rev-parse HEAD)" = "$dispatch_base"
+test "$(git rev-parse HEAD^)" = "$dispatch_parent"
+test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
+test "$(shasum -a 256 docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md | awk '{print $1}')" = "$dispatch_plan_sha"
+test "$(shasum -a 256 .superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-brief.md | awk '{print $1}')" = "$dispatch_brief_sha"
+test "$(shasum -a 256 docs/superpowers/specs/2026-08-03-task-4.1-boundary-hardening-design.md | awk '{print $1}')" = "$dispatch_design_sha"
+test "$dispatch_design_sha" = "a8bb6d78ac51792bdcf82c6f701b512aaec21acaa2f1829e99eb1e1488fda665"
 git add oracle/plugin/Core/CaptureException.cs \
   oracle/plugin/Core/PassiveDriverBoundaries.cs \
   oracle/plugin/tests/PassiveDriverBoundaryTests.cs \
@@ -10072,9 +10202,62 @@ test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '
   'M  oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 git diff --cached --check
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$report_path")"
+dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$report_path")"
+dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$report_path")"
+dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$report_path")"
+dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+progress_dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$progress_path")"
+progress_dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$progress_path")"
+progress_dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$progress_path")"
+progress_dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$progress_path")"
+progress_dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$dispatch_subject"
+test "$(printf '%s\n' "$dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$progress_dispatch_subject"
+test "$(printf '%s\n' "$progress_dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_dispatch_parent" = "$dispatch_parent"
+test "$progress_dispatch_subject" = "$dispatch_subject"
+test "$progress_dispatch_plan_sha" = "$dispatch_plan_sha"
+test "$progress_dispatch_brief_sha" = "$dispatch_brief_sha"
+test "$progress_dispatch_design_sha" = "$dispatch_design_sha"
+test "$(git rev-parse HEAD)" = "$dispatch_base"
+test "$(git rev-parse HEAD^)" = "$dispatch_parent"
+test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
+test "$(shasum -a 256 docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md | awk '{print $1}')" = "$dispatch_plan_sha"
+test "$(shasum -a 256 .superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-brief.md | awk '{print $1}')" = "$dispatch_brief_sha"
+test "$(shasum -a 256 docs/superpowers/specs/2026-08-03-task-4.1-boundary-hardening-design.md | awk '{print $1}')" = "$dispatch_design_sha"
+test "$dispatch_design_sha" = "a8bb6d78ac51792bdcf82c6f701b512aaec21acaa2f1829e99eb1e1488fda665"
 git commit -m "feat: define passive driver boundaries"
 ```
 
@@ -10088,22 +10271,22 @@ controller. Do not retry through another mechanism.
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 execution base: ' "$report_path")" = "1"
-dispatch_base="$(sed -n 's/^Task 4.1 execution base: //p' "$report_path")"
+test "$(grep -c '^Task 4[.]1 execution base: ' "$report_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
 test "$(git rev-parse HEAD^)" = "$dispatch_base"
 focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary)"
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
 test "$focused_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$focused_output"
 full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore)"
+  -c Release --no-restore 2>&1)"
 test "$full_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$full_output"
 build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror)"
+  -c Release --no-restore -warnaserror 2>&1)"
 printf '%s\n' "$build_output"
 case "$build_output" in
   *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
@@ -10125,7 +10308,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test "$(grep -F -c '            \"driver-boundary\",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
 test "$(grep -F -c '        PassiveDriverBoundaryTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
@@ -10141,10 +10324,11 @@ git diff --check HEAD^ HEAD
 Record the literal implementation commit, its parent, subject, scope, four
 blob hashes, and all Step 9 outputs in
 `.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md`
-and the progress ledger before review. Both records must contain exactly one
-line with the prefix `Task 4.1 implementation commit: ` followed by the actual
-40-character lowercase commit ID; the controller-replay gates bind HEAD to
-that recorded literal.
+and the progress ledger before review. Both records must contain exactly one line whose key prefix is
+`Task 4.1 implementation commit:`. Each full line must be exactly
+`Task 4.1 implementation commit: <40-character-lowercase-commit-ID>`; the
+report and progress values must be identical, and every controller-replay gate
+binds HEAD to that shared recorded literal.
 
 - [ ] **Step 10: Obtain independent specification and quality approval**
 
@@ -10178,12 +10362,20 @@ and clean diff. The complete literal replay blocks follow.
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10193,7 +10385,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10218,6 +10410,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -10247,10 +10440,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10260,7 +10459,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10283,6 +10482,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M01 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -10292,7 +10492,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -10307,12 +10507,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10322,7 +10530,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10344,6 +10552,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -10370,10 +10579,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10383,7 +10598,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10406,6 +10621,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M02 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -10415,7 +10631,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -10430,12 +10646,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10445,7 +10669,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10470,6 +10694,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -10503,10 +10728,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10516,7 +10747,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10539,6 +10770,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M03 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -10548,7 +10780,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -10563,12 +10795,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10578,7 +10818,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10628,6 +10868,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -10682,10 +10923,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10695,7 +10942,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10718,6 +10965,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M04 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
   *) exit 1 ;;
@@ -10727,7 +10975,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -10743,12 +10991,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10758,7 +11014,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10784,6 +11040,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -10814,10 +11071,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10827,7 +11090,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10850,6 +11113,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M05 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -10859,7 +11123,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -10874,12 +11138,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10889,7 +11161,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10916,6 +11188,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -10947,10 +11220,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -10960,7 +11239,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -10983,6 +11262,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M06 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -10992,7 +11272,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11007,12 +11287,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11022,7 +11310,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11047,6 +11335,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -11076,10 +11365,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11089,7 +11384,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11112,6 +11407,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M07 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -11121,7 +11417,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11136,12 +11432,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11151,7 +11455,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11183,6 +11487,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -11219,10 +11524,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11232,7 +11543,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11255,6 +11566,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M08 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -11264,7 +11576,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11279,12 +11591,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11294,7 +11614,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11325,6 +11645,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -11360,10 +11681,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11373,7 +11700,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11396,6 +11723,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M09 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -11405,7 +11733,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11420,12 +11748,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11435,7 +11771,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11458,6 +11794,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -11485,10 +11822,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11498,7 +11841,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11521,6 +11864,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M10 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -11530,7 +11874,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11545,12 +11889,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11560,7 +11912,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11586,6 +11938,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -11616,10 +11969,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11629,7 +11988,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11652,6 +12011,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M11 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -11661,7 +12021,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11676,12 +12036,20 @@ esac
 ```bash
 set -euo pipefail
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt'
 test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt'
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11691,7 +12059,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11716,6 +12084,7 @@ git diff --check
 
 ```bash
 set -euo pipefail
+set -o noclobber
 set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
@@ -11745,10 +12114,16 @@ exit 0
 ```bash
 set -euo pipefail
 report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
 test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
 test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
@@ -11758,7 +12133,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
@@ -11781,6 +12156,7 @@ case "$mutation_status" in
     printf '%s\n' "controller M12 mutant unexpectedly passed" >&2
     exit 1 ;;
 esac
+test "$mutation_status" = "1"
 case "$mutation_output" in
   *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
   *) exit 1 ;;
@@ -11790,7 +12166,7 @@ case "$mutation_output" in
   *) exit 1 ;;
 esac
 case "$mutation_output" in
-  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
   *"permission denied"*|*"Permission denied"*|\
   *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
   *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
@@ -11806,26 +12182,35 @@ report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.m
 progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
 test -f "$report_path"
 test -f "$progress_path"
-test "$(grep -c '^Task 4.1 execution base: ' "$report_path")" = "1"
-test "$(grep -c '^Task 4.1 implementation commit: ' "$report_path")" = "1"
-dispatch_base="$(sed -n 's/^Task 4.1 execution base: //p' "$report_path")"
-implementation_commit="$(sed -n 's/^Task 4.1 implementation commit: //p' "$report_path")"
-grep -F -x "Task 4.1 implementation commit: $implementation_commit" "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_implementation_commit" = "$implementation_commit"
 test "$(git rev-parse HEAD)" = "$implementation_commit"
 test "$(git rev-parse HEAD^)" = "$dispatch_base"
 focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary)"
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
 test "$focused_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$focused_output"
 full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore)"
+  -c Release --no-restore 2>&1)"
 test "$full_output" = "SSR oracle unit harness ready"
 printf '%s\n' "$full_output"
 build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror)"
+  -c Release --no-restore -warnaserror 2>&1)"
 printf '%s\n' "$build_output"
 case "$build_output" in
   *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
@@ -11847,7 +12232,7 @@ test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n'
   'oracle/plugin/tests/Program.cs')"
 test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
-test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "dfca9c9404495dac07661b6ee710154393c9d35c7b97f8e5cd23d43f68188727"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
 test "$(grep -F -c '            \"driver-boundary\",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
 test "$(grep -F -c '        PassiveDriverBoundaryTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
@@ -21577,11 +21962,12 @@ plugin test. Its fake `IPassiveUpdateObservation` proves the ordered calls
 `state, now, path, state, gate, capture, utc` through the static call-sequence
 check plus per-operation counters. A false path stops at `path`, performs no
 gate or capture, and faults with `save_path_changed`. A different second state
-during pre-initial observation stops after the second `state`, rebases the same
-callback into a new initial epoch, performs no gate or capture, and does not
-fault.
-A different second state during stable or settling observation stops after
-the second `state`, performs no gate or capture, and faults with
+during pre-initial observation continues the observation sequence as
+`state, now, path, state, utc`, rebases the same callback into a new initial
+epoch, uses `GateSampleKind.NotInspected`, skips gate and capture, and
+completes without fault.
+A different second state during stable or settling observation still stops
+after the second `state`, performs no gate or capture, and faults with
 `state_replaced`.
 
 Implement the
