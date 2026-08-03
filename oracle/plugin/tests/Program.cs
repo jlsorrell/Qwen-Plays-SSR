@@ -10,9 +10,11 @@ private static int Main(string[] args)
         HarnessOptions options = HarnessOptions.Parse(args);
         TestRegistry tests = new TestRegistry();
         ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            { "protocol", 4 }
+            { "protocol", 4 },
+            { "encoding", 3 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)
