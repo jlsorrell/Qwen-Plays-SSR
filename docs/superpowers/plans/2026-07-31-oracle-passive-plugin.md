@@ -3801,9 +3801,9 @@ test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
   "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
 test -z "$(git diff --cached --name-only)"
-test "$(git status --short)" = "$(printf '%s\n' \
-  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
   ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
   '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
@@ -3827,9 +3827,9 @@ test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
   "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
 test -z "$(git diff --cached --name-only)"
-test "$(git status --short)" = "$(printf '%s\n' \
-  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
   ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
   '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
@@ -3889,9 +3889,9 @@ test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
   "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
 test -z "$(git diff --cached --name-only)"
-test "$(git status --short)" = "$(printf '%s\n' \
-  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
   ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
   '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
@@ -3949,9 +3949,9 @@ test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
   "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
 test -z "$(git diff --cached --name-only)"
-test "$(git status --short)" = "$(printf '%s\n' \
-  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
   ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
   '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
@@ -4015,9 +4015,9 @@ test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
   "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
 test -z "$(git diff --cached --name-only)"
-test "$(git status --short)" = "$(printf '%s\n' \
-  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
   ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
   '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
@@ -4046,9 +4046,9 @@ test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
   "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
 test -z "$(git diff --cached --name-only)"
-test "$(git status --short)" = "$(printf '%s\n' \
-  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
   ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
   '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
