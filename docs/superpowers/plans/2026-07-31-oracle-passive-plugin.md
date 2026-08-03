@@ -1849,6 +1849,40 @@ internal static class EncodingTests
         Check.Bytes(error[2], actual[2], "error step line");
         Check.Bytes(error[3], CanonicalJson.EncodeError(ProtocolSamples.Error),
             "error terminal line");
+
+        Check.Bytes(
+            new UTF8Encoding(false, true).GetBytes(
+                "{\"kind\":\"error\",\"schema_version\":1,\"run_id\":"
+                + "\"0123456789abcdef0123456789abcdef\",\"input_index\":null,"
+                + "\"input\":null,\"code\":\"capture_failed\",\"message\":"
+                + "\"game-state capture failed\",\"settle_frames\":0,"
+                + "\"last_capture\":null}"),
+            CanonicalJson.EncodeError(new ErrorRecord(
+                ProtocolSamples.RunId, null, null, "capture_failed", 0, null)),
+            "fully-null error bytes");
+        Check.Bytes(
+            new UTF8Encoding(false, true).GetBytes(
+                "{\"kind\":\"error\",\"schema_version\":1,\"run_id\":"
+                + "\"0123456789abcdef0123456789abcdef\",\"input_index\":2,"
+                + "\"input\":null,\"code\":\"unexpected_input\",\"message\":"
+                + "\"native input was outside the passive vocabulary\","
+                + "\"settle_frames\":0,\"last_capture\":null}"),
+            CanonicalJson.EncodeError(new ErrorRecord(
+                ProtocolSamples.RunId, 2, null, "unexpected_input", 0, null)),
+            "indexed null-input error bytes");
+
+        byte[] south = CanonicalJson.EncodeStep(new StepRecord(
+            ProtocolSamples.RunId, 0, OracleInput.South,
+            true, true, 2, false, ProtocolSamples.MovedCapture));
+        Check.True(ContainsBytes(south,
+            new UTF8Encoding(false, true).GetBytes("\"input\":\"South\"")),
+            "South exact wire spelling");
+        byte[] east = CanonicalJson.EncodeError(new ErrorRecord(
+            ProtocolSamples.RunId, 2, OracleInput.East,
+            "settle_timeout", 2, ProtocolSamples.MovedCapture));
+        Check.True(ContainsBytes(east,
+            new UTF8Encoding(false, true).GetBytes("\"input\":\"East\"")),
+            "East exact wire spelling");
     }
 
     private static void CanonicalStrings()
@@ -1860,7 +1894,8 @@ internal static class EncodingTests
             { "\\", "\"raw_save\":\"\\\\\"" },
             { "\b\f\n\r\t", "\"raw_save\":\"\\b\\f\\n\\r\\t\"" },
             { "\u0000\u0001\u001f", "\"raw_save\":\"\\u0000\\u0001\\u001f\"" },
-            { "é/雪", "\"raw_save\":\"é/雪\"" }
+            { "é/雪", "\"raw_save\":\"é/雪\"" },
+            { "\ud83d\ude00", "\"raw_save\":\"😀\"" }
         };
         for (int index = 0; index < cases.GetLength(0); index++)
         {
@@ -1870,6 +1905,11 @@ internal static class EncodingTests
             Check.True(encoded.IndexOf(cases[index, 1], StringComparison.Ordinal) >= 0,
                 "canonical string " + index);
         }
+        byte[] supplementary = CanonicalJson.EncodeInitial(new InitialRecord(
+            ProtocolSamples.RunId, ProtocolSamples.Capture("\ud83d\ude00")));
+        Check.True(ContainsBytes(supplementary,
+            new byte[] { 0xf0, 0x9f, 0x98, 0x80 }),
+            "U+1F600 exact UTF-8 bytes");
         CultureInfo prior = CultureInfo.CurrentCulture;
         try
         {
@@ -1882,6 +1922,22 @@ internal static class EncodingTests
         {
             CultureInfo.CurrentCulture = prior;
         }
+    }
+
+    private static bool ContainsBytes(byte[] haystack, byte[] needle)
+    {
+        for (int start = 0; start <= haystack.Length - needle.Length; start++)
+        {
+            int offset = 0;
+            while (offset < needle.Length
+                && haystack[start + offset] == needle[offset])
+            {
+                offset++;
+            }
+            if (offset == needle.Length)
+                return true;
+        }
+        return false;
     }
 
     private static void RejectsSurrogates()
@@ -2274,7 +2330,209 @@ internal static class CanonicalJson
 }
 ```
 
-- [ ] **Step 4: Run GREEN and the net35 gate**
+- [ ] **Step 4: Prove the hardened assertions with one controlled mutant at a time**
+
+First require that `CanonicalJson.cs` is byte-for-byte the exact implementation
+from Step 3:
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the supplementary-pair mutant with `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            return 2;
++            throw new CanonicalEncodingException(
++                "paired UTF-16 surrogate");
+*** End Patch
+```
+
+Run exactly and require the named existing registration to fail:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "supplementary-pair mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'canonical string scalars'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, then require the planned hash:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            throw new CanonicalEncodingException(
+-                "paired UTF-16 surrogate");
++            return 2;
+*** End Patch
+```
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the nullable-error mutant with `apply_patch`; it changes only the branch
+that must retain a non-null index when `input` is null:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            if (record.InputIndex.HasValue)
++            if (record.Input.HasValue)
+                 WriteInt(output, record.InputIndex.Value);
+*** End Patch
+```
+
+Run exactly and require the independently hand-written error bytes in the
+named existing registration to fail:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "nullable-error mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'golden fixture bytes'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, then require the planned hash:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            if (record.Input.HasValue)
++            if (record.InputIndex.HasValue)
+                 WriteInt(output, record.InputIndex.Value);
+*** End Patch
+```
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the South-only wire-spelling mutant with `apply_patch`; the pre-existing
+West, North, and Undo fixtures remain unchanged, so only the new South
+assertion can catch it:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            WriteString(output, record.Input.ToString());
++            WriteString(output, record.Input == OracleInput.South
++                ? "south" : record.Input.ToString());
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "South wire-spelling mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'golden fixture bytes'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, then require the planned hash:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            WriteString(output, record.Input == OracleInput.South
+-                ? "south" : record.Input.ToString());
++            WriteString(output, record.Input.ToString());
+*** End Patch
+```
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the East-only wire-spelling mutant with `apply_patch`; the pre-existing
+North error fixture remains unchanged, so only the new East assertion can
+catch it:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-                WriteString(output, record.Input.Value.ToString());
++                WriteString(output, record.Input.Value == OracleInput.East
++                    ? "east" : record.Input.Value.ToString());
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "East wire-spelling mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'golden fixture bytes'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, require the planned hash once
+more, and confirm that no mutant was staged:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-                WriteString(output, record.Input.Value == OracleInput.East
+-                    ? "east" : record.Input.Value.ToString());
++                WriteString(output, record.Input.Value.ToString());
+*** End Patch
+```
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+- [ ] **Step 5: Run final GREEN and the net35 gate**
 
 Run `encoding=3`, then the net35 Core gate. Require exact fixture/scalar/
 surrogate behavior, run the diff check, and retain the output for post-commit
@@ -2290,7 +2548,7 @@ review:
 git diff --check
 ```
 
-- [ ] **Step 5: Commit only the Task 2.1 encoder slice**
+- [ ] **Step 6: Commit only the Task 2.1 encoder slice**
 
 ```bash
 git add oracle/plugin/Core/CanonicalJson.cs \
