@@ -12,10 +12,12 @@ private static int Main(string[] args)
         ProtocolTests.Register(tests);
         EncodingTests.Register(tests);
         CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
             { "protocol", 4 },
-            { "encoding", 5 }
+            { "encoding", 5 },
+            { "sink", 3 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)
