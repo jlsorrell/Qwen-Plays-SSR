@@ -17,7 +17,7 @@ private static int Main(string[] args)
         {
             { "protocol", 4 },
             { "encoding", 5 },
-            { "sink", 3 }
+            { "sink", 6 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)

@@ -48,6 +48,17 @@ internal interface ITraceFileFactory
 
 internal sealed class NdjsonTraceSink : ITraceSink
 {
+    private const long DefaultMaxTraceBytes = 128L * 1024L * 1024L;
+
+    private enum SinkState
+    {
+        Open,
+        Failed,
+        Closing,
+        Closed,
+        FailedClosed
+    }
+
     private sealed class FileTraceFactory : ITraceFileFactory
     {
         public ITraceOutput CreateNew(
@@ -98,21 +109,24 @@ internal sealed class NdjsonTraceSink : ITraceSink
         }
     }
 
+    private static readonly byte[] LineFeed = new byte[] { (byte)'\n' };
     private readonly ITraceOutput output;
-    private bool closeAttempted;
+    private readonly long maxTraceBytes;
+    private SinkState state;
+    private long totalBytes;
 
     internal NdjsonTraceSink(ITraceOutput output)
-        : this(output, 128L * 1024L * 1024L)
+        : this(output, DefaultMaxTraceBytes)
     {
     }
 
     internal NdjsonTraceSink(ITraceOutput output, long maxTraceBytes)
     {
-        if (output == null)
-            throw new ArgumentNullException("output");
-        if (maxTraceBytes <= 0L || maxTraceBytes > 128L * 1024L * 1024L)
+        this.output = output ?? throw new ArgumentNullException("output");
+        if (maxTraceBytes <= 0L || maxTraceBytes > DefaultMaxTraceBytes)
             throw new ArgumentOutOfRangeException("maxTraceBytes");
-        this.output = output;
+        this.maxTraceBytes = maxTraceBytes;
+        state = SinkState.Open;
     }
 
     internal static NdjsonTraceSink Create(
@@ -143,41 +157,118 @@ internal sealed class NdjsonTraceSink : ITraceSink
 
     public void WriteRun(RunRecord record)
     {
-        throw new NotSupportedException("record writing begins in Task 3.2");
+        if (record == null)
+            throw new ArgumentNullException("record");
+        EnsureWritable();
+        WriteEncoded(CanonicalJson.EncodeRun(record));
     }
 
     public void WriteInitial(InitialRecord record)
     {
-        throw new NotSupportedException("record writing begins in Task 3.2");
+        if (record == null)
+            throw new ArgumentNullException("record");
+        EnsureWritable();
+        WriteEncoded(CanonicalJson.EncodeInitial(record));
     }
 
     public void WriteStep(StepRecord record)
     {
-        throw new NotSupportedException("record writing begins in Task 3.2");
+        if (record == null)
+            throw new ArgumentNullException("record");
+        EnsureWritable();
+        WriteEncoded(CanonicalJson.EncodeStep(record));
     }
 
     public void WriteEnd(EndRecord record)
     {
-        throw new NotSupportedException("record writing begins in Task 3.2");
+        if (record == null)
+            throw new ArgumentNullException("record");
+        EnsureWritable();
+        WriteEncoded(CanonicalJson.EncodeEnd(record));
     }
 
     public void WriteError(ErrorRecord record)
     {
-        throw new NotSupportedException("record writing begins in Task 3.2");
+        if (record == null)
+            throw new ArgumentNullException("record");
+        EnsureWritable();
+        WriteEncoded(CanonicalJson.EncodeError(record));
     }
 
     public void Close()
     {
-        if (closeAttempted)
+        if (state != SinkState.Open && state != SinkState.Failed)
             throw new InvalidOperationException("trace close already attempted");
-        closeAttempted = true;
+        bool alreadyFailed = state == SinkState.Failed;
+        state = SinkState.Closing;
         try
         {
             output.Close();
         }
         catch (Exception error)
         {
+            state = SinkState.FailedClosed;
             throw new TraceIoException("trace close failed", error);
         }
+        state = alreadyFailed ? SinkState.FailedClosed : SinkState.Closed;
+    }
+
+    private void WriteEncoded(byte[] encoded)
+    {
+        CanonicalJson.ValidateRecordSize(encoded);
+        long lineBytes = (long)encoded.Length + 1L;
+        if (totalBytes > maxTraceBytes - lineBytes)
+        {
+            Fail();
+            throw new TraceIoException("trace file budget exceeded");
+        }
+        WriteAll(encoded);
+        WriteAll(LineFeed);
+        try
+        {
+            output.Flush();
+        }
+        catch (Exception error)
+        {
+            Fail();
+            throw new TraceIoException("trace flush failed", error);
+        }
+        totalBytes += lineBytes;
+    }
+
+    private void WriteAll(byte[] buffer)
+    {
+        int offset = 0;
+        while (offset < buffer.Length)
+        {
+            int written;
+            try
+            {
+                written = output.Write(buffer, offset, buffer.Length - offset);
+            }
+            catch (Exception error)
+            {
+                Fail();
+                throw new TraceIoException("trace write failed", error);
+            }
+            if (written <= 0 || written > buffer.Length - offset)
+            {
+                Fail();
+                throw new TraceIoException(
+                    "trace output made invalid progress");
+            }
+            offset += written;
+        }
+    }
+
+    private void EnsureWritable()
+    {
+        if (state != SinkState.Open)
+            throw new TraceIoException("trace sink is not writable");
+    }
+
+    private void Fail()
+    {
+        state = SinkState.Failed;
     }
 }
