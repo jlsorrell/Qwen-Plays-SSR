@@ -4067,44 +4067,760 @@ git commit -m "feat: open oracle traces atomically"
 
 #### Task 3.2: Flush bounded records and own terminal close
 
-- [ ] **Step 1: Add only the final three RED registrations**
+**Files:**
+- Modify: `oracle/plugin/Core/NdjsonTraceSink.cs`
+- Modify: `oracle/plugin/tests/TraceSinkTests.cs`
+- Modify: `oracle/plugin/tests/Program.cs`
 
-Replace only `TraceSinkTests.Register` with this cumulative block and raise the
-temporary manifest from `sink=3` to `sink=6`.  The first failing registration
-must be `records use LF and flush`; the Task 3.1 implementation throws before
-writing any bytes.
+**Interfaces:** Retain the Task 3.1 interfaces and typed exceptions. The only test seam is `FakeTraceOutput.FlushByteCounts` and `ReturnTooMany` in the complete test source below. The frozen six sink registrations and temporary manifest are exact. Work offline only: no restore, network, game/GUI launch, deployment, installed configuration mutation, or save mutation.
+
+- [ ] **Step 1: Apply the complete hardened tests and manifest for RED**
+
+Replace `TraceSinkTests.cs` exactly with:
 
 ```csharp
-internal static void Register(TestRegistry tests)
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+internal sealed class FakeTraceOutput : ITraceOutput
 {
-    tests.Add("sink", "factory arguments are exact", FactoryArguments);
-    tests.Add("sink", "null factory output is typed", NullFactoryOutputIsTyped);
-    tests.Add("sink", "real collision is typed", RealCollisionIsTyped);
-    tests.Add("sink", "records use LF and flush", RecordsUseLfAndFlush);
-    tests.Add("sink", "bounds and write failures are terminal", WriteFailuresAreTerminal);
-    tests.Add("sink", "close ownership is single use", CloseIsSingleUse);
+    internal readonly List<byte> Bytes = new List<byte>();
+    internal readonly Queue<int> WriteCounts = new Queue<int>();
+    internal readonly List<int> FlushByteCounts = new List<int>();
+    internal Exception WriteFailure;
+    internal Exception FlushFailure;
+    internal Exception CloseFailure;
+    internal bool ReturnTooMany;
+    internal int FlushCalls;
+    internal int CloseCalls;
+
+    public int Write(byte[] buffer, int offset, int count)
+    {
+        if (WriteFailure != null)
+            throw WriteFailure;
+        if (ReturnTooMany)
+            return count + 1;
+        int written = WriteCounts.Count == 0 ? count : WriteCounts.Dequeue();
+        if (written < 0 || written > count)
+            throw new InvalidOperationException("invalid fake write count");
+        for (int index = 0; index < written; index++)
+            Bytes.Add(buffer[offset + index]);
+        return written;
+    }
+
+    public void Flush()
+    {
+        FlushCalls++;
+        FlushByteCounts.Add(Bytes.Count);
+        if (FlushFailure != null)
+            throw FlushFailure;
+    }
+
+    public void Close()
+    {
+        CloseCalls++;
+        if (CloseFailure != null)
+            throw CloseFailure;
+    }
+}
+
+internal sealed class FakeTraceFileFactory : ITraceFileFactory
+{
+    internal FakeTraceOutput Output = new FakeTraceOutput();
+    internal string Path;
+    internal FileMode Mode;
+    internal FileAccess Access;
+    internal FileShare Share;
+    internal Exception Failure;
+
+    public ITraceOutput CreateNew(
+        string path, FileMode mode, FileAccess access, FileShare share)
+    {
+        Path = path;
+        Mode = mode;
+        Access = access;
+        Share = share;
+        if (Failure != null)
+            throw Failure;
+        return Output;
+    }
+}
+
+internal static class TraceSinkTests
+{
+    internal static void Register(TestRegistry tests)
+    {
+        tests.Add("sink", "factory arguments are exact", FactoryArguments);
+        tests.Add("sink", "null factory output is typed", NullFactoryOutputIsTyped);
+        tests.Add("sink", "real collision is typed", RealCollisionIsTyped);
+        tests.Add("sink", "records use LF and flush", RecordsUseLfAndFlush);
+        tests.Add("sink", "bounds and write failures are terminal", WriteFailuresAreTerminal);
+        tests.Add("sink", "close ownership is single use", CloseIsSingleUse);
+    }
+
+    private static void FactoryArguments()
+    {
+        FakeTraceFileFactory factory = new FakeTraceFileFactory();
+        NdjsonTraceSink sink = NdjsonTraceSink.Create(
+            "/private/tmp/output", "passive-trace", factory);
+        Check.Equal(
+            Path.Combine("/private/tmp/output", "passive-trace.ndjson"),
+            factory.Path, "combined target");
+        Check.Equal(FileMode.CreateNew, factory.Mode, "create-new mode");
+        Check.Equal(FileAccess.Write, factory.Access, "write access");
+        Check.Equal(FileShare.None, factory.Share, "exclusive sharing");
+        sink.Close();
+        Check.Equal(1, factory.Output.CloseCalls, "owned close");
+    }
+
+    private static void NullFactoryOutputIsTyped()
+    {
+        FakeTraceFileFactory factory = new FakeTraceFileFactory();
+        factory.Output = null;
+        Check.Throws<TraceIoException>(
+            delegate
+            {
+                NdjsonTraceSink.Create(
+                    "/private/tmp/output", "passive-trace", factory);
+            },
+            "null create-new result");
+
+        FakeTraceFileFactory failing = new FakeTraceFileFactory();
+        IOException injected = new IOException("injected create");
+        failing.Failure = injected;
+        IOException observed = Check.Throws<IOException>(
+            delegate
+            {
+                NdjsonTraceSink.Create(
+                    "/private/tmp/output", "passive-trace", failing);
+            },
+            "injected factory failure");
+        Check.Same(injected, observed, "factory failure identity");
+    }
+
+    private static void RealCollisionIsTyped()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(), "ssr-oracle-sink-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "passive-trace.ndjson");
+        NdjsonTraceSink unexpected = null;
+        try
+        {
+            NdjsonTraceSink sink = NdjsonTraceSink.Create(directory, "passive-trace");
+            sink.Close();
+            byte[] sentinel = new byte[] { 0x00, 0x7f, 0x80, 0xff };
+            File.WriteAllBytes(path, sentinel);
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision sentinel written");
+            Check.Throws<TraceExistsException>(
+                delegate
+                {
+                    unexpected = NdjsonTraceSink.Create(
+                        directory, "passive-trace");
+                },
+                "atomic create-new collision");
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision preserves bytes");
+        }
+        finally
+        {
+            if (unexpected != null)
+            {
+                try
+                {
+                    unexpected.Close();
+                }
+                catch (Exception)
+                {
+                }
+            }
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, true);
+        }
+    }
+
+    private static void RecordsUseLfAndFlush()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        output.WriteCounts.Enqueue(1);
+        output.WriteCounts.Enqueue(1);
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+        List<byte> expected = new List<byte>();
+
+        sink.WriteRun(ProtocolSamples.Run);
+        AppendLine(expected, CanonicalJson.EncodeRun(ProtocolSamples.Run));
+        Check.Sequence(
+            expected, output.Bytes, "records run exact cumulative LF bytes");
+        Check.Equal(
+            0, output.WriteCounts.Count,
+            "records positive partial writes are retried");
+        Check.Equal(1, output.FlushCalls, "records run flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[0],
+            "records run flush follows LF");
+
+        sink.WriteInitial(ProtocolSamples.Initial);
+        AppendLine(expected, CanonicalJson.EncodeInitial(ProtocolSamples.Initial));
+        Check.Sequence(
+            expected, output.Bytes, "records initial exact cumulative LF bytes");
+        Check.Equal(2, output.FlushCalls, "records initial flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[1],
+            "records initial flush follows LF");
+
+        sink.WriteStep(ProtocolSamples.Step0);
+        AppendLine(expected, CanonicalJson.EncodeStep(ProtocolSamples.Step0));
+        Check.Sequence(
+            expected, output.Bytes, "records step exact cumulative LF bytes");
+        Check.Equal(3, output.FlushCalls, "records step flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[2],
+            "records step flush follows LF");
+
+        sink.WriteEnd(ProtocolSamples.End);
+        AppendLine(expected, CanonicalJson.EncodeEnd(ProtocolSamples.End));
+        Check.Sequence(
+            expected, output.Bytes, "records end exact cumulative LF bytes");
+        Check.Equal(4, output.FlushCalls, "records end flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[3],
+            "records end flush follows LF");
+
+        sink.WriteError(ProtocolSamples.Error);
+        AppendLine(expected, CanonicalJson.EncodeError(ProtocolSamples.Error));
+        Check.Sequence(
+            expected, output.Bytes, "records error exact cumulative LF bytes");
+        Check.Equal(5, output.FlushCalls, "records final flush count is five");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[4],
+            "records error flush follows LF");
+        Check.Equal(
+            5,
+            output.FlushByteCounts.Count,
+            "records have five flush boundary snapshots");
+        Check.Sequence(
+            expected, output.Bytes, "records final exact five-line stream");
+        Check.False(
+            output.Bytes.Count >= 3
+            && output.Bytes[0] == 0xef
+            && output.Bytes[1] == 0xbb
+            && output.Bytes[2] == 0xbf,
+            "records stream has no UTF-8 BOM");
+    }
+
+    private static void WriteFailuresAreTerminal()
+    {
+        SessionLimitCountsLfAndBecomesTerminal();
+        ZeroProgressIsTerminal();
+        OverReportedProgressIsTerminal();
+        InjectedWriteFailureIsTerminal();
+        InjectedFlushFailureIsTerminal();
+        EncodingFailureLeavesSinkReusable();
+        RecordSizeFailureLeavesSinkReusable();
+    }
+
+    private static void SessionLimitCountsLfAndBecomesTerminal()
+    {
+        byte[] run = CanonicalJson.EncodeRun(ProtocolSamples.Run);
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(
+            output, 2L * (long)run.Length);
+        List<byte> accepted = new List<byte>();
+        AppendLine(accepted, run);
+        byte[] end = CanonicalJson.EncodeEnd(ProtocolSamples.End);
+        long remainingCapacity = 2L * (long)run.Length - accepted.Count;
+        Check.True(
+            (long)end.Length + 1L <= remainingCapacity,
+            "budget terminal probe fits remaining capacity");
+
+        sink.WriteRun(ProtocolSamples.Run);
+        Check.Sequence(
+            accepted, output.Bytes, "budget first line exact bytes");
+        Check.Equal(1, output.FlushCalls, "budget first line flush count");
+        Check.Equal(
+            accepted.Count,
+            output.FlushByteCounts[0],
+            "budget first line flush follows LF");
+
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "budget counts LF in cumulative limit");
+        Check.Sequence(
+            accepted, output.Bytes, "budget rejection is pre-output");
+        Check.Equal(
+            1, output.FlushCalls, "budget rejection has no flush");
+        Check.Equal(
+            1,
+            output.FlushByteCounts.Count,
+            "budget rejection preserves flush snapshots");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "budget failure is terminal with remaining capacity");
+        Check.Sequence(
+            accepted,
+            output.Bytes,
+            "budget terminal retry leaves bytes unchanged");
+        Check.Equal(
+            1,
+            output.FlushCalls,
+            "budget terminal retry leaves flush count unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "budget failure");
+    }
+
+    private static void ZeroProgressIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        output.WriteCounts.Enqueue(1);
+        output.WriteCounts.Enqueue(0);
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "zero progress is typed");
+        Check.Equal(1, output.Bytes.Count, "zero progress keeps partial prefix");
+        Check.Equal(
+            0, output.FlushCalls, "zero progress never flushes incomplete line");
+        List<byte> failedBytes = new List<byte>(output.Bytes);
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "zero progress failure is terminal");
+        Check.Sequence(
+            failedBytes,
+            output.Bytes,
+            "zero progress terminal retry leaves bytes unchanged");
+        Check.Equal(
+            0,
+            output.FlushCalls,
+            "zero progress terminal retry leaves flush count unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "zero progress failure");
+    }
+
+    private static void OverReportedProgressIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        output.ReturnTooMany = true;
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "over-reported progress is typed");
+        Check.Equal(
+            0, output.Bytes.Count, "over-reported progress copies no bytes");
+        Check.Equal(
+            0, output.FlushCalls, "over-reported progress never flushes");
+        output.ReturnTooMany = false;
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "over-reported progress failure is terminal");
+        Check.Equal(
+            0,
+            output.Bytes.Count,
+            "over-reported terminal retry leaves bytes unchanged");
+        Check.Equal(
+            0,
+            output.FlushCalls,
+            "over-reported terminal retry leaves flush count unchanged");
+
+        AssertOneCloseAfterFailure(
+            sink, output, "over-reported progress failure");
+    }
+
+    private static void InjectedWriteFailureIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        IOException injected = new IOException("injected write");
+        output.WriteFailure = injected;
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        TraceIoException observed = Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "write failure is typed");
+        Check.Same(
+            injected,
+            observed.InnerException,
+            "write failure preserves exception identity");
+        List<byte> failedBytes = new List<byte>(output.Bytes);
+        List<int> failedFlushes = new List<int>(output.FlushByteCounts);
+        int failedFlushCalls = output.FlushCalls;
+        output.WriteFailure = null;
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "write failure is terminal after stimulus clears");
+        Check.Sequence(
+            failedBytes,
+            output.Bytes,
+            "write terminal retry leaves bytes unchanged");
+        Check.Equal(
+            failedFlushCalls,
+            output.FlushCalls,
+            "write terminal retry leaves flush count unchanged");
+        Check.Sequence(
+            failedFlushes,
+            output.FlushByteCounts,
+            "write terminal retry leaves flush snapshots unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "write failure");
+    }
+
+    private static void InjectedFlushFailureIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        IOException injected = new IOException("injected flush");
+        output.FlushFailure = injected;
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        TraceIoException observed = Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "flush failure is typed");
+        Check.Same(
+            injected,
+            observed.InnerException,
+            "flush failure preserves exception identity");
+        List<byte> failedBytes = new List<byte>(output.Bytes);
+        List<int> failedFlushes = new List<int>(output.FlushByteCounts);
+        int failedFlushCalls = output.FlushCalls;
+        output.FlushFailure = null;
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "flush failure is terminal after stimulus clears");
+        Check.Sequence(
+            failedBytes,
+            output.Bytes,
+            "flush terminal retry leaves bytes unchanged");
+        Check.Equal(
+            failedFlushCalls,
+            output.FlushCalls,
+            "flush terminal retry leaves flush count unchanged");
+        Check.Sequence(
+            failedFlushes,
+            output.FlushByteCounts,
+            "flush terminal retry leaves flush snapshots unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "flush failure");
+    }
+
+    private static void EncodingFailureLeavesSinkReusable()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+        InitialRecord invalid = new InitialRecord(
+            ProtocolSamples.RunId, ProtocolSamples.Capture("\ud800"));
+
+        Check.Throws<CanonicalEncodingException>(
+            delegate { sink.WriteInitial(invalid); },
+            "encoding failure is typed before output");
+        Check.Equal(
+            0, output.Bytes.Count, "encoding failure emits no bytes");
+        Check.Equal(
+            0, output.FlushCalls, "encoding failure performs no flush");
+        Check.Equal(
+            0,
+            output.FlushByteCounts.Count,
+            "encoding failure records no flush boundary");
+        RequireSuccess(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "encoding failure leaves sink reusable");
+        List<byte> expected = new List<byte>();
+        AppendLine(expected, CanonicalJson.EncodeEnd(ProtocolSamples.End));
+        Check.Sequence(
+            expected,
+            output.Bytes,
+            "encoding recovery writes exact valid line");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[0],
+            "encoding recovery flush follows LF");
+        sink.Close();
+        Check.Equal(1, output.CloseCalls, "encoding recovery closes once");
+    }
+
+    private static void RecordSizeFailureLeavesSinkReusable()
+    {
+        const int AcceptedRawSaveLength = 16776794;
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        Check.Throws<RecordTooLargeException>(
+            delegate
+            {
+                sink.WriteError(
+                    ErrorWithRawSaveLength(AcceptedRawSaveLength + 1));
+            },
+            "record-size failure is typed before output");
+        Check.Equal(
+            0, output.Bytes.Count, "record-size failure emits no bytes");
+        Check.Equal(
+            0, output.FlushCalls, "record-size failure performs no flush");
+        Check.Equal(
+            0,
+            output.FlushByteCounts.Count,
+            "record-size failure records no flush boundary");
+        RequireSuccess(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "record-size failure leaves sink reusable");
+        List<byte> expected = new List<byte>();
+        AppendLine(expected, CanonicalJson.EncodeEnd(ProtocolSamples.End));
+        Check.Sequence(
+            expected,
+            output.Bytes,
+            "record-size recovery writes exact valid line");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[0],
+            "record-size recovery flush follows LF");
+        sink.Close();
+        Check.Equal(1, output.CloseCalls, "record-size recovery closes once");
+    }
+
+    private static void CloseIsSingleUse()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+        sink.Close();
+        Check.Equal(1, output.CloseCalls, "normal close attempted exactly once");
+        Check.Throws<InvalidOperationException>(
+            delegate { sink.Close(); },
+            "normal second close rejected");
+        Check.Equal(
+            1, output.CloseCalls, "normal close has no underlying retry");
+        AssertAllRecordsRejected(sink, "normal close");
+
+        FakeTraceOutput failing = new FakeTraceOutput();
+        IOException injected = new IOException("injected close");
+        failing.CloseFailure = injected;
+        NdjsonTraceSink failingSink = new NdjsonTraceSink(failing);
+        TraceIoException observed = Check.Throws<TraceIoException>(
+            delegate { failingSink.Close(); },
+            "failed close is typed");
+        Check.Same(
+            injected,
+            observed.InnerException,
+            "failed close preserves exception identity");
+        Check.Equal(
+            1, failing.CloseCalls, "failed close attempted exactly once");
+        failing.CloseFailure = null;
+        Check.Throws<InvalidOperationException>(
+            delegate { failingSink.Close(); },
+            "failed close retry rejected after stimulus clears");
+        Check.Equal(
+            1, failing.CloseCalls, "failed close has no underlying retry");
+        AssertAllRecordsRejected(failingSink, "failed close");
+    }
+
+    private static void AppendLine(List<byte> target, byte[] encoded)
+    {
+        for (int index = 0; index < encoded.Length; index++)
+            target.Add(encoded[index]);
+        target.Add(0x0a);
+    }
+
+    private static ErrorRecord ErrorWithRawSaveLength(int length)
+    {
+        return new ErrorRecord(
+            ProtocolSamples.RunId,
+            1,
+            OracleInput.North,
+            "settle_timeout",
+            600,
+            ProtocolSamples.Capture(new string('x', length)));
+    }
+
+    private static void RequireSuccess(Action action, string message)
+    {
+        Exception observed = null;
+        try
+        {
+            action();
+        }
+        catch (Exception error)
+        {
+            observed = error;
+        }
+        Check.True(observed == null, message);
+    }
+
+    private static void AssertOneCloseAfterFailure(
+        NdjsonTraceSink sink,
+        FakeTraceOutput output,
+        string label)
+    {
+        Exception observed = null;
+        try
+        {
+            sink.Close();
+        }
+        catch (Exception error)
+        {
+            observed = error;
+        }
+        Check.True(observed == null, label + " first close remains legal");
+        Check.Equal(
+            1, output.CloseCalls, label + " first close reaches output");
+        Check.Throws<InvalidOperationException>(
+            delegate { sink.Close(); },
+            label + " second close rejected");
+        Check.Equal(
+            1, output.CloseCalls, label + " has no underlying close retry");
+    }
+
+    private static void AssertAllRecordsRejected(
+        NdjsonTraceSink sink,
+        string label)
+    {
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            label + " rejects Run");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteInitial(ProtocolSamples.Initial); },
+            label + " rejects Initial");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteStep(ProtocolSamples.Step0); },
+            label + " rejects Step");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            label + " rejects End");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteError(ProtocolSamples.Error); },
+            label + " rejects Error");
+    }
 }
 ```
 
-Run the selected cohort and require that named behavioral RED.
-
-- [ ] **Step 2: Run RED against the staged create-new sink**
-
-```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
-  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink
-```
-
-Require `records use LF and flush` to fail from the staged write behavior, not
-from a compiler, SDK, asset, or fixture failure.
-
-- [ ] **Step 3: Implement exact write, flush, bound, and close transitions**
-
-Replace the staged Task 3.1 `NdjsonTraceSink` class—leaving its interfaces and
-typed exceptions unchanged—with this complete final implementation:
+Replace `Program.cs` exactly with:
 
 ```csharp
+using System;
+using System.Collections.Generic;
+
+internal static class Program
+{
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
+}
+```
+
+Apply these replacements only to the working tree; do not stage either file.
+Require an empty index before the RED command.
+
+- [ ] **Step 2: Run the behavioral RED**
+
+```bash
+set -euo pipefail
+test -z "$(git diff --cached --name-only)"
+if red_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "Task 3.2 RED unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$red_output"
+case "$red_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$red_output" in
+  *"record writing begins in Task 3.2"*) ;;
+  *) exit 1 ;;
+esac
+case "$red_output" in
+  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|*"Permission denied"*|*"Operation not permitted"*|*"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+```
+
+The required first failure is the frozen sink registration plus `record writing begins in Task 3.2`; no compiler/SDK/assets/fixture/permission/restore failure is an acceptable RED.
+
+- [ ] **Step 3: Replace the sink with the exact final production body**
+
+Replace `NdjsonTraceSink.cs` exactly with:
+
+```csharp
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+internal interface ITraceSink
+{
+    void WriteRun(RunRecord record);
+    void WriteInitial(InitialRecord record);
+    void WriteStep(StepRecord record);
+    void WriteEnd(EndRecord record);
+    void WriteError(ErrorRecord record);
+    void Close();
+}
+
+internal sealed class TraceIoException : Exception
+{
+    internal TraceIoException(string message, Exception inner)
+        : base(message, inner)
+    {
+    }
+
+    internal TraceIoException(string message)
+        : base(message)
+    {
+    }
+}
+
+internal sealed class TraceExistsException : Exception
+{
+    internal TraceExistsException(string path, Exception inner)
+        : base("trace target already exists: " + path, inner)
+    {
+    }
+}
+
+internal interface ITraceOutput
+{
+    int Write(byte[] buffer, int offset, int count);
+    void Flush();
+    void Close();
+}
+
+internal interface ITraceFileFactory
+{
+    ITraceOutput CreateNew(
+        string path, FileMode mode, FileAccess access, FileShare share);
+}
+
 internal sealed class NdjsonTraceSink : ITraceSink
 {
     private const long DefaultMaxTraceBytes = 128L * 1024L * 1024L;
@@ -4333,31 +5049,1177 @@ internal sealed class NdjsonTraceSink : ITraceSink
 }
 ```
 
-`Marshal.GetHRForException(error) & 0xffff` classifies only the
-atomic `CreateNew` collision codes `EEXIST (17)`, `ERROR_FILE_EXISTS (80)`,
-and `ERROR_ALREADY_EXISTS (183)` as `TraceExistsException`; it performs no
-racy `File.Exists` recheck. Because encoding completes
-before `WriteEncoded`, `CanonicalEncodingException` and
-`RecordTooLargeException` leave the open sink reusable. Every write, flush,
-close, invalid-progress, and cumulative-budget failure permanently blocks
-later records; one best-effort Close remains legal after a write/flush failure.
-
-- [ ] **Step 4: Run GREEN and the net35 gate**
+- [ ] **Step 4: Run provisional GREEN, net35, diff, hash, index, and exact task-slice gate**
 
 ```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
 git diff --check
 ```
 
-Require all six sink registrations to pass and retain the pristine output in
-the task report for post-commit review.
+- [ ] **Step 5: Prove the hardened assertions with thirteen controlled mutants**
 
-- [ ] **Step 5: Commit only the Task 3.2 sink slice**
+Run M01 through M13 in order. Each mutant uses an independent fail-fast shell command immediately after its forward patch; no shell function or cross-command state is assumed. Every mutation is isolated and uses only the focused offline sink cohort.
+
+Before M01, require the literal pristine gate:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M01 — make `WriteStep` a functional no-op
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteStep(StepRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        WriteEncoded(CanonicalJson.EncodeStep(record));
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M01 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records step exact cumulative LF bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteStep(StepRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
++        WriteEncoded(CanonicalJson.EncodeStep(record));
+     }
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records step exact cumulative LF bytes`
+- Not masked earlier: the three legacy registrations do not write records;
+  Run and Initial still pass their cumulative checks before the first changed
+  observation is the Step boundary.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M02 — omit the literal LF write
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
+-        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M02 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records run exact cumulative LF bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
++        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records run exact cumulative LF bytes`
+- Not masked earlier: factory/create/close behavior is unchanged. The first
+  successful record returns, then its independently assembled JSON-plus-LF
+  byte sequence detects the missing byte.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M03 — flush before writing LF
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
+-        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+@@
+             Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
++        WriteAll(LineFeed);
+         totalBytes += lineBytes;
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M03 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records run flush follows LF"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
++        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+@@
+             Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
+-        WriteAll(LineFeed);
+         totalBytes += lineBytes;
+     }
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records run flush follows LF`
+- Not masked earlier: all returned record bytes and flush counts remain exact,
+  so only the byte-count snapshots expose that each flush happened one byte
+  too early. No legacy registration observes flush ordering.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M04 — perform only one output write instead of retrying
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteAll(byte[] buffer)
+     {
+         int offset = 0;
+-        while (offset < buffer.Length)
++        if (offset < buffer.Length)
+         {
+             int written;
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M04 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records run exact cumulative LF bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteAll(byte[] buffer)
+     {
+         int offset = 0;
+-        if (offset < buffer.Length)
++        while (offset < buffer.Length)
+         {
+             int written;
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records run exact cumulative LF bytes`
+- Not masked earlier: no legacy test configures positive partial writes. With
+  the binding `1, 1` queue, the mutant writes one JSON byte and one LF, returns
+  normally, and is rejected by the first independent cumulative-byte check.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M05 — exclude LF from `lineBytes`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteEncoded(byte[] encoded)
+     {
+         CanonicalJson.ValidateRecordSize(encoded);
+-        long lineBytes = (long)encoded.Length + 1L;
++        long lineBytes = (long)encoded.Length;
+         if (totalBytes > maxTraceBytes - lineBytes)
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M05 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"budget counts LF in cumulative limit: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteEncoded(byte[] encoded)
+     {
+         CanonicalJson.ValidateRecordSize(encoded);
+-        long lineBytes = (long)encoded.Length;
++        long lineBytes = (long)encoded.Length + 1L;
+         if (totalBytes > maxTraceBytes - lineBytes)
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `budget counts LF in cumulative limit: no exception`
+- Not masked earlier: default-budget record flow remains well below the cap.
+  With `maxTraceBytes = 2L * runBytes`, excluding both accounted LF bytes lets
+  the second payload fit exactly, so the first budget `Check.Throws` is the
+  earliest failure.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M06 — delete `Fail()` from cumulative-budget rejection
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         long lineBytes = (long)encoded.Length + 1L;
+         if (totalBytes > maxTraceBytes - lineBytes)
+         {
+-            Fail();
+             throw new TraceIoException("trace file budget exceeded");
+         }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M06 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"budget failure is terminal with remaining capacity: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         long lineBytes = (long)encoded.Length + 1L;
+         if (totalBytes > maxTraceBytes - lineBytes)
+         {
++            Fail();
+             throw new TraceIoException("trace file budget exceeded");
+         }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `budget failure is terminal with remaining capacity: no exception`
+- Not masked earlier: the second Run still throws the correct budget error and
+  preserves bytes/flushes. The later End fits the real remaining budget and
+  succeeds only because the state was not poisoned, isolating this transition.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M07 — delete `Fail()` from the write-exception branch
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+             }
+             catch (Exception error)
+             {
+-                Fail();
+                 throw new TraceIoException("trace write failed", error);
+             }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M07 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"write failure is terminal after stimulus clears: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+             }
+             catch (Exception error)
+             {
++                Fail();
+                 throw new TraceIoException("trace write failed", error);
+             }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `write failure is terminal after stimulus clears: no exception`
+- Not masked earlier: the injected exception is still wrapped with identical
+  inner identity, so the first write-failure assertions pass. The helper clears
+  `WriteFailure`; only the missing state transition lets the next record pass.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M08 — delete `Fail()` from the flush-exception branch
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
+-            Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M08 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"flush failure is terminal after stimulus clears: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
++            Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `flush failure is terminal after stimulus clears: no exception`
+- Not masked earlier: the first flush failure is still wrapped with the exact
+  inner exception and its snapshots are unchanged. Clearing `FlushFailure`
+  removes the environmental stimulus, so only an open mutant sink accepts the
+  later valid record.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M09 — accept over-reported write progress
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+-            if (written <= 0 || written > buffer.Length - offset)
++            if (written <= 0)
+             {
+                 Fail();
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M09 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"over-reported progress is typed: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+-            if (written <= 0)
++            if (written <= 0 || written > buffer.Length - offset)
+             {
+                 Fail();
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `over-reported progress is typed: no exception`
+- Not masked earlier: budget and zero-progress helpers exercise different
+  branches. `ReturnTooMany` copies no bytes and returns `remaining + 1`; with
+  this guard removed, both loops terminate without an exception, reaching the
+  dedicated `Check.Throws` failure.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M10 — forbid `Close()` from `Failed`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void Close()
+     {
+-        if (state != SinkState.Open && state != SinkState.Failed)
++        if (state != SinkState.Open)
+             throw new InvalidOperationException("trace close already attempted");
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M10 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"budget failure first close remains legal"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void Close()
+     {
+-        if (state != SinkState.Open)
++        if (state != SinkState.Open && state != SinkState.Failed)
+             throw new InvalidOperationException("trace close already attempted");
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `budget failure first close remains legal`
+- Not masked earlier: successful records and legacy single-close paths close
+  from `Open`. The cumulative-budget helper is the first to call `Close()` from
+  `Failed`, after all of its budget and terminality observations have passed.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M11 — poison after `CanonicalEncodingException`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteInitial(InitialRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        WriteEncoded(CanonicalJson.EncodeInitial(record));
++        try
++        {
++            WriteEncoded(CanonicalJson.EncodeInitial(record));
++        }
++        catch (CanonicalEncodingException)
++        {
++            Fail();
++            throw;
++        }
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M11 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"encoding failure leaves sink reusable"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteInitial(InitialRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        try
+-        {
+-            WriteEncoded(CanonicalJson.EncodeInitial(record));
+-        }
+-        catch (CanonicalEncodingException)
+-        {
+-            Fail();
+-            throw;
+-        }
++        WriteEncoded(CanonicalJson.EncodeInitial(record));
+     }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `encoding failure leaves sink reusable`
+- Not masked earlier: the malformed Initial still raises the expected original
+  `CanonicalEncodingException` before output, so all type and snapshot checks
+  pass. The next valid record is the first observation of the illicit `Failed`
+  transition and escapes the exact `EnsureWritable` error above.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M12 — poison after `RecordTooLargeException`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteError(ErrorRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        WriteEncoded(CanonicalJson.EncodeError(record));
++        try
++        {
++            WriteEncoded(CanonicalJson.EncodeError(record));
++        }
++        catch (RecordTooLargeException)
++        {
++            Fail();
++            throw;
++        }
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M12 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"record-size failure leaves sink reusable"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteError(ErrorRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        try
+-        {
+-            WriteEncoded(CanonicalJson.EncodeError(record));
+-        }
+-        catch (RecordTooLargeException)
+-        {
+-            Fail();
+-            throw;
+-        }
++        WriteEncoded(CanonicalJson.EncodeError(record));
+     }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `record-size failure leaves sink reusable`
+- Not masked earlier: the one-byte-oversized Error still throws the expected
+  original `RecordTooLargeException` without bytes or flush. Only the subsequent
+  valid record observes the illicit poison state.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M13 — permit an underlying retry after a failed close
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
+-            state = SinkState.FailedClosed;
++            state = SinkState.Failed;
+             throw new TraceIoException("trace close failed", error);
+         }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M13 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'close ownership is single use'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"failed close retry rejected after stimulus clears: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
+-            state = SinkState.Failed;
++            state = SinkState.FailedClosed;
+             throw new TraceIoException("trace close failed", error);
+         }
+*** End Patch
+```
+
+- Expected registration: `close ownership is single use`
+- Exact fragment: `failed close retry rejected after stimulus clears: no exception`
+- Not masked earlier: all bounds helpers close failed sinks through a successful
+  underlying `Close`, which still reaches `FailedClosed`; the normal close path
+  still reaches `Closed`. The first injected underlying close exception occurs
+  only in `CloseIsSingleUse`. The test clears `CloseFailure` before retry, so
+  the mutant retry reaches `output.Close()` again and succeeds; the expected
+  `InvalidOperationException` assertion reports this exact no-exception
+  fragment.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 6: Run final precommit gates**
+
+```bash
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 7: Commit only the Task 3.2 sink slice**
 
 ```bash
 git add oracle/plugin/Core/NdjsonTraceSink.cs \
@@ -4365,6 +6227,40 @@ git add oracle/plugin/Core/NdjsonTraceSink.cs \
 git commit -m "feat: flush bounded oracle traces"
 ```
 
+- [ ] **Step 8: Rerun fresh postcommit behavioral, net35, subject, scope, hash, index, and clean-worktree gates**
+
+```bash
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+test "$(git show -s --format=%s HEAD)" = "feat: flush bounded oracle traces"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check HEAD^ HEAD
+```
 ### Track 4: Stage update authorization and settle the initial state
 
 #### Task 4.1: Add issued-authorized-consumed update and hook boundaries
