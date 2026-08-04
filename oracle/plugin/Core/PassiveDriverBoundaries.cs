@@ -247,3 +247,188 @@ internal interface IPassiveReporter
     void Failed(string code);
     void Diagnostic(string message);
 }
+internal interface IPassiveUpdateObservation
+{
+    bool TryGetState(out object stateReference);
+    bool VerifySavePath();
+    bool IsQuiescent(object stateReference);
+    CaptureRecord Capture(object stateReference);
+    double NowSeconds();
+    DateTime UtcNow();
+}
+
+internal sealed class PassiveUpdateBoundary
+{
+    private readonly PassiveDriver driver;
+
+    internal PassiveUpdateBoundary(PassiveDriver driver)
+    {
+        this.driver = driver
+            ?? throw new ArgumentNullException("driver");
+    }
+
+    internal UpdateDirective LastDirective { get; private set; }
+
+    internal void Observe(IPassiveUpdateObservation observation)
+    {
+        if (observation == null)
+            throw new ArgumentNullException("observation");
+        LastDirective = null;
+        if (!driver.UpdateObservationActive)
+            return;
+
+        object beginState;
+        bool beginUsable;
+        double nowSeconds;
+        try
+        {
+            beginUsable = observation.TryGetState(out beginState);
+            nowSeconds = observation.NowSeconds();
+        }
+        catch (CaptureException)
+        {
+            driver.TryFault("capture_failed");
+            return;
+        }
+        catch (Exception)
+        {
+            driver.TryFault("observer_exception");
+            return;
+        }
+
+        UpdateDirective directive;
+        try
+        {
+            directive = driver.BeginUpdate(
+                beginState, beginUsable, nowSeconds);
+            LastDirective = directive;
+        }
+        catch (CaptureException)
+        {
+            driver.TryFault("capture_failed");
+            return;
+        }
+        catch (Exception)
+        {
+            driver.TryFault("observer_exception");
+            return;
+        }
+        if (!directive.Active)
+            return;
+
+        bool savePathMatches;
+        try
+        {
+            savePathMatches = observation.VerifySavePath();
+        }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+            return;
+        }
+        catch (Exception)
+        {
+            SafeFail(directive, "observer_exception");
+            return;
+        }
+        if (!savePathMatches)
+        {
+            SafeFail(directive, "save_path_changed");
+            return;
+        }
+
+        object verifiedState;
+        bool verifiedUsable;
+        try
+        {
+            verifiedUsable =
+                observation.TryGetState(out verifiedState);
+        }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+            return;
+        }
+        catch (Exception)
+        {
+            SafeFail(directive, "observer_exception");
+            return;
+        }
+
+        bool authorized;
+        try
+        {
+            authorized = driver.AuthorizeUpdate(
+                directive,
+                verifiedState,
+                verifiedUsable,
+                savePathMatches);
+        }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+            return;
+        }
+        catch (Exception)
+        {
+            SafeFail(directive, "observer_exception");
+            return;
+        }
+        if (!authorized)
+            return;
+
+        GateSample sample;
+        try
+        {
+            if (!directive.InspectGate)
+            {
+                sample = GateSample.NotInspected();
+            }
+            else if (!observation.IsQuiescent(verifiedState))
+            {
+                sample = GateSample.NonQuiescent();
+            }
+            else
+            {
+                sample = GateSample.Captured(
+                    observation.Capture(verifiedState));
+            }
+        }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+            return;
+        }
+        catch (Exception)
+        {
+            SafeFail(directive, "observer_exception");
+            return;
+        }
+
+        try
+        {
+            driver.CompleteUpdate(
+                directive, sample, observation.UtcNow());
+        }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+        }
+        catch (Exception)
+        {
+            SafeFail(directive, "observer_exception");
+        }
+    }
+
+    private void SafeFail(UpdateDirective directive, string code)
+    {
+        try
+        {
+            driver.FailUpdate(directive, code);
+        }
+        catch (Exception)
+        {
+            driver.TryFault("observer_exception");
+        }
+    }
+}

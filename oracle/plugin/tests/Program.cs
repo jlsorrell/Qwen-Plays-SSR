@@ -14,12 +14,14 @@ private static int Main(string[] args)
         CaptureSignatureTests.Register(tests);
         TraceSinkTests.Register(tests);
         PassiveDriverBoundaryTests.Register(tests);
+        PassiveDriverInitialTests.Register(tests);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
             { "protocol", 4 },
             { "encoding", 5 },
             { "sink", 6 },
-            { "driver-boundary", 2 }
+            { "driver-boundary", 2 },
+            { "driver-initial", 8 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)
