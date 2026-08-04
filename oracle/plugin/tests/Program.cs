@@ -1,10 +1,36 @@
 using System;
+using System.Collections.Generic;
 
 internal static class Program
 {
-    private static int Main()
+private static int Main(string[] args)
+{
+    try
     {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        PassiveDriverBoundaryTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 },
+            { "driver-boundary", 2 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
         Console.WriteLine("SSR oracle unit harness ready");
         return 0;
     }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
 }

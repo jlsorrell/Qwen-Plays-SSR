@@ -12,6 +12,12 @@
 
 - The authoritative design is `docs/superpowers/specs/2026-07-31-oracle-passive-trace-capture-design.md`, especially sections 5-8 and 11-12.
 - Complete this plan offline. Do not deploy to, mutate, or launch the installed game.
+- Every `uv` invocation in this plan sets `UV_OFFLINE=1`. A cache miss is a
+  hard failure; it never authorizes dependency acquisition or network access.
+- Execute every multi-command gate in a fail-fast Bash process beginning with
+  `set -euo pipefail`, or issue each command separately and check its exit
+  status before continuing. A later successful command never masks an earlier
+  restore, build, test, or hash failure.
 - Preserve Mode-off behavior: read existing config bytes without `Config.Bind` or save, require only the original three compatibility methods, emit exactly `SSR oracle boot probe loaded`, and install no patches, sink, or save redirect.
 - The ignored Mode-off fixture must retain SHA-256 `cd0f6f26a4f49d8eec9ca9bbf8a91aacf35d03c3f09f4cf52d193bd5036f787d` and remain byte-identical across plugin startup/destruction.
 - Passive mode requires the exact seven-key configuration and fixed values from design section 6. Reject `replay` and every other mode.
@@ -42,7 +48,16 @@ f8bc81e00aa5f4372cbebe4951e5be7b21e54ba5f978e21c53ae2e8713ca3ca0  UnityEngine.dl
 b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3  UnityEngine.CoreModule.dll
 ```
 
-- Use strict TDD and a fresh reviewer gate for every task. The frozen task-base hashes are:
+- Use strict TDD and the selected `superpowers:subagent-driven-development`
+  workflow for every task. The implementer records RED and GREEN evidence,
+  makes exactly the task's named commit, and only then may the controller
+  generate an immutable `BASE..HEAD` review package. One fresh independent
+  task reviewer returns separate, explicit specification-compliance and
+  code-quality verdicts. Critical/Important findings are corrected in
+  follow-up fix commits and scoped re-reviews; no task commit is amended after
+  review. This post-commit sequence is normative anywhere older wording below
+  refers to reviews. The initial branch-base hashes, frozen before Task 1.1,
+  are:
 
 ```text
 8c02cafd15da09ccdc4c3a1ff5d2387baf00aee7543b5406fe8a3695dc40afb9  oracle/plugin/Plugin.cs
@@ -56,9 +71,10 @@ f048869e73157e88513e6338776411bb64bf4c0f74ec50d9cfc6d77b4870d96d  oracle/plugin/
 The coordinator's ten plugin tracks remain stable, but this document contains
 twenty-four executable tasks numbered `1.1` through `10.1`.  A coordinator
 instruction to execute plugin “Tasks 1-10” means execute every decimal task in
-each corresponding track, in numerical order.  Every decimal task has its own
-RED, GREEN, net35 gate when Core changes, commit, specification review, and
-code-quality review.  No decimal tasks may be batched into one commit.
+each corresponding track, in numerical order. Every decimal task has its own
+RED, GREEN, net35 gate when Core changes, exact commit, and post-commit task
+review with separate specification and code-quality verdicts. No decimal
+tasks may be batched into one commit.
 
 | File | Sole responsibility |
 | --- | --- |
@@ -96,23 +112,27 @@ driver-terminal=6 config=6 path=6 observation=5 boundary=5
 startup=7 reporter=4 assembly=4 plugin=6 total=82
 ```
 
-`TestRegistry.VerifyManifest` in Task 1.1 rejects a missing, duplicate, extra,
-or mis-cohorted registration before executing any selected test.  The final
-Python accounting task does not guess the protocol track's evolving item
-count: it records the literal post-protocol collection manifest and then uses
-a pytest accounting plugin to prove that every collected node is exactly one
-of pass, the frozen 120 XFAIL nodes, or the frozen six named XPASS nodes, with
-zero failures, errors, or skips.
+`TestRegistry.VerifyManifest` in Task 1.1 owns one frozen, ordered structural
+catalog of all 82 `(cohort, name)` registrations. Each cumulative cohort count
+selects that cohort's approved prefix; comparison then rejects a rename,
+mis-cohorting, reorder, missing, duplicate, or extra registration before
+executing any selected test. Unknown cohorts and negative or overfull counts
+are invalid. The final Python accounting task does not guess the protocol
+track's evolving item count: it records the literal collection counts,
+compares the complete frozen 120-node XFAIL identity manifest, checks all six
+named XPASS identities, and proves by exact arithmetic that every other
+collected node passed, with zero failures, errors, or skips.
 
 ### Exact 24-task ledger
 
-This ledger is normative.  The detailed track sections below supply the
+This ledger is normative. The detailed track sections below supply the
 complete source and test bodies; this table supplies the non-batchable
 execution boundary.  For every row, first add only the named tests and run the
 RED command until a named test fails for the stated missing behavior.  Then add
 only that row's product slice, run the GREEN command, run `git diff --check`,
-request specification and code-quality review, and make exactly the listed
-commit.  `core-gate` means the selected cohort followed by the net35 Core
+make exactly the listed commit, generate the immutable review package from the
+recorded task base to that commit, and require both reviewer verdicts before
+starting the next row. `core-gate` means the selected cohort followed by the net35 Core
 compile command from Task 1.2; `plugin-gate` means the selected cohort followed
 by the real net35 plugin build.  A later task may extend a file created earlier,
 but may not weaken or rename an earlier registration.
@@ -187,8 +207,9 @@ committed, and lets Task 10.1 compare the identities of all 120 XFAIL nodes
 rather than merely comparing their count:
 
 ```bash
+set -euo pipefail
 mkdir -p data/oracle/plugin-plan-evidence
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
   > data/oracle/plugin-plan-evidence/pre-plugin-pytest.txt
 sed -n 's/^XFAIL \([^ ]*\).*/\1/p' \
   data/oracle/plugin-plan-evidence/pre-plugin-pytest.txt | LC_ALL=C sort \
@@ -222,25 +243,125 @@ internal static class ProtocolTests
     private static void RegistryManifestIsExact()
     {
         TestRegistry registry = new TestRegistry();
-        registry.Add("sample", "one", delegate { });
+        registry.Add("protocol", "registry manifest is exact", delegate { });
         registry.VerifyManifest(
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 }
+            });
+        Check.Throws<InvalidOperationException>(
+            delegate
+            {
+                registry.Add(
+                    "protocol", "registry manifest is exact", delegate { });
+            },
+            "duplicate test identity");
+
+        TestRegistry renamed = new TestRegistry();
+        renamed.Add("protocol", "registry manifest was renamed", delegate { });
+        bool renameRejected = RejectsManifest(
+            renamed,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 }
+            });
+
+        TestRegistry swapped = new TestRegistry();
+        swapped.Add("encoding", "registry manifest is exact", delegate { });
+        swapped.Add("protocol", "golden fixture bytes", delegate { });
+        bool swapRejected = RejectsManifest(
+            swapped,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 },
+                { "encoding", 1 }
+            });
+
+        TestRegistry reordered = new TestRegistry();
+        reordered.Add("protocol", "closed error tables", delegate { });
+        reordered.Add("protocol", "registry manifest is exact", delegate { });
+        bool reorderRejected = RejectsManifest(
+            reordered,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 2 }
+            });
+
+        TestRegistry unknown = new TestRegistry();
+        unknown.Add("sample", "one", delegate { });
+        bool unknownRejected = RejectsManifest(
+            unknown,
             new Dictionary<string, int>(StringComparer.Ordinal)
             {
                 { "sample", 1 }
             });
-        Check.Throws<InvalidOperationException>(
-            delegate { registry.Add("sample", "one", delegate { }); },
-            "duplicate test identity");
-        Check.Throws<InvalidOperationException>(
-            delegate
+
+        bool negativeRejected = RejectsManifest(
+            registry,
+            new Dictionary<string, int>(StringComparer.Ordinal)
             {
-                registry.VerifyManifest(
-                    new Dictionary<string, int>(StringComparer.Ordinal)
-                    {
-                        { "sample", 2 }
-                    });
-            },
-            "manifest count mismatch");
+                { "protocol", -1 }
+            });
+        bool overfullRejected = RejectsManifest(
+            registry,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 5 }
+            });
+
+        bool missingRejected = RejectsManifest(
+            registry,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 2 }
+            });
+
+        TestRegistry extra = new TestRegistry();
+        extra.Add("protocol", "registry manifest is exact", delegate { });
+        extra.Add("encoding", "golden fixture bytes", delegate { });
+        bool extraRejected = RejectsManifest(
+            extra,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 }
+            });
+
+        TestRegistry slashPairs = new TestRegistry();
+        bool slashPairsDistinct = true;
+        try
+        {
+            slashPairs.Add("a/b", "c", delegate { });
+            slashPairs.Add("a", "b/c", delegate { });
+        }
+        catch (InvalidOperationException)
+        {
+            slashPairsDistinct = false;
+        }
+
+        Check.True(renameRejected, "same-count rename was accepted");
+        Check.True(swapRejected, "balanced cohort swap was accepted");
+        Check.True(reorderRejected, "registration reorder was accepted");
+        Check.True(unknownRejected, "unknown manifest cohort was accepted");
+        Check.True(negativeRejected, "negative manifest count was accepted");
+        Check.True(overfullRejected, "overfull manifest count was accepted");
+        Check.True(missingRejected, "missing registration was accepted");
+        Check.True(extraRejected, "extra registration was accepted");
+        Check.True(slashPairsDistinct, "structural identities were aliased");
+    }
+
+    private static bool RejectsManifest(
+        TestRegistry registry,
+        IDictionary<string, int> expected)
+    {
+        try
+        {
+            registry.VerifyManifest(expected);
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
     }
 }
 ```
@@ -379,6 +500,24 @@ internal sealed class HarnessOptions
 
 internal sealed class TestRegistry
 {
+    private sealed class TestIdentity
+    {
+        internal readonly string Cohort;
+        internal readonly string Name;
+
+        internal TestIdentity(string cohort, string name)
+        {
+            Cohort = cohort;
+            Name = name;
+        }
+
+        internal bool Matches(string cohort, string name)
+        {
+            return String.Equals(Cohort, cohort, StringComparison.Ordinal)
+                && String.Equals(Name, name, StringComparison.Ordinal);
+        }
+    }
+
     private sealed class TestCase
     {
         internal string Cohort;
@@ -386,9 +525,137 @@ internal sealed class TestRegistry
         internal Action Test;
     }
 
+    private static readonly TestIdentity[] ApprovedManifest =
+        new TestIdentity[]
+        {
+            new TestIdentity("protocol", "registry manifest is exact"),
+            new TestIdentity("protocol", "closed error tables"),
+            new TestIdentity("protocol", "record constructor boundaries"),
+            new TestIdentity("protocol", "capture value equality"),
+            new TestIdentity("encoding", "golden fixture bytes"),
+            new TestIdentity("encoding", "canonical string scalars"),
+            new TestIdentity("encoding", "surrogates are rejected"),
+            new TestIdentity("encoding", "capture signature is exact"),
+            new TestIdentity("encoding", "record line limit includes LF"),
+            new TestIdentity("sink", "factory arguments are exact"),
+            new TestIdentity("sink", "null factory output is typed"),
+            new TestIdentity("sink", "real collision is typed"),
+            new TestIdentity("sink", "records use LF and flush"),
+            new TestIdentity("sink", "bounds and write failures are terminal"),
+            new TestIdentity("sink", "close ownership is single use"),
+            new TestIdentity(
+                "driver-boundary",
+                "hook token is owner bound and single consume"),
+            new TestIdentity(
+                "driver-boundary",
+                "update directive authorizes rebases and consumes once"),
+            new TestIdentity("driver-initial", "prepare activate separation"),
+            new TestIdentity(
+                "driver-initial", "pre epoch neutral does not leak"),
+            new TestIdentity("driver-initial", "matching pair writes initial"),
+            new TestIdentity("driver-initial", "not inspected breaks pair"),
+            new TestIdentity("driver-initial", "nonquiescent breaks pair"),
+            new TestIdentity("driver-initial", "cardinal clears candidate"),
+            new TestIdentity(
+                "driver-initial", "replacement rebases same callback"),
+            new TestIdentity(
+                "driver-initial", "exact deadline and pre overrun"),
+            new TestIdentity("driver-input", "all cardinals correlate"),
+            new TestIdentity(
+                "driver-input", "filtered and zero poll open no attempt"),
+            new TestIdentity(
+                "driver-input", "duplicate mismatch and unknown fault"),
+            new TestIdentity(
+                "driver-input", "unscoped policy follows phase"),
+            new TestIdentity(
+                "driver-input", "accepted and refused direction outcomes"),
+            new TestIdentity(
+                "driver-input", "Undo acceptance and restore rules"),
+            new TestIdentity("driver-input", "restart depth and null fields"),
+            new TestIdentity(
+                "driver-input", "state replacement and ClearThrew"),
+            new TestIdentity(
+                "driver-terminal", "three steps End Close Complete order"),
+            new TestIdentity(
+                "driver-terminal", "error field policy is exact"),
+            new TestIdentity(
+                "driver-terminal", "sink failure uses trace io marker"),
+            new TestIdentity(
+                "driver-terminal", "completion reporter cannot rewrite trace"),
+            new TestIdentity("driver-terminal", "first fault wins race"),
+            new TestIdentity(
+                "driver-terminal", "Dispose and late callbacks are final"),
+            new TestIdentity("config", "off grammar is exact and read only"),
+            new TestIdentity(
+                "config", "off malformed inputs are rejected"),
+            new TestIdentity("config", "unsupported modes are typed"),
+            new TestIdentity("config", "passive values are canonical"),
+            new TestIdentity("config", "passive failures are typed"),
+            new TestIdentity("config", "configuration reads are typed"),
+            new TestIdentity("path", "containment uses component boundary"),
+            new TestIdentity("path", "existing paths resolve canonically"),
+            new TestIdentity("path", "missing suffix is preserved"),
+            new TestIdentity("path", "lexical paths are strict"),
+            new TestIdentity(
+                "path", "symlink and nondirectory are rejected"),
+            new TestIdentity("path", "two scan drift is rejected"),
+            new TestIdentity(
+                "observation", "all thirteen gates are required"),
+            new TestIdentity(
+                "observation", "capture maps all twelve fields"),
+            new TestIdentity(
+                "observation", "three nullable strings normalize"),
+            new TestIdentity("observation", "required values reject null"),
+            new TestIdentity(
+                "observation", "numeric ranges reject negative"),
+            new TestIdentity(
+                "boundary", "postfix contains observer failures"),
+            new TestIdentity(
+                "boundary", "game exception claims before cleanup"),
+            new TestIdentity(
+                "boundary", "successful postfix makes finalizer cleanup inert"),
+            new TestIdentity(
+                "boundary", "cleanup failure is contained and reported"),
+            new TestIdentity(
+                "boundary", "update finalizer preserves original reference"),
+            new TestIdentity(
+                "startup", "off invokes only legacy validation then boot"),
+            new TestIdentity(
+                "startup", "off preserves legacy failure identity"),
+            new TestIdentity(
+                "startup",
+                "run flush precedes patches and activation precedes boot"),
+            new TestIdentity(
+                "startup", "typed pre-driver failures stay marker only"),
+            new TestIdentity(
+                "startup", "prepare failure is not reported twice"),
+            new TestIdentity(
+                "startup", "owned startup failures use driver arbitration"),
+            new TestIdentity(
+                "startup", "teardown is ordered and idempotent"),
+            new TestIdentity("reporter", "ready markers are exact"),
+            new TestIdentity("reporter", "completion marker is exact"),
+            new TestIdentity("reporter", "failure markers are closed"),
+            new TestIdentity("reporter", "diagnostic is nonterminal"),
+            new TestIdentity("assembly", "pinned Assembly-CSharp hash"),
+            new TestIdentity("assembly", "exact ten observed methods"),
+            new TestIdentity("assembly", "exact required game fields"),
+            new TestIdentity(
+                "assembly", "metadata matcher rejects near misses"),
+            new TestIdentity(
+                "plugin", "game adapter call surface is passive"),
+            new TestIdentity(
+                "plugin", "controller crosses authorized update boundary"),
+            new TestIdentity(
+                "plugin", "eight Harmony patch contracts are exact"),
+            new TestIdentity(
+                "plugin", "PE CLR and direct references are pinned"),
+            new TestIdentity("plugin", "BepInPlugin identity is exact"),
+            new TestIdentity(
+                "plugin", "typed modes and owner teardown are closed")
+        };
+
     private readonly List<TestCase> tests = new List<TestCase>();
-    private readonly HashSet<string> identities =
-        new HashSet<string>(StringComparer.Ordinal);
 
     internal void Add(string cohort, string name, Action test)
     {
@@ -398,9 +665,17 @@ internal sealed class TestRegistry
             throw new ArgumentException("name is required", "name");
         if (test == null)
             throw new ArgumentNullException("test");
-        string identity = cohort + "/" + name;
-        if (!identities.Add(identity))
-            throw new InvalidOperationException("duplicate test: " + identity);
+        for (int index = 0; index < tests.Count; index++)
+        {
+            if (String.Equals(
+                    tests[index].Cohort, cohort, StringComparison.Ordinal)
+                && String.Equals(
+                    tests[index].Name, name, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "duplicate test cohort '" + cohort + "', name '" + name + "'");
+            }
+        }
         tests.Add(new TestCase { Cohort = cohort, Name = name, Test = test });
     }
 
@@ -408,29 +683,74 @@ internal sealed class TestRegistry
     {
         if (expected == null)
             throw new ArgumentNullException("expected");
-        Dictionary<string, int> actual =
+        Dictionary<string, int> approvedCounts =
             new Dictionary<string, int>(StringComparer.Ordinal);
-        for (int index = 0; index < tests.Count; index++)
+        for (int index = 0; index < ApprovedManifest.Length; index++)
         {
             int count;
-            actual.TryGetValue(tests[index].Cohort, out count);
-            actual[tests[index].Cohort] = count + 1;
+            approvedCounts.TryGetValue(ApprovedManifest[index].Cohort, out count);
+            approvedCounts[ApprovedManifest[index].Cohort] = count + 1;
         }
+
+        Dictionary<string, int> requestedCounts =
+            new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (KeyValuePair<string, int> pair in expected)
         {
-            int count;
-            if (!actual.TryGetValue(pair.Key, out count) || count != pair.Value)
+            int approvedCount;
+            if (pair.Key == null
+                || !approvedCounts.TryGetValue(pair.Key, out approvedCount))
             {
                 throw new InvalidOperationException(
-                    "test manifest mismatch for " + pair.Key + ": expected "
-                    + pair.Value.ToString() + ", actual " + count.ToString());
+                    "unknown test cohort: " + pair.Key);
+            }
+            if (pair.Value < 0)
+                throw new InvalidOperationException(
+                    "negative test count for " + pair.Key);
+            if (pair.Value > approvedCount)
+                throw new InvalidOperationException(
+                    "test count exceeds approved manifest for " + pair.Key);
+            if (requestedCounts.ContainsKey(pair.Key))
+                throw new InvalidOperationException(
+                    "duplicate manifest cohort: " + pair.Key);
+            requestedCounts.Add(pair.Key, pair.Value);
+        }
+
+        List<TestIdentity> requested = new List<TestIdentity>();
+        Dictionary<string, int> visitedCounts =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int index = 0; index < ApprovedManifest.Length; index++)
+        {
+            TestIdentity identity = ApprovedManifest[index];
+            int visited;
+            visitedCounts.TryGetValue(identity.Cohort, out visited);
+            visitedCounts[identity.Cohort] = visited + 1;
+            int requestedCount;
+            if (requestedCounts.TryGetValue(identity.Cohort, out requestedCount)
+                && visited < requestedCount)
+            {
+                requested.Add(identity);
             }
         }
-        foreach (KeyValuePair<string, int> pair in actual)
+
+        if (tests.Count != requested.Count)
         {
-            if (!expected.ContainsKey(pair.Key))
+            throw new InvalidOperationException(
+                "test manifest size mismatch: expected "
+                + requested.Count.ToString() + ", actual "
+                + tests.Count.ToString());
+        }
+        for (int index = 0; index < requested.Count; index++)
+        {
+            if (!requested[index].Matches(
+                    tests[index].Cohort, tests[index].Name))
+            {
                 throw new InvalidOperationException(
-                    "unexpected test cohort: " + pair.Key);
+                    "test manifest mismatch at index " + index.ToString()
+                    + ": expected cohort '" + requested[index].Cohort
+                    + "', name '" + requested[index].Name
+                    + "'; actual cohort '" + tests[index].Cohort
+                    + "', name '" + tests[index].Name + "'");
+            }
         }
     }
 
@@ -454,7 +774,8 @@ internal sealed class TestRegistry
             catch (Exception error)
             {
                 Console.Error.WriteLine(
-                    test.Cohort + "/" + test.Name + ": " + error.ToString());
+                    "cohort '" + test.Cohort + "', test '" + test.Name
+                    + "': " + error.ToString());
                 return 1;
             }
         }
@@ -539,11 +860,11 @@ internal static class Check
 }
 ```
 
-- [ ] **Step 5: Run GREEN and obtain both fresh reviews**
+- [ ] **Step 5: Run GREEN and record immutable review evidence**
 
 Run `--cohort protocol`, require the one temporary test and exact success
-stdout, run the diff check, and obtain both reviews before adding a product
-DTO:
+stdout, and run the diff check. Record the RED/GREEN output in the task report
+for the post-commit reviewer:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -560,13 +881,33 @@ git add oracle/plugin/tests/TestSupport.cs oracle/plugin/tests/ProtocolTests.cs 
 git commit -m "test: install oracle unit harness"
 ```
 
+After the commit, the controller generates the Task 1.1 `BASE..HEAD` review
+package and requires explicit specification-compliance and code-quality
+approval before Task 1.2.
+
 #### Task 1.2: Define and validate the closed protocol model
 
 - [ ] **Step 1: Freeze the current sources and write the three remaining RED protocol tests**
 
-Run the four `shasum` checks from Global Constraints. Add this exact registration
-and test to `ProtocolTests.cs`, then register it from `Program.Main` before the
-success line:
+Before changing any Task 1.2 source, verify the reviewed post-Task-1.1 source
+state with these task-aware pins. `Plugin.cs`, both project files, and their
+pins are unchanged from the initial branch base; `Program.cs` intentionally
+uses the reviewed Task 1.1 hash rather than its pre-Task-1.1 hash:
+
+```bash
+test "$(shasum -a 256 oracle/plugin/Plugin.cs | awk '{print $1}')" = \
+  "8c02cafd15da09ccdc4c3a1ff5d2387baf00aee7543b5406fe8a3695dc40afb9"
+test "$(shasum -a 256 oracle/plugin/SsrOracle.Plugin.csproj | awk '{print $1}')" = \
+  "566779ae0f171daaaba34477e8e7f878cddd11d1218f79acfcd9d0fc8e63e233"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "8e97b9b7e0f6fee6b7d7198d3465bcaba05f335a09d5e78638ac8830061784d0"
+test "$(shasum -a 256 oracle/plugin/tests/SsrOracle.UnitTests.csproj | awk '{print $1}')" = \
+  "f048869e73157e88513e6338776411bb64bf4c0f74ec50d9cfc6d77b4870d96d"
+```
+
+All four commands must exit zero. Add this exact registration and test to
+`ProtocolTests.cs`, then register it from `Program.Main` before the success
+line:
 
 ```csharp
 using System;
@@ -576,10 +917,10 @@ internal static class ProtocolTests
 {
     internal static void Register(TestRegistry tests)
     {
+        tests.Add("protocol", "registry manifest is exact", RegistryManifestIsExact);
         tests.Add("protocol", "closed error tables", ClosedErrorTables);
         tests.Add("protocol", "record constructor boundaries", RecordBoundaries);
         tests.Add("protocol", "capture value equality", CaptureValueEquality);
-        tests.Add("protocol", "registry manifest is exact", RegistryManifestIsExact);
     }
 
     private static void ClosedErrorTables()
@@ -700,23 +1041,125 @@ internal static class ProtocolTests
     private static void RegistryManifestIsExact()
     {
         TestRegistry registry = new TestRegistry();
-        registry.Add("sample", "one", delegate { });
-        registry.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            { "sample", 1 }
-        });
-        Check.Throws<InvalidOperationException>(
-            delegate { registry.Add("sample", "one", delegate { }); },
-            "duplicate test identity");
+        registry.Add("protocol", "registry manifest is exact", delegate { });
+        registry.VerifyManifest(
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 }
+            });
         Check.Throws<InvalidOperationException>(
             delegate
             {
-                registry.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
-                {
-                    { "sample", 2 }
-                });
+                registry.Add(
+                    "protocol", "registry manifest is exact", delegate { });
             },
-            "manifest count mismatch");
+            "duplicate test identity");
+
+        TestRegistry renamed = new TestRegistry();
+        renamed.Add("protocol", "registry manifest was renamed", delegate { });
+        bool renameRejected = RejectsManifest(
+            renamed,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 }
+            });
+
+        TestRegistry swapped = new TestRegistry();
+        swapped.Add("encoding", "registry manifest is exact", delegate { });
+        swapped.Add("protocol", "golden fixture bytes", delegate { });
+        bool swapRejected = RejectsManifest(
+            swapped,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 },
+                { "encoding", 1 }
+            });
+
+        TestRegistry reordered = new TestRegistry();
+        reordered.Add("protocol", "closed error tables", delegate { });
+        reordered.Add("protocol", "registry manifest is exact", delegate { });
+        bool reorderRejected = RejectsManifest(
+            reordered,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 2 }
+            });
+
+        TestRegistry unknown = new TestRegistry();
+        unknown.Add("sample", "one", delegate { });
+        bool unknownRejected = RejectsManifest(
+            unknown,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "sample", 1 }
+            });
+
+        bool negativeRejected = RejectsManifest(
+            registry,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", -1 }
+            });
+        bool overfullRejected = RejectsManifest(
+            registry,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 5 }
+            });
+
+        bool missingRejected = RejectsManifest(
+            registry,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 2 }
+            });
+
+        TestRegistry extra = new TestRegistry();
+        extra.Add("protocol", "registry manifest is exact", delegate { });
+        extra.Add("encoding", "golden fixture bytes", delegate { });
+        bool extraRejected = RejectsManifest(
+            extra,
+            new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                { "protocol", 1 }
+            });
+
+        TestRegistry slashPairs = new TestRegistry();
+        bool slashPairsDistinct = true;
+        try
+        {
+            slashPairs.Add("a/b", "c", delegate { });
+            slashPairs.Add("a", "b/c", delegate { });
+        }
+        catch (InvalidOperationException)
+        {
+            slashPairsDistinct = false;
+        }
+
+        Check.True(renameRejected, "same-count rename was accepted");
+        Check.True(swapRejected, "balanced cohort swap was accepted");
+        Check.True(reorderRejected, "registration reorder was accepted");
+        Check.True(unknownRejected, "unknown manifest cohort was accepted");
+        Check.True(negativeRejected, "negative manifest count was accepted");
+        Check.True(overfullRejected, "overfull manifest count was accepted");
+        Check.True(missingRejected, "missing registration was accepted");
+        Check.True(extraRejected, "extra registration was accepted");
+        Check.True(slashPairsDistinct, "structural identities were aliased");
+    }
+
+    private static bool RejectsManifest(
+        TestRegistry registry,
+        IDictionary<string, int> expected)
+    {
+        try
+        {
+            registry.VerifyManifest(expected);
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
     }
 }
 ```
@@ -770,8 +1213,11 @@ fi
   oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore
 ```
 
-Require nonzero exit and a compiler diagnostic naming `OracleError` or
-`OracleErrors`. A missing assets file, fixture, or SDK is not the intended RED.
+Require nonzero exit and a compiler diagnostic naming `CaptureRecord`,
+`OracleError`, or `OracleErrors`. The complete frozen protocol tests resolve
+the missing `CaptureRecord` return type before the error-table symbols, so
+`CaptureRecord` is an equally valid missing-product-symbol RED. A missing
+assets file, fixture, or SDK is not the intended RED.
 
 - [ ] **Step 3: Link the product sources and add the net35 compile-only project**
 
@@ -1264,7 +1710,7 @@ internal static class OracleMarkerErrors
 }
 ```
 
-- [ ] **Step 5: Run GREEN, both target-framework gates, and both fresh reviews**
+- [ ] **Step 5: Run GREEN and both target-framework gates**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
@@ -1279,9 +1725,8 @@ internal static class OracleMarkerErrors
 git diff --check
 ```
 
-Require the four-test protocol manifest and both builds to pass, obtain fresh
-specification and code-quality approval, and rerun the gates after resolving
-every finding.
+Require the four-test protocol manifest and both builds to pass, and retain
+their pristine output in the task report for post-commit review.
 
 - [ ] **Step 6: Commit only the Task 1.2 protocol-model slice**
 
@@ -1404,6 +1849,40 @@ internal static class EncodingTests
         Check.Bytes(error[2], actual[2], "error step line");
         Check.Bytes(error[3], CanonicalJson.EncodeError(ProtocolSamples.Error),
             "error terminal line");
+
+        Check.Bytes(
+            new UTF8Encoding(false, true).GetBytes(
+                "{\"kind\":\"error\",\"schema_version\":1,\"run_id\":"
+                + "\"0123456789abcdef0123456789abcdef\",\"input_index\":null,"
+                + "\"input\":null,\"code\":\"capture_failed\",\"message\":"
+                + "\"game-state capture failed\",\"settle_frames\":0,"
+                + "\"last_capture\":null}"),
+            CanonicalJson.EncodeError(new ErrorRecord(
+                ProtocolSamples.RunId, null, null, "capture_failed", 0, null)),
+            "fully-null error bytes");
+        Check.Bytes(
+            new UTF8Encoding(false, true).GetBytes(
+                "{\"kind\":\"error\",\"schema_version\":1,\"run_id\":"
+                + "\"0123456789abcdef0123456789abcdef\",\"input_index\":2,"
+                + "\"input\":null,\"code\":\"unexpected_input\",\"message\":"
+                + "\"native input was outside the passive vocabulary\","
+                + "\"settle_frames\":0,\"last_capture\":null}"),
+            CanonicalJson.EncodeError(new ErrorRecord(
+                ProtocolSamples.RunId, 2, null, "unexpected_input", 0, null)),
+            "indexed null-input error bytes");
+
+        byte[] south = CanonicalJson.EncodeStep(new StepRecord(
+            ProtocolSamples.RunId, 0, OracleInput.South,
+            true, true, 2, false, ProtocolSamples.MovedCapture));
+        Check.True(ContainsBytes(south,
+            new UTF8Encoding(false, true).GetBytes("\"input\":\"South\"")),
+            "South exact wire spelling");
+        byte[] east = CanonicalJson.EncodeError(new ErrorRecord(
+            ProtocolSamples.RunId, 2, OracleInput.East,
+            "settle_timeout", 2, ProtocolSamples.MovedCapture));
+        Check.True(ContainsBytes(east,
+            new UTF8Encoding(false, true).GetBytes("\"input\":\"East\"")),
+            "East exact wire spelling");
     }
 
     private static void CanonicalStrings()
@@ -1415,7 +1894,8 @@ internal static class EncodingTests
             { "\\", "\"raw_save\":\"\\\\\"" },
             { "\b\f\n\r\t", "\"raw_save\":\"\\b\\f\\n\\r\\t\"" },
             { "\u0000\u0001\u001f", "\"raw_save\":\"\\u0000\\u0001\\u001f\"" },
-            { "é/雪", "\"raw_save\":\"é/雪\"" }
+            { "é/雪", "\"raw_save\":\"é/雪\"" },
+            { "\ud83d\ude00", "\"raw_save\":\"😀\"" }
         };
         for (int index = 0; index < cases.GetLength(0); index++)
         {
@@ -1425,6 +1905,11 @@ internal static class EncodingTests
             Check.True(encoded.IndexOf(cases[index, 1], StringComparison.Ordinal) >= 0,
                 "canonical string " + index);
         }
+        byte[] supplementary = CanonicalJson.EncodeInitial(new InitialRecord(
+            ProtocolSamples.RunId, ProtocolSamples.Capture("\ud83d\ude00")));
+        Check.True(ContainsBytes(supplementary,
+            new byte[] { 0xf0, 0x9f, 0x98, 0x80 }),
+            "U+1F600 exact UTF-8 bytes");
         CultureInfo prior = CultureInfo.CurrentCulture;
         try
         {
@@ -1437,6 +1922,22 @@ internal static class EncodingTests
         {
             CultureInfo.CurrentCulture = prior;
         }
+    }
+
+    private static bool ContainsBytes(byte[] haystack, byte[] needle)
+    {
+        for (int start = 0; start <= haystack.Length - needle.Length; start++)
+        {
+            int offset = 0;
+            while (offset < needle.Length
+                && haystack[start + offset] == needle[offset])
+            {
+                offset++;
+            }
+            if (offset == needle.Length)
+                return true;
+        }
+        return false;
     }
 
     private static void RejectsSurrogates()
@@ -1829,12 +2330,221 @@ internal static class CanonicalJson
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Prove the hardened assertions with one controlled mutant at a time**
 
-Run `encoding=3`, then the net35 Core gate. Require exact fixture/scalar/
-surrogate behavior, run the diff check, and obtain both reviews:
+First require that `CanonicalJson.cs` is byte-for-byte the exact implementation
+from Step 3:
 
 ```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the supplementary-pair mutant with `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            return 2;
++            throw new CanonicalEncodingException(
++                "paired UTF-16 surrogate");
+*** End Patch
+```
+
+Run exactly and require the named existing registration to fail:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "supplementary-pair mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'canonical string scalars'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, then require the planned hash:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            throw new CanonicalEncodingException(
+-                "paired UTF-16 surrogate");
++            return 2;
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the nullable-error mutant with `apply_patch`; it changes only the branch
+that must retain a non-null index when `input` is null:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            if (record.InputIndex.HasValue)
++            if (record.Input.HasValue)
+                 WriteInt(output, record.InputIndex.Value);
+*** End Patch
+```
+
+Run exactly and require the independently hand-written error bytes in the
+named existing registration to fail:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "nullable-error mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'golden fixture bytes'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, then require the planned hash:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            if (record.Input.HasValue)
++            if (record.InputIndex.HasValue)
+                 WriteInt(output, record.InputIndex.Value);
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the South-only wire-spelling mutant with `apply_patch`; the pre-existing
+West, North, and Undo fixtures remain unchanged, so only the new South
+assertion can catch it:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            WriteString(output, record.Input.ToString());
++            WriteString(output, record.Input == OracleInput.South
++                ? "south" : record.Input.ToString());
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "South wire-spelling mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'golden fixture bytes'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, then require the planned hash:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-            WriteString(output, record.Input == OracleInput.South
+-                ? "south" : record.Input.ToString());
++            WriteString(output, record.Input.ToString());
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Apply the East-only wire-spelling mutant with `apply_patch`; the pre-existing
+North error fixture remains unchanged, so only the new East assertion can
+catch it:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-                WriteString(output, record.Input.Value.ToString());
++                WriteString(output, record.Input.Value == OracleInput.East
++                    ? "east" : record.Input.Value.ToString());
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "East wire-spelling mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'golden fixture bytes'"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`, require the planned hash once
+more, and confirm that no mutant was staged:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-                WriteString(output, record.Input.Value == OracleInput.East
+-                    ? "east" : record.Input.Value.ToString());
++                WriteString(output, record.Input.Value.ToString());
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+- [ ] **Step 5: Run final GREEN and the net35 gate**
+
+Run `encoding=3`, then the net35 Core gate. Require exact fixture/scalar/
+surrogate behavior, run the diff check, and retain the output for post-commit
+review:
+
+```bash
+set -euo pipefail
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
   -c Release --no-restore -- --cohort encoding
@@ -1844,7 +2554,7 @@ surrogate behavior, run the diff check, and obtain both reviews:
 git diff --check
 ```
 
-- [ ] **Step 5: Commit only the Task 2.1 encoder slice**
+- [ ] **Step 6: Commit only the Task 2.1 encoder slice**
 
 ```bash
 git add oracle/plugin/Core/CanonicalJson.cs \
@@ -1857,8 +2567,11 @@ git commit -m "feat: encode canonical oracle json"
 - [ ] **Step 1: Add the final two RED registrations and boundary tests**
 
 Create `CaptureSignatureTests.cs` exactly as follows and register it after
-`EncodingTests`.  This is the complete two-test increment; it also proves that
-strict surrogate handling applies to the signature path.
+`EncodingTests`. This complete C# 7.3 two-test increment retains the existing
+registration identities and ordering, pins three externally calculated
+digests, proves that every capture field affects the signature, exercises all
+reachable unrestricted-string surrogate paths, and derives the line limit
+directly without a search loop.
 
 ```csharp
 using System;
@@ -1885,34 +2598,137 @@ internal static class CaptureSignatureTests
         return bytes;
     }
 
+    private static bool SameSignature(CaptureRecord left, CaptureRecord right)
+    {
+        return Convert.ToBase64String(CaptureSignature.Compute(left)) ==
+            Convert.ToBase64String(CaptureSignature.Compute(right));
+    }
+
     private static void ExactSignature()
     {
+        CaptureRecord left = new CaptureRecord(
+            "a", "12", "c", false, false, false, false, "", "", 0, 0, 0);
+        CaptureRecord right = new CaptureRecord(
+            "a1", "2", "c", false, false, false, false, "", "", 0, 0, 0);
+        Check.False(
+            SameSignature(left, right),
+            "length prefixes prevent concatenation collision");
+
+        CaptureRecord vectorB = new CaptureRecord(
+            "r2", "42", "l2", false, true, true, false, "lost2", "display2",
+            1, 2, 3);
+        CaptureRecord[] variants = new CaptureRecord[]
+        {
+            new CaptureRecord(
+                "r3", "42", "l2", false, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "43", "l2", false, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l3", false, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", true, true, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, false, true, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, false, false,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, true,
+                "lost2", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost3", "display2", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display3", 1, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display2", 4, 2, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display2", 1, 5, 3),
+            new CaptureRecord(
+                "r2", "42", "l2", false, true, true, false,
+                "lost2", "display2", 1, 2, 6)
+        };
+        string[] fieldMessages = new string[]
+        {
+            "signature binds raw_save",
+            "signature binds state_identity",
+            "signature binds level",
+            "signature binds overworld",
+            "signature binds won",
+            "signature binds returning",
+            "signature binds have_ever_cooked_all",
+            "signature binds lost_reason",
+            "signature binds display_name",
+            "signature binds sausages_cooked",
+            "signature binds movement_count",
+            "signature binds pushes_to_try"
+        };
+        Check.Equal(12, variants.Length, "one variant per capture field");
+        Check.Equal(12, fieldMessages.Length, "one message per capture field");
+        for (int index = 0; index < variants.Length; index++)
+        {
+            Check.False(
+                SameSignature(vectorB, variants[index]),
+                fieldMessages[index]);
+        }
+
         Check.Bytes(
             Hex("c870e028a5a526efc0e8af5f78bcea1ff89198b29b16a875715c65f78649c6b7"),
             CaptureSignature.Compute(ProtocolSamples.InitialCapture),
             "fixed length-prefixed signature");
-        CaptureRecord multibyte = new CaptureRecord(
+
+        CaptureRecord vectorA = new CaptureRecord(
             "é/雪", "-2147483648", "x", true, false, true, false, "", "z",
             Int32.MaxValue, 0, 0);
-        Check.False(
-            Convert.ToBase64String(CaptureSignature.Compute(multibyte)) ==
-            Convert.ToBase64String(
-                CaptureSignature.Compute(ProtocolSamples.InitialCapture)),
-            "all fields affect signature");
-        CaptureRecord left = new CaptureRecord(
-            "ab", "1", "c", false, false, false, false, "", "", 0, 0, 0);
-        CaptureRecord right = new CaptureRecord(
-            "a", "1", "bc", false, false, false, false, "", "", 0, 0, 0);
-        Check.False(
-            Convert.ToBase64String(CaptureSignature.Compute(left)) ==
-            Convert.ToBase64String(CaptureSignature.Compute(right)),
-            "length prefixes prevent concatenation collision");
+        Check.Bytes(
+            Hex("6e924d4765c53622d9f734126cdf960fd525cc8a491068fe606606fb0833eac6"),
+            CaptureSignature.Compute(vectorA),
+            "fixed signature vector A");
+        Check.Bytes(
+            Hex("2ad1bf134d02a71476f3b7c220d817700079c10051607ab2796a2126406dde8d"),
+            CaptureSignature.Compute(vectorB),
+            "fixed signature vector B");
+
         Check.Throws<CanonicalEncodingException>(
             delegate
             {
-                CaptureSignature.Compute(ProtocolSamples.Capture("\ud800"));
+                CaptureSignature.Compute(new CaptureRecord(
+                    "\ud800", "7", "level", false, false, false, false,
+                    "lost", "display", 4, 5, 6));
             },
-            "signature rejects an unpaired surrogate");
+            "signature rejects raw_save unpaired surrogate");
+        Check.Throws<CanonicalEncodingException>(
+            delegate
+            {
+                CaptureSignature.Compute(new CaptureRecord(
+                    "raw", "7", "\ud800", false, false, false, false,
+                    "lost", "display", 4, 5, 6));
+            },
+            "signature rejects level unpaired surrogate");
+        Check.Throws<CanonicalEncodingException>(
+            delegate
+            {
+                CaptureSignature.Compute(new CaptureRecord(
+                    "raw", "7", "level", false, false, false, false,
+                    "\ud800", "display", 4, 5, 6));
+            },
+            "signature rejects lost_reason unpaired surrogate");
+        Check.Throws<CanonicalEncodingException>(
+            delegate
+            {
+                CaptureSignature.Compute(new CaptureRecord(
+                    "raw", "7", "level", false, false, false, false,
+                    "lost", "\ud800", 4, 5, 6));
+            },
+            "signature rejects display_name unpaired surrogate");
     }
 
     private static ErrorRecord ErrorWithRawSaveLength(int length)
@@ -1928,34 +2744,32 @@ internal static class CaptureSignatureTests
 
     private static void ExactLineLimit()
     {
-        int low = 0;
-        int high = 16 * 1024 * 1024;
-        int accepted = -1;
-        while (low <= high)
+        byte[] zeroLength = CanonicalJson.EncodeError(
+            ErrorWithRawSaveLength(0));
+        Check.Equal(421, zeroLength.Length, "zero-length boundary record bytes");
+
+        const int AcceptedRawSaveLength = 16776794;
+        byte[] exact;
+        try
         {
-            int middle = low + ((high - low) / 2);
-            try
-            {
-                CanonicalJson.EncodeError(ErrorWithRawSaveLength(middle));
-                accepted = middle;
-                low = middle + 1;
-            }
-            catch (RecordTooLargeException)
-            {
-                high = middle - 1;
-            }
+            exact = CanonicalJson.EncodeError(
+                ErrorWithRawSaveLength(AcceptedRawSaveLength));
         }
-        byte[] exact = CanonicalJson.EncodeError(
-            ErrorWithRawSaveLength(accepted));
+        catch (RecordTooLargeException error)
+        {
+            throw new InvalidOperationException(
+                "exact record boundary is accepted", error);
+        }
+        Check.Equal(16777215, exact.Length, "exact JSON length before LF");
         Check.Equal(
-            16 * 1024 * 1024,
+            16777216,
             exact.Length + 1,
             "record boundary includes LF");
         Check.Throws<RecordTooLargeException>(
             delegate
             {
                 CanonicalJson.EncodeError(
-                    ErrorWithRawSaveLength(accepted + 1));
+                    ErrorWithRawSaveLength(AcceptedRawSaveLength + 1));
             },
             "one byte beyond record boundary");
     }
@@ -2034,22 +2848,364 @@ internal static class CaptureSignature
 }
 ```
 
-- [ ] **Step 4: Run both framework gates and obtain both fresh reviews**
+- [ ] **Step 4: Prove the hardened assertions with six controlled mutants**
+
+Apply every mutant separately with `apply_patch`, run only the encoding cohort
+with `--no-restore`, require nonzero plus the exact test identity and intended
+assertion/error text, and immediately apply the exact inverse patch. Never
+stage a mutant. After each inverse, the fail-fast pristine gate pins both
+production hashes and requires an empty index.
+
+Before applying the first mutant, require the reviewed production hashes and
+an empty index in one fail-fast gate:
 
 ```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Delete the four-byte prefix feed:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-        hash.TransformBlock(prefix, 0, prefix.Length, prefix, 0);
+         if (value.Length != 0)
+             hash.TransformBlock(value, 0, value.Length, value, 0);
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort encoding
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "length-prefix mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"length prefixes prevent concatenation collision"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
++        hash.TransformBlock(prefix, 0, prefix.Length, prefix, 0);
+         if (value.Length != 0)
+             hash.TransformBlock(value, 0, value.Length, value, 0);
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Delete the `DisplayName` feed:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
+             Feed(hash, Integer(capture.SausagesCooked));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "display_name omission mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"signature binds display_name"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
++            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
+             Feed(hash, Integer(capture.SausagesCooked));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Swap the `Overworld` and `Returning` feeds. Vector A intentionally remains
+unchanged because both values are `true`; vector B must fail its fixed digest:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, Boolean(capture.Overworld));
++            Feed(hash, Boolean(capture.Returning));
+             Feed(hash, Boolean(capture.Won));
+-            Feed(hash, Boolean(capture.Returning));
++            Feed(hash, Boolean(capture.Overworld));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "boolean-position swap mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"fixed signature vector B"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, Boolean(capture.Returning));
++            Feed(hash, Boolean(capture.Overworld));
+             Feed(hash, Boolean(capture.Won));
+-            Feed(hash, Boolean(capture.Overworld));
++            Feed(hash, Boolean(capture.Returning));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Replace strict `DisplayName` encoding with permissive framework UTF-8:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
++            Feed(hash, Encoding.UTF8.GetBytes(capture.DisplayName));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "display_name permissive-UTF-8 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'capture signature is exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"signature rejects display_name unpaired surrogate: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureSignature.cs
+@@
+-            Feed(hash, Encoding.UTF8.GetBytes(capture.DisplayName));
++            Feed(hash, CanonicalJson.StrictUtf8(capture.DisplayName));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Make the canonical line bound ignore the final LF:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
++        if ((long)encoded.Length > 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "LF-omission bound mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'record line limit includes LF'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"one byte beyond record boundary"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length > 16L * 1024L * 1024L)
++        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+Make the canonical line bound reject equality:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
++        if ((long)encoded.Length + 1L >= 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding 2>&1)"; then
+  printf '%s\n' "inclusive bound mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'encoding', test 'record line limit includes LF'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"exact record boundary is accepted"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CanonicalJson.cs
+@@
+-        if ((long)encoded.Length + 1L >= 16L * 1024L * 1024L)
++        if ((long)encoded.Length + 1L > 16L * 1024L * 1024L)
+             throw new RecordTooLargeException();
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureSignature.cs | awk '{print $1}')" = \
+  "335c500506354defba8331eddf1492568797c97170ee1754d319fcf97e9a9d54"
+test "$(shasum -a 256 oracle/plugin/Core/CanonicalJson.cs | awk '{print $1}')" = \
+  "7e6e50f22aae26bad26f26f6fd248d32f08e116bf2598dc572eff2000151826c"
+test -z "$(git diff --cached --name-only)"
+```
+
+- [ ] **Step 5: Run both framework gates**
+
+```bash
+set -euo pipefail
+encoding_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort encoding)"
+test "$encoding_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$encoding_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
 git diff --check
 ```
 
-Require both GREEN outputs and resolve every specification and code-quality
-finding before the commit.
+Require exact stdout `SSR oracle unit harness ready`, net35 `Build succeeded.`
+with `0 Warning(s)` and `0 Error(s)`, and an empty `git diff --check` result.
+Retain the outputs in the task report for post-commit review.
 
-- [ ] **Step 5: Commit only the Task 2.2 signature slice**
+- [ ] **Step 6: Commit only the Task 2.2 signature slice**
 
 ```bash
 git add oracle/plugin/Core/CaptureSignature.cs \
@@ -2136,6 +3292,14 @@ outer Python probe performs descriptor fsync after process termination before
 registering the retained trace.
 
 #### Task 3.1: Open trace files atomically with typed collisions
+
+Retain the completed platform preflight in the task report: on macOS 26.6,
+arm64, .NET 10.0.8, a real existing-file `FileMode.CreateNew` collision raised
+`System.IO.IOException` with `HResult` and `Marshal.GetHRForException` both
+equal to decimal 17 in 32 of 32 isolated attempts, while preserving the
+existing bytes. The exact four-argument `FileStream` constructor and
+`FileShare.None` also compiled against the installed net35 reference
+assemblies. Do not repeat that separate platform probe during implementation.
 
 - [ ] **Step 1: Add the first three exact RED sink tests**
 
@@ -2226,6 +3390,7 @@ internal static class TraceSinkTests
         Check.Equal(FileAccess.Write, factory.Access, "write access");
         Check.Equal(FileShare.None, factory.Share, "exclusive sharing");
         sink.Close();
+        Check.Equal(1, factory.Output.CloseCalls, "owned close");
     }
 
     private static void NullFactoryOutputIsTyped()
@@ -2259,18 +3424,41 @@ internal static class TraceSinkTests
             Path.GetTempPath(), "ssr-oracle-sink-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, "passive-trace.ndjson");
+        NdjsonTraceSink unexpected = null;
         try
         {
             NdjsonTraceSink sink = NdjsonTraceSink.Create(directory, "passive-trace");
             sink.Close();
-            byte[] before = File.ReadAllBytes(path);
+            byte[] sentinel = new byte[] { 0x00, 0x7f, 0x80, 0xff };
+            File.WriteAllBytes(path, sentinel);
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision sentinel written");
             Check.Throws<TraceExistsException>(
-                delegate { NdjsonTraceSink.Create(directory, "passive-trace"); },
+                delegate
+                {
+                    unexpected = NdjsonTraceSink.Create(
+                        directory, "passive-trace");
+                },
                 "atomic create-new collision");
-            Check.Bytes(before, File.ReadAllBytes(path), "collision preserves bytes");
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision preserves bytes");
         }
         finally
         {
+            if (unexpected != null)
+            {
+                try
+                {
+                    unexpected.Close();
+                }
+                catch (Exception)
+                {
+                }
+            }
             if (Directory.Exists(directory))
                 Directory.Delete(directory, true);
         }
@@ -2359,8 +3547,25 @@ internal static class TraceSinkTests
 }
 ```
 
-Register `TraceSinkTests`, then require the exact current manifest
-`protocol=4`, `encoding=5`, `sink=3`.
+Register `TraceSinkTests` after `CaptureSignatureTests`, then require the exact
+current manifest `protocol=4`, `encoding=5`, `sink=3` with this exact patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/tests/Program.cs
+@@
+         EncodingTests.Register(tests);
+         CaptureSignatureTests.Register(tests);
++        TraceSinkTests.Register(tests);
+         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+         {
+             { "protocol", 4 },
+-            { "encoding", 5 }
++            { "encoding", 5 },
++            { "sink", 3 }
+         });
+*** End Patch
+```
 
 - [ ] **Step 2: Run RED**
 
@@ -2375,12 +3580,61 @@ SDK, or filesystem-permission failure is not the intended RED.
 
 - [ ] **Step 3: Implement atomic create-new ownership**
 
-Create the interfaces and typed exceptions printed at the start of Track 3
-and add this complete Task 3.1 implementation. It deliberately supports only atomic
-creation and owned close; the three unregistered write-policy methods in the
-test file compile against its constructors but remain dormant until Task 3.2.
+Create `NdjsonTraceSink.cs` exactly as follows. The complete source repeats the
+Track 3 imports, interfaces, and typed exceptions so this task's extracted
+brief is self-contained. It deliberately supports only atomic creation and
+owned close; the three unregistered write-policy methods in the test file
+compile against its constructors but remain dormant until Task 3.2.
 
 ```csharp
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+internal interface ITraceSink
+{
+    void WriteRun(RunRecord record);
+    void WriteInitial(InitialRecord record);
+    void WriteStep(StepRecord record);
+    void WriteEnd(EndRecord record);
+    void WriteError(ErrorRecord record);
+    void Close();
+}
+
+internal sealed class TraceIoException : Exception
+{
+    internal TraceIoException(string message, Exception inner)
+        : base(message, inner)
+    {
+    }
+
+    internal TraceIoException(string message)
+        : base(message)
+    {
+    }
+}
+
+internal sealed class TraceExistsException : Exception
+{
+    internal TraceExistsException(string path, Exception inner)
+        : base("trace target already exists: " + path, inner)
+    {
+    }
+}
+
+internal interface ITraceOutput
+{
+    int Write(byte[] buffer, int offset, int count);
+    void Flush();
+    void Close();
+}
+
+internal interface ITraceFileFactory
+{
+    ITraceOutput CreateNew(
+        string path, FileMode mode, FileAccess access, FileShare share);
+}
+
 internal sealed class NdjsonTraceSink : ITraceSink
 {
     private sealed class FileTraceFactory : ITraceFileFactory
@@ -2518,22 +3772,292 @@ internal sealed class NdjsonTraceSink : ITraceSink
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run the provisional GREEN and net35 gate**
 
-Run the sink cohort, the net35 Core gate, and `git diff --check`; then obtain
-both fresh reviewer approvals:
+Run the sink cohort and net35 Core gate in one fail-fast process. Require the
+exact harness stdout, zero build warnings and errors, the three planned source
+hashes, an empty index, and exactly the intended unstaged Task 3.1 slice:
 
 ```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
 git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
 ```
 
-- [ ] **Step 5: Commit only the Task 3.1 create-new slice**
+- [ ] **Step 5: Prove the hardened assertions with three controlled mutants**
+
+Apply every mutant separately with `apply_patch`, run only the sink cohort with
+`--no-restore`, require nonzero plus the exact test identity and intended
+assertion text, and immediately apply the exact inverse patch. Never stage a
+mutant. Before the first mutant and after every inverse, require the three
+reviewed source hashes, an empty index, and exactly the intended unstaged Task
+3.1 slice.
+
+Run the initial pristine gate:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Delete the owned-output close:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         try
+         {
+-            output.Close();
+         }
+         catch (Exception error)
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "owned-close mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'factory arguments are exact'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"owned close"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         try
+         {
++            output.Close();
+         }
+         catch (Exception error)
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Make only the real file adapter overwrite instead of creating atomically. The
+fake factory must still observe `FileMode.CreateNew`, so the first registration
+continues to pass and the real-collision registration detects the defect:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+                 return new FileTraceOutput(
+-                    new FileStream(path, mode, access, share));
++                    new FileStream(path, FileMode.Create, access, share));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "non-atomic create mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'real collision is typed'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"atomic create-new collision: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+                 return new FileTraceOutput(
+-                    new FileStream(path, FileMode.Create, access, share));
++                    new FileStream(path, mode, access, share));
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Truncate an existing path immediately before the otherwise-correct atomic
+open. The second create must still be typed as a collision, after which the
+sentinel assertion detects the destructive pre-open write:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         {
+             try
+             {
++                if (File.Exists(path))
++                    File.WriteAllBytes(path, new byte[0]);
+                 return new FileTraceOutput(
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "pre-collision truncation mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'real collision is typed'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"collision preserves bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Restore with the exact inverse `apply_patch`:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         {
+             try
+             {
+-                if (File.Exists(path))
+-                    File.WriteAllBytes(path, new byte[0]);
+                 return new FileTraceOutput(
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+- [ ] **Step 6: Run the final framework gates**
+
+```bash
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = \
+  "bba8919d862c5216b4b03be99eba73178418ccdd4e4e2ade0dd3b32e36c1693f"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = \
+  "365be9a4aea65ba08102504cf00605e5ceaf8fc514ea6cf5f5939e7c236d9b59"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = \
+  "e3a4a01ada6ee6281fc793f379b3feb9a16afc170f3eff27b0f9f274cd941b4c"
+test -z "$(git diff --cached --name-only)"
+test "$(git status --short | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/NdjsonTraceSink.cs' \
+  '?? oracle/plugin/tests/TraceSinkTests.cs')"
+```
+
+Require exact stdout `SSR oracle unit harness ready`, net35 `Build succeeded.`
+with `0 Warning(s)` and `0 Error(s)`, exact planned source hashes, an empty
+index, the exact three-file unstaged slice, and an empty `git diff --check`.
+Retain all outputs in the task report for post-commit review.
+
+- [ ] **Step 7: Commit only the Task 3.1 create-new slice**
 
 ```bash
 git add oracle/plugin/Core/NdjsonTraceSink.cs \
@@ -2543,44 +4067,760 @@ git commit -m "feat: open oracle traces atomically"
 
 #### Task 3.2: Flush bounded records and own terminal close
 
-- [ ] **Step 1: Add only the final three RED registrations**
+**Files:**
+- Modify: `oracle/plugin/Core/NdjsonTraceSink.cs`
+- Modify: `oracle/plugin/tests/TraceSinkTests.cs`
+- Modify: `oracle/plugin/tests/Program.cs`
 
-Replace only `TraceSinkTests.Register` with this cumulative block and raise the
-temporary manifest from `sink=3` to `sink=6`.  The first failing registration
-must be `records use LF and flush`; the Task 3.1 implementation throws before
-writing any bytes.
+**Interfaces:** Retain the Task 3.1 interfaces and typed exceptions. The only test seam is `FakeTraceOutput.FlushByteCounts` and `ReturnTooMany` in the complete test source below. The frozen six sink registrations and temporary manifest are exact. Work offline only: no restore, network, game/GUI launch, deployment, installed configuration mutation, or save mutation.
+
+- [ ] **Step 1: Apply the complete hardened tests and manifest for RED**
+
+Replace `TraceSinkTests.cs` exactly with:
 
 ```csharp
-internal static void Register(TestRegistry tests)
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+internal sealed class FakeTraceOutput : ITraceOutput
 {
-    tests.Add("sink", "factory arguments are exact", FactoryArguments);
-    tests.Add("sink", "null factory output is typed", NullFactoryOutputIsTyped);
-    tests.Add("sink", "real collision is typed", RealCollisionIsTyped);
-    tests.Add("sink", "records use LF and flush", RecordsUseLfAndFlush);
-    tests.Add("sink", "bounds and write failures are terminal", WriteFailuresAreTerminal);
-    tests.Add("sink", "close ownership is single use", CloseIsSingleUse);
+    internal readonly List<byte> Bytes = new List<byte>();
+    internal readonly Queue<int> WriteCounts = new Queue<int>();
+    internal readonly List<int> FlushByteCounts = new List<int>();
+    internal Exception WriteFailure;
+    internal Exception FlushFailure;
+    internal Exception CloseFailure;
+    internal bool ReturnTooMany;
+    internal int FlushCalls;
+    internal int CloseCalls;
+
+    public int Write(byte[] buffer, int offset, int count)
+    {
+        if (WriteFailure != null)
+            throw WriteFailure;
+        if (ReturnTooMany)
+            return count + 1;
+        int written = WriteCounts.Count == 0 ? count : WriteCounts.Dequeue();
+        if (written < 0 || written > count)
+            throw new InvalidOperationException("invalid fake write count");
+        for (int index = 0; index < written; index++)
+            Bytes.Add(buffer[offset + index]);
+        return written;
+    }
+
+    public void Flush()
+    {
+        FlushCalls++;
+        FlushByteCounts.Add(Bytes.Count);
+        if (FlushFailure != null)
+            throw FlushFailure;
+    }
+
+    public void Close()
+    {
+        CloseCalls++;
+        if (CloseFailure != null)
+            throw CloseFailure;
+    }
+}
+
+internal sealed class FakeTraceFileFactory : ITraceFileFactory
+{
+    internal FakeTraceOutput Output = new FakeTraceOutput();
+    internal string Path;
+    internal FileMode Mode;
+    internal FileAccess Access;
+    internal FileShare Share;
+    internal Exception Failure;
+
+    public ITraceOutput CreateNew(
+        string path, FileMode mode, FileAccess access, FileShare share)
+    {
+        Path = path;
+        Mode = mode;
+        Access = access;
+        Share = share;
+        if (Failure != null)
+            throw Failure;
+        return Output;
+    }
+}
+
+internal static class TraceSinkTests
+{
+    internal static void Register(TestRegistry tests)
+    {
+        tests.Add("sink", "factory arguments are exact", FactoryArguments);
+        tests.Add("sink", "null factory output is typed", NullFactoryOutputIsTyped);
+        tests.Add("sink", "real collision is typed", RealCollisionIsTyped);
+        tests.Add("sink", "records use LF and flush", RecordsUseLfAndFlush);
+        tests.Add("sink", "bounds and write failures are terminal", WriteFailuresAreTerminal);
+        tests.Add("sink", "close ownership is single use", CloseIsSingleUse);
+    }
+
+    private static void FactoryArguments()
+    {
+        FakeTraceFileFactory factory = new FakeTraceFileFactory();
+        NdjsonTraceSink sink = NdjsonTraceSink.Create(
+            "/private/tmp/output", "passive-trace", factory);
+        Check.Equal(
+            Path.Combine("/private/tmp/output", "passive-trace.ndjson"),
+            factory.Path, "combined target");
+        Check.Equal(FileMode.CreateNew, factory.Mode, "create-new mode");
+        Check.Equal(FileAccess.Write, factory.Access, "write access");
+        Check.Equal(FileShare.None, factory.Share, "exclusive sharing");
+        sink.Close();
+        Check.Equal(1, factory.Output.CloseCalls, "owned close");
+    }
+
+    private static void NullFactoryOutputIsTyped()
+    {
+        FakeTraceFileFactory factory = new FakeTraceFileFactory();
+        factory.Output = null;
+        Check.Throws<TraceIoException>(
+            delegate
+            {
+                NdjsonTraceSink.Create(
+                    "/private/tmp/output", "passive-trace", factory);
+            },
+            "null create-new result");
+
+        FakeTraceFileFactory failing = new FakeTraceFileFactory();
+        IOException injected = new IOException("injected create");
+        failing.Failure = injected;
+        IOException observed = Check.Throws<IOException>(
+            delegate
+            {
+                NdjsonTraceSink.Create(
+                    "/private/tmp/output", "passive-trace", failing);
+            },
+            "injected factory failure");
+        Check.Same(injected, observed, "factory failure identity");
+    }
+
+    private static void RealCollisionIsTyped()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(), "ssr-oracle-sink-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "passive-trace.ndjson");
+        NdjsonTraceSink unexpected = null;
+        try
+        {
+            NdjsonTraceSink sink = NdjsonTraceSink.Create(directory, "passive-trace");
+            sink.Close();
+            byte[] sentinel = new byte[] { 0x00, 0x7f, 0x80, 0xff };
+            File.WriteAllBytes(path, sentinel);
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision sentinel written");
+            Check.Throws<TraceExistsException>(
+                delegate
+                {
+                    unexpected = NdjsonTraceSink.Create(
+                        directory, "passive-trace");
+                },
+                "atomic create-new collision");
+            Check.Bytes(
+                sentinel,
+                File.ReadAllBytes(path),
+                "collision preserves bytes");
+        }
+        finally
+        {
+            if (unexpected != null)
+            {
+                try
+                {
+                    unexpected.Close();
+                }
+                catch (Exception)
+                {
+                }
+            }
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, true);
+        }
+    }
+
+    private static void RecordsUseLfAndFlush()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        output.WriteCounts.Enqueue(1);
+        output.WriteCounts.Enqueue(1);
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+        List<byte> expected = new List<byte>();
+
+        sink.WriteRun(ProtocolSamples.Run);
+        AppendLine(expected, CanonicalJson.EncodeRun(ProtocolSamples.Run));
+        Check.Sequence(
+            expected, output.Bytes, "records run exact cumulative LF bytes");
+        Check.Equal(
+            0, output.WriteCounts.Count,
+            "records positive partial writes are retried");
+        Check.Equal(1, output.FlushCalls, "records run flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[0],
+            "records run flush follows LF");
+
+        sink.WriteInitial(ProtocolSamples.Initial);
+        AppendLine(expected, CanonicalJson.EncodeInitial(ProtocolSamples.Initial));
+        Check.Sequence(
+            expected, output.Bytes, "records initial exact cumulative LF bytes");
+        Check.Equal(2, output.FlushCalls, "records initial flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[1],
+            "records initial flush follows LF");
+
+        sink.WriteStep(ProtocolSamples.Step0);
+        AppendLine(expected, CanonicalJson.EncodeStep(ProtocolSamples.Step0));
+        Check.Sequence(
+            expected, output.Bytes, "records step exact cumulative LF bytes");
+        Check.Equal(3, output.FlushCalls, "records step flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[2],
+            "records step flush follows LF");
+
+        sink.WriteEnd(ProtocolSamples.End);
+        AppendLine(expected, CanonicalJson.EncodeEnd(ProtocolSamples.End));
+        Check.Sequence(
+            expected, output.Bytes, "records end exact cumulative LF bytes");
+        Check.Equal(4, output.FlushCalls, "records end flush count");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[3],
+            "records end flush follows LF");
+
+        sink.WriteError(ProtocolSamples.Error);
+        AppendLine(expected, CanonicalJson.EncodeError(ProtocolSamples.Error));
+        Check.Sequence(
+            expected, output.Bytes, "records error exact cumulative LF bytes");
+        Check.Equal(5, output.FlushCalls, "records final flush count is five");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[4],
+            "records error flush follows LF");
+        Check.Equal(
+            5,
+            output.FlushByteCounts.Count,
+            "records have five flush boundary snapshots");
+        Check.Sequence(
+            expected, output.Bytes, "records final exact five-line stream");
+        Check.False(
+            output.Bytes.Count >= 3
+            && output.Bytes[0] == 0xef
+            && output.Bytes[1] == 0xbb
+            && output.Bytes[2] == 0xbf,
+            "records stream has no UTF-8 BOM");
+    }
+
+    private static void WriteFailuresAreTerminal()
+    {
+        SessionLimitCountsLfAndBecomesTerminal();
+        ZeroProgressIsTerminal();
+        OverReportedProgressIsTerminal();
+        InjectedWriteFailureIsTerminal();
+        InjectedFlushFailureIsTerminal();
+        EncodingFailureLeavesSinkReusable();
+        RecordSizeFailureLeavesSinkReusable();
+    }
+
+    private static void SessionLimitCountsLfAndBecomesTerminal()
+    {
+        byte[] run = CanonicalJson.EncodeRun(ProtocolSamples.Run);
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(
+            output, 2L * (long)run.Length);
+        List<byte> accepted = new List<byte>();
+        AppendLine(accepted, run);
+        byte[] end = CanonicalJson.EncodeEnd(ProtocolSamples.End);
+        long remainingCapacity = 2L * (long)run.Length - accepted.Count;
+        Check.True(
+            (long)end.Length + 1L <= remainingCapacity,
+            "budget terminal probe fits remaining capacity");
+
+        sink.WriteRun(ProtocolSamples.Run);
+        Check.Sequence(
+            accepted, output.Bytes, "budget first line exact bytes");
+        Check.Equal(1, output.FlushCalls, "budget first line flush count");
+        Check.Equal(
+            accepted.Count,
+            output.FlushByteCounts[0],
+            "budget first line flush follows LF");
+
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "budget counts LF in cumulative limit");
+        Check.Sequence(
+            accepted, output.Bytes, "budget rejection is pre-output");
+        Check.Equal(
+            1, output.FlushCalls, "budget rejection has no flush");
+        Check.Equal(
+            1,
+            output.FlushByteCounts.Count,
+            "budget rejection preserves flush snapshots");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "budget failure is terminal with remaining capacity");
+        Check.Sequence(
+            accepted,
+            output.Bytes,
+            "budget terminal retry leaves bytes unchanged");
+        Check.Equal(
+            1,
+            output.FlushCalls,
+            "budget terminal retry leaves flush count unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "budget failure");
+    }
+
+    private static void ZeroProgressIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        output.WriteCounts.Enqueue(1);
+        output.WriteCounts.Enqueue(0);
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "zero progress is typed");
+        Check.Equal(1, output.Bytes.Count, "zero progress keeps partial prefix");
+        Check.Equal(
+            0, output.FlushCalls, "zero progress never flushes incomplete line");
+        List<byte> failedBytes = new List<byte>(output.Bytes);
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "zero progress failure is terminal");
+        Check.Sequence(
+            failedBytes,
+            output.Bytes,
+            "zero progress terminal retry leaves bytes unchanged");
+        Check.Equal(
+            0,
+            output.FlushCalls,
+            "zero progress terminal retry leaves flush count unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "zero progress failure");
+    }
+
+    private static void OverReportedProgressIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        output.ReturnTooMany = true;
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "over-reported progress is typed");
+        Check.Equal(
+            0, output.Bytes.Count, "over-reported progress copies no bytes");
+        Check.Equal(
+            0, output.FlushCalls, "over-reported progress never flushes");
+        output.ReturnTooMany = false;
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "over-reported progress failure is terminal");
+        Check.Equal(
+            0,
+            output.Bytes.Count,
+            "over-reported terminal retry leaves bytes unchanged");
+        Check.Equal(
+            0,
+            output.FlushCalls,
+            "over-reported terminal retry leaves flush count unchanged");
+
+        AssertOneCloseAfterFailure(
+            sink, output, "over-reported progress failure");
+    }
+
+    private static void InjectedWriteFailureIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        IOException injected = new IOException("injected write");
+        output.WriteFailure = injected;
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        TraceIoException observed = Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "write failure is typed");
+        Check.Same(
+            injected,
+            observed.InnerException,
+            "write failure preserves exception identity");
+        List<byte> failedBytes = new List<byte>(output.Bytes);
+        List<int> failedFlushes = new List<int>(output.FlushByteCounts);
+        int failedFlushCalls = output.FlushCalls;
+        output.WriteFailure = null;
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "write failure is terminal after stimulus clears");
+        Check.Sequence(
+            failedBytes,
+            output.Bytes,
+            "write terminal retry leaves bytes unchanged");
+        Check.Equal(
+            failedFlushCalls,
+            output.FlushCalls,
+            "write terminal retry leaves flush count unchanged");
+        Check.Sequence(
+            failedFlushes,
+            output.FlushByteCounts,
+            "write terminal retry leaves flush snapshots unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "write failure");
+    }
+
+    private static void InjectedFlushFailureIsTerminal()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        IOException injected = new IOException("injected flush");
+        output.FlushFailure = injected;
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        TraceIoException observed = Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            "flush failure is typed");
+        Check.Same(
+            injected,
+            observed.InnerException,
+            "flush failure preserves exception identity");
+        List<byte> failedBytes = new List<byte>(output.Bytes);
+        List<int> failedFlushes = new List<int>(output.FlushByteCounts);
+        int failedFlushCalls = output.FlushCalls;
+        output.FlushFailure = null;
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "flush failure is terminal after stimulus clears");
+        Check.Sequence(
+            failedBytes,
+            output.Bytes,
+            "flush terminal retry leaves bytes unchanged");
+        Check.Equal(
+            failedFlushCalls,
+            output.FlushCalls,
+            "flush terminal retry leaves flush count unchanged");
+        Check.Sequence(
+            failedFlushes,
+            output.FlushByteCounts,
+            "flush terminal retry leaves flush snapshots unchanged");
+
+        AssertOneCloseAfterFailure(sink, output, "flush failure");
+    }
+
+    private static void EncodingFailureLeavesSinkReusable()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+        InitialRecord invalid = new InitialRecord(
+            ProtocolSamples.RunId, ProtocolSamples.Capture("\ud800"));
+
+        Check.Throws<CanonicalEncodingException>(
+            delegate { sink.WriteInitial(invalid); },
+            "encoding failure is typed before output");
+        Check.Equal(
+            0, output.Bytes.Count, "encoding failure emits no bytes");
+        Check.Equal(
+            0, output.FlushCalls, "encoding failure performs no flush");
+        Check.Equal(
+            0,
+            output.FlushByteCounts.Count,
+            "encoding failure records no flush boundary");
+        RequireSuccess(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "encoding failure leaves sink reusable");
+        List<byte> expected = new List<byte>();
+        AppendLine(expected, CanonicalJson.EncodeEnd(ProtocolSamples.End));
+        Check.Sequence(
+            expected,
+            output.Bytes,
+            "encoding recovery writes exact valid line");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[0],
+            "encoding recovery flush follows LF");
+        sink.Close();
+        Check.Equal(1, output.CloseCalls, "encoding recovery closes once");
+    }
+
+    private static void RecordSizeFailureLeavesSinkReusable()
+    {
+        const int AcceptedRawSaveLength = 16776794;
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+
+        Check.Throws<RecordTooLargeException>(
+            delegate
+            {
+                sink.WriteError(
+                    ErrorWithRawSaveLength(AcceptedRawSaveLength + 1));
+            },
+            "record-size failure is typed before output");
+        Check.Equal(
+            0, output.Bytes.Count, "record-size failure emits no bytes");
+        Check.Equal(
+            0, output.FlushCalls, "record-size failure performs no flush");
+        Check.Equal(
+            0,
+            output.FlushByteCounts.Count,
+            "record-size failure records no flush boundary");
+        RequireSuccess(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            "record-size failure leaves sink reusable");
+        List<byte> expected = new List<byte>();
+        AppendLine(expected, CanonicalJson.EncodeEnd(ProtocolSamples.End));
+        Check.Sequence(
+            expected,
+            output.Bytes,
+            "record-size recovery writes exact valid line");
+        Check.Equal(
+            expected.Count,
+            output.FlushByteCounts[0],
+            "record-size recovery flush follows LF");
+        sink.Close();
+        Check.Equal(1, output.CloseCalls, "record-size recovery closes once");
+    }
+
+    private static void CloseIsSingleUse()
+    {
+        FakeTraceOutput output = new FakeTraceOutput();
+        NdjsonTraceSink sink = new NdjsonTraceSink(output);
+        sink.Close();
+        Check.Equal(1, output.CloseCalls, "normal close attempted exactly once");
+        Check.Throws<InvalidOperationException>(
+            delegate { sink.Close(); },
+            "normal second close rejected");
+        Check.Equal(
+            1, output.CloseCalls, "normal close has no underlying retry");
+        AssertAllRecordsRejected(sink, "normal close");
+
+        FakeTraceOutput failing = new FakeTraceOutput();
+        IOException injected = new IOException("injected close");
+        failing.CloseFailure = injected;
+        NdjsonTraceSink failingSink = new NdjsonTraceSink(failing);
+        TraceIoException observed = Check.Throws<TraceIoException>(
+            delegate { failingSink.Close(); },
+            "failed close is typed");
+        Check.Same(
+            injected,
+            observed.InnerException,
+            "failed close preserves exception identity");
+        Check.Equal(
+            1, failing.CloseCalls, "failed close attempted exactly once");
+        failing.CloseFailure = null;
+        Check.Throws<InvalidOperationException>(
+            delegate { failingSink.Close(); },
+            "failed close retry rejected after stimulus clears");
+        Check.Equal(
+            1, failing.CloseCalls, "failed close has no underlying retry");
+        AssertAllRecordsRejected(failingSink, "failed close");
+    }
+
+    private static void AppendLine(List<byte> target, byte[] encoded)
+    {
+        for (int index = 0; index < encoded.Length; index++)
+            target.Add(encoded[index]);
+        target.Add(0x0a);
+    }
+
+    private static ErrorRecord ErrorWithRawSaveLength(int length)
+    {
+        return new ErrorRecord(
+            ProtocolSamples.RunId,
+            1,
+            OracleInput.North,
+            "settle_timeout",
+            600,
+            ProtocolSamples.Capture(new string('x', length)));
+    }
+
+    private static void RequireSuccess(Action action, string message)
+    {
+        Exception observed = null;
+        try
+        {
+            action();
+        }
+        catch (Exception error)
+        {
+            observed = error;
+        }
+        Check.True(observed == null, message);
+    }
+
+    private static void AssertOneCloseAfterFailure(
+        NdjsonTraceSink sink,
+        FakeTraceOutput output,
+        string label)
+    {
+        Exception observed = null;
+        try
+        {
+            sink.Close();
+        }
+        catch (Exception error)
+        {
+            observed = error;
+        }
+        Check.True(observed == null, label + " first close remains legal");
+        Check.Equal(
+            1, output.CloseCalls, label + " first close reaches output");
+        Check.Throws<InvalidOperationException>(
+            delegate { sink.Close(); },
+            label + " second close rejected");
+        Check.Equal(
+            1, output.CloseCalls, label + " has no underlying close retry");
+    }
+
+    private static void AssertAllRecordsRejected(
+        NdjsonTraceSink sink,
+        string label)
+    {
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteRun(ProtocolSamples.Run); },
+            label + " rejects Run");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteInitial(ProtocolSamples.Initial); },
+            label + " rejects Initial");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteStep(ProtocolSamples.Step0); },
+            label + " rejects Step");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteEnd(ProtocolSamples.End); },
+            label + " rejects End");
+        Check.Throws<TraceIoException>(
+            delegate { sink.WriteError(ProtocolSamples.Error); },
+            label + " rejects Error");
+    }
 }
 ```
 
-Run the selected cohort and require that named behavioral RED.
-
-- [ ] **Step 2: Run RED against the staged create-new sink**
-
-```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
-  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink
-```
-
-Require `records use LF and flush` to fail from the staged write behavior, not
-from a compiler, SDK, asset, or fixture failure.
-
-- [ ] **Step 3: Implement exact write, flush, bound, and close transitions**
-
-Replace the staged Task 3.1 `NdjsonTraceSink` class—leaving its interfaces and
-typed exceptions unchanged—with this complete final implementation:
+Replace `Program.cs` exactly with:
 
 ```csharp
+using System;
+using System.Collections.Generic;
+
+internal static class Program
+{
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
+}
+```
+
+Apply these replacements only to the working tree; do not stage either file.
+Require an empty index before the RED command.
+
+- [ ] **Step 2: Run the behavioral RED**
+
+```bash
+set -euo pipefail
+test -z "$(git diff --cached --name-only)"
+if red_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "Task 3.2 RED unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$red_output"
+case "$red_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$red_output" in
+  *"record writing begins in Task 3.2"*) ;;
+  *) exit 1 ;;
+esac
+case "$red_output" in
+  *"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|*"Permission denied"*|*"Operation not permitted"*|*"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+```
+
+The required first failure is the frozen sink registration plus `record writing begins in Task 3.2`; no compiler/SDK/assets/fixture/permission/restore failure is an acceptable RED.
+
+- [ ] **Step 3: Replace the sink with the exact final production body**
+
+Replace `NdjsonTraceSink.cs` exactly with:
+
+```csharp
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+internal interface ITraceSink
+{
+    void WriteRun(RunRecord record);
+    void WriteInitial(InitialRecord record);
+    void WriteStep(StepRecord record);
+    void WriteEnd(EndRecord record);
+    void WriteError(ErrorRecord record);
+    void Close();
+}
+
+internal sealed class TraceIoException : Exception
+{
+    internal TraceIoException(string message, Exception inner)
+        : base(message, inner)
+    {
+    }
+
+    internal TraceIoException(string message)
+        : base(message)
+    {
+    }
+}
+
+internal sealed class TraceExistsException : Exception
+{
+    internal TraceExistsException(string path, Exception inner)
+        : base("trace target already exists: " + path, inner)
+    {
+    }
+}
+
+internal interface ITraceOutput
+{
+    int Write(byte[] buffer, int offset, int count);
+    void Flush();
+    void Close();
+}
+
+internal interface ITraceFileFactory
+{
+    ITraceOutput CreateNew(
+        string path, FileMode mode, FileAccess access, FileShare share);
+}
+
 internal sealed class NdjsonTraceSink : ITraceSink
 {
     private const long DefaultMaxTraceBytes = 128L * 1024L * 1024L;
@@ -2809,71 +5049,1516 @@ internal sealed class NdjsonTraceSink : ITraceSink
 }
 ```
 
-`Marshal.GetHRForException(error) & 0xffff` classifies only the
-atomic `CreateNew` collision codes `EEXIST (17)`, `ERROR_FILE_EXISTS (80)`,
-and `ERROR_ALREADY_EXISTS (183)` as `TraceExistsException`; it performs no
-racy `File.Exists` recheck. Because encoding completes
-before `WriteEncoded`, `CanonicalEncodingException` and
-`RecordTooLargeException` leave the open sink reusable. Every write, flush,
-close, invalid-progress, and cumulative-budget failure permanently blocks
-later records; one best-effort Close remains legal after a write/flush failure.
-
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run provisional GREEN, net35, diff, hash, index, and exact task-slice gate**
 
 ```bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort sink
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
   oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
 git diff --check
 ```
 
-Require all six sink registrations to pass and resolve both fresh reviews.
+- [ ] **Step 5: Prove the hardened assertions with thirteen controlled mutants**
 
-- [ ] **Step 5: Commit only the Task 3.2 sink slice**
+Run M01 through M13 in order. Each mutant uses an independent fail-fast shell command immediately after its forward patch; no shell function or cross-command state is assumed. Every mutation is isolated and uses only the focused offline sink cohort.
+
+Before M01, require the literal pristine gate:
 
 ```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M01 — make `WriteStep` a functional no-op
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteStep(StepRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        WriteEncoded(CanonicalJson.EncodeStep(record));
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M01 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records step exact cumulative LF bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteStep(StepRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
++        WriteEncoded(CanonicalJson.EncodeStep(record));
+     }
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records step exact cumulative LF bytes`
+- Not masked earlier: the three legacy registrations do not write records;
+  Run and Initial still pass their cumulative checks before the first changed
+  observation is the Step boundary.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M02 — omit the literal LF write
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
+-        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M02 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records run exact cumulative LF bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
++        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records run exact cumulative LF bytes`
+- Not masked earlier: factory/create/close behavior is unchanged. The first
+  successful record returns, then its independently assembled JSON-plus-LF
+  byte sequence detects the missing byte.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M03 — flush before writing LF
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
+-        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+@@
+             Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
++        WriteAll(LineFeed);
+         totalBytes += lineBytes;
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M03 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records run flush follows LF"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         WriteAll(encoded);
++        WriteAll(LineFeed);
+         try
+         {
+             output.Flush();
+@@
+             Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
+-        WriteAll(LineFeed);
+         totalBytes += lineBytes;
+     }
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records run flush follows LF`
+- Not masked earlier: all returned record bytes and flush counts remain exact,
+  so only the byte-count snapshots expose that each flush happened one byte
+  too early. No legacy registration observes flush ordering.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M04 — perform only one output write instead of retrying
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteAll(byte[] buffer)
+     {
+         int offset = 0;
+-        while (offset < buffer.Length)
++        if (offset < buffer.Length)
+         {
+             int written;
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M04 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'records use LF and flush'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"records run exact cumulative LF bytes"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteAll(byte[] buffer)
+     {
+         int offset = 0;
+-        if (offset < buffer.Length)
++        while (offset < buffer.Length)
+         {
+             int written;
+*** End Patch
+```
+
+- Expected registration: `records use LF and flush`
+- Exact fragment: `records run exact cumulative LF bytes`
+- Not masked earlier: no legacy test configures positive partial writes. With
+  the binding `1, 1` queue, the mutant writes one JSON byte and one LF, returns
+  normally, and is rejected by the first independent cumulative-byte check.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M05 — exclude LF from `lineBytes`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteEncoded(byte[] encoded)
+     {
+         CanonicalJson.ValidateRecordSize(encoded);
+-        long lineBytes = (long)encoded.Length + 1L;
++        long lineBytes = (long)encoded.Length;
+         if (totalBytes > maxTraceBytes - lineBytes)
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M05 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"budget counts LF in cumulative limit: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     private void WriteEncoded(byte[] encoded)
+     {
+         CanonicalJson.ValidateRecordSize(encoded);
+-        long lineBytes = (long)encoded.Length;
++        long lineBytes = (long)encoded.Length + 1L;
+         if (totalBytes > maxTraceBytes - lineBytes)
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `budget counts LF in cumulative limit: no exception`
+- Not masked earlier: default-budget record flow remains well below the cap.
+  With `maxTraceBytes = 2L * runBytes`, excluding both accounted LF bytes lets
+  the second payload fit exactly, so the first budget `Check.Throws` is the
+  earliest failure.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M06 — delete `Fail()` from cumulative-budget rejection
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         long lineBytes = (long)encoded.Length + 1L;
+         if (totalBytes > maxTraceBytes - lineBytes)
+         {
+-            Fail();
+             throw new TraceIoException("trace file budget exceeded");
+         }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M06 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"budget failure is terminal with remaining capacity: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         long lineBytes = (long)encoded.Length + 1L;
+         if (totalBytes > maxTraceBytes - lineBytes)
+         {
++            Fail();
+             throw new TraceIoException("trace file budget exceeded");
+         }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `budget failure is terminal with remaining capacity: no exception`
+- Not masked earlier: the second Run still throws the correct budget error and
+  preserves bytes/flushes. The later End fits the real remaining budget and
+  succeeds only because the state was not poisoned, isolating this transition.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M07 — delete `Fail()` from the write-exception branch
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+             }
+             catch (Exception error)
+             {
+-                Fail();
+                 throw new TraceIoException("trace write failed", error);
+             }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M07 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"write failure is terminal after stimulus clears: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+             }
+             catch (Exception error)
+             {
++                Fail();
+                 throw new TraceIoException("trace write failed", error);
+             }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `write failure is terminal after stimulus clears: no exception`
+- Not masked earlier: the injected exception is still wrapped with identical
+  inner identity, so the first write-failure assertions pass. The helper clears
+  `WriteFailure`; only the missing state transition lets the next record pass.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M08 — delete `Fail()` from the flush-exception branch
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
+-            Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M08 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"flush failure is terminal after stimulus clears: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
++            Fail();
+             throw new TraceIoException("trace flush failed", error);
+         }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `flush failure is terminal after stimulus clears: no exception`
+- Not masked earlier: the first flush failure is still wrapped with the exact
+  inner exception and its snapshots are unchanged. Clearing `FlushFailure`
+  removes the environmental stimulus, so only an open mutant sink accepts the
+  later valid record.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M09 — accept over-reported write progress
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+-            if (written <= 0 || written > buffer.Length - offset)
++            if (written <= 0)
+             {
+                 Fail();
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M09 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"over-reported progress is typed: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+-            if (written <= 0)
++            if (written <= 0 || written > buffer.Length - offset)
+             {
+                 Fail();
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `over-reported progress is typed: no exception`
+- Not masked earlier: budget and zero-progress helpers exercise different
+  branches. `ReturnTooMany` copies no bytes and returns `remaining + 1`; with
+  this guard removed, both loops terminate without an exception, reaching the
+  dedicated `Check.Throws` failure.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M10 — forbid `Close()` from `Failed`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void Close()
+     {
+-        if (state != SinkState.Open && state != SinkState.Failed)
++        if (state != SinkState.Open)
+             throw new InvalidOperationException("trace close already attempted");
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M10 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"budget failure first close remains legal"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void Close()
+     {
+-        if (state != SinkState.Open)
++        if (state != SinkState.Open && state != SinkState.Failed)
+             throw new InvalidOperationException("trace close already attempted");
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `budget failure first close remains legal`
+- Not masked earlier: successful records and legacy single-close paths close
+  from `Open`. The cumulative-budget helper is the first to call `Close()` from
+  `Failed`, after all of its budget and terminality observations have passed.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M11 — poison after `CanonicalEncodingException`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteInitial(InitialRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        WriteEncoded(CanonicalJson.EncodeInitial(record));
++        try
++        {
++            WriteEncoded(CanonicalJson.EncodeInitial(record));
++        }
++        catch (CanonicalEncodingException)
++        {
++            Fail();
++            throw;
++        }
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M11 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"encoding failure leaves sink reusable"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteInitial(InitialRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        try
+-        {
+-            WriteEncoded(CanonicalJson.EncodeInitial(record));
+-        }
+-        catch (CanonicalEncodingException)
+-        {
+-            Fail();
+-            throw;
+-        }
++        WriteEncoded(CanonicalJson.EncodeInitial(record));
+     }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `encoding failure leaves sink reusable`
+- Not masked earlier: the malformed Initial still raises the expected original
+  `CanonicalEncodingException` before output, so all type and snapshot checks
+  pass. The next valid record is the first observation of the illicit `Failed`
+  transition and escapes the exact `EnsureWritable` error above.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M12 — poison after `RecordTooLargeException`
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteError(ErrorRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        WriteEncoded(CanonicalJson.EncodeError(record));
++        try
++        {
++            WriteEncoded(CanonicalJson.EncodeError(record));
++        }
++        catch (RecordTooLargeException)
++        {
++            Fail();
++            throw;
++        }
+     }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M12 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'bounds and write failures are terminal'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"record-size failure leaves sink reusable"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+     public void WriteError(ErrorRecord record)
+     {
+         if (record == null)
+             throw new ArgumentNullException("record");
+         EnsureWritable();
+-        try
+-        {
+-            WriteEncoded(CanonicalJson.EncodeError(record));
+-        }
+-        catch (RecordTooLargeException)
+-        {
+-            Fail();
+-            throw;
+-        }
++        WriteEncoded(CanonicalJson.EncodeError(record));
+     }
+*** End Patch
+```
+
+- Expected registration: `bounds and write failures are terminal`
+- Exact fragment: `record-size failure leaves sink reusable`
+- Not masked earlier: the one-byte-oversized Error still throws the expected
+  original `RecordTooLargeException` without bytes or flush. Only the subsequent
+  valid record observes the illicit poison state.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+### M13 — permit an underlying retry after a failed close
+
+Forward patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
+-            state = SinkState.FailedClosed;
++            state = SinkState.Failed;
+             throw new TraceIoException("trace close failed", error);
+         }
+*** End Patch
+```
+
+Run this exact mutation oracle before the inverse patch:
+
+```bash
+set -euo pipefail
+if mutation_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"; then
+  printf '%s\n' "M13 mutant unexpectedly passed" >&2
+  exit 1
+fi
+printf '%s\n' "$mutation_output"
+case "$mutation_output" in
+  *"cohort 'sink', test 'close ownership is single use'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"failed close retry rejected after stimulus clears: no exception"*) ;;
+  *) exit 1 ;;
+esac
+```
+
+Inverse patch:
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/NdjsonTraceSink.cs
+@@
+         }
+         catch (Exception error)
+         {
+-            state = SinkState.Failed;
++            state = SinkState.FailedClosed;
+             throw new TraceIoException("trace close failed", error);
+         }
+*** End Patch
+```
+
+- Expected registration: `close ownership is single use`
+- Exact fragment: `failed close retry rejected after stimulus clears: no exception`
+- Not masked earlier: all bounds helpers close failed sinks through a successful
+  underlying `Close`, which still reaches `FailedClosed`; the normal close path
+  still reaches `Closed`. The first injected underlying close exception occurs
+  only in `CloseIsSingleUse`. The test clears `CloseFailure` before retry, so
+  the mutant retry reaches `output.Close()` again and succeeds; the expected
+  `InvalidOperationException` assertion reports this exact no-exception
+  fragment.
+
+After the exact inverse above, require this literal restoration gate before continuing:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 6: Run final precommit gates**
+
+```bash
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+git diff --check
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 7: Commit only the Task 3.2 sink slice**
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/NdjsonTraceSink.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  ' M oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --check
 git add oracle/plugin/Core/NdjsonTraceSink.cs \
   oracle/plugin/tests/TraceSinkTests.cs oracle/plugin/tests/Program.cs
+test -z "$(git diff --name-only)"
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'M  oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'M  oracle/plugin/tests/Program.cs' \
+  'M  oracle/plugin/tests/TraceSinkTests.cs')"
+git diff --cached --check
 git commit -m "feat: flush bounded oracle traces"
 ```
 
+- [ ] **Step 8: Rerun fresh postcommit behavioral, net35, subject, scope, hash, index, and clean-worktree gates**
+
+```bash
+set -euo pipefail
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+test "$(git show -s --format=%s HEAD)" = "feat: flush bounded oracle traces"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/NdjsonTraceSink.cs' \
+  'oracle/plugin/tests/Program.cs' \
+  'oracle/plugin/tests/TraceSinkTests.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check HEAD^ HEAD
+```
 ### Track 4: Stage update authorization and settle the initial state
 
 #### Task 4.1: Add issued-authorized-consumed update and hook boundaries
 
-- [ ] **Step 1: Write the two exact RED token-lifecycle tests**
-
 **Files:**
-- Create: oracle/plugin/Core/CaptureException.cs
-- Create: oracle/plugin/Core/PassiveDriverBoundaries.cs
-- Create: oracle/plugin/tests/PassiveDriverBoundaryTests.cs
-- Modify: oracle/plugin/tests/Program.cs
+- Create: `oracle/plugin/Core/CaptureException.cs`
+- Create: `oracle/plugin/Core/PassiveDriverBoundaries.cs`
+- Create: `oracle/plugin/tests/PassiveDriverBoundaryTests.cs`
+- Modify: `oracle/plugin/tests/Program.cs`
 
-**Interfaces:**
-- Produces CaptureException in its own Core/CaptureException.cs file, plus
-  HookKind, owner-bound HookToken, staged UpdateDirective, GateSampleKind,
-  GateSample, and IPassiveReporter in PassiveDriverBoundaries.cs.
-  PatchBoundary remains owned solely by Core/PatchBoundary.cs in Task 8.
-- UpdateDirective has the exact lifecycle issued (stage 0), authorized
-  (stage 1), consumed (stage 2). Only PassiveDriver may authorize, rebase, or
-  consume it. FailUpdate may atomically consume either issued or authorized.
-- Task 4.2 adds PassiveUpdateBoundary after PassiveDriver exists. Its required
-  order is BeginUpdate, VerifySavePath, reread state identity,
-  AuthorizeUpdate, and only then IsQuiescent/Capture. A false path or identity
-  result therefore makes Save(false, false) structurally unreachable.
-- Product types remain in the global namespace so the net10 linked-source
-  harness and the net35 plugin compile the identical names.
+**Interfaces:** This task creates the global-namespace, internal
+`CaptureException`, `HookKind`, owner-bound single-consume `HookToken`,
+issued-authorized-consumed `UpdateDirective`, `GateSampleKind`,
+`GateSample`, and `IPassiveReporter` contracts used by Task 4.2 and later
+plugin work. `UpdateDirective` has stages issued (0), authorized (1), and
+consumed (2); authorization is 0-to-1, completion is 1-to-2, and failure is
+0-or-1-to-2. `RebaseInitialEpoch` is authorized-only and Unity-main-thread-
+only. Production code outside `PassiveDriver` must not call directive
+mutators; this task's same-assembly tests are deliberate white-box callers.
+`PatchBoundary` remains owned solely by `Core/PatchBoundary.cs` in Task 8,
+and `PassiveUpdateBoundary` remains Task 4.2 work.
+Task 7 consumes this shared `CaptureException` and must not redeclare it in
+`GameObservation.cs`.
 
-Create PassiveDriverBoundaryTests.cs:
+Task 4.2 adds `PassiveUpdateBoundary` only after `PassiveDriver` exists. Its
+required order remains `BeginUpdate`, `VerifySavePath`, reread state identity,
+`AuthorizeUpdate`, and only then `IsQuiescent`/`Capture`. A false path or
+differing identity result therefore makes `Save(false, false)` structurally
+unreachable in that callback.
 
-~~~csharp
+Retain exactly two registrations in this order:
+
+1. `hook token is owner bound and single consume`;
+2. `update directive authorizes rebases and consumes once`.
+
+The cumulative manifest at this checkpoint remains exactly
+`protocol=4`, `encoding=5`, `sink=6`, and `driver-boundary=2`.
+Work only in the isolated worktree. Every build is offline and uses
+`--no-restore`. Do not use the network; launch the game or a GUI; deploy;
+instrument a running process; or modify installed configuration, saves,
+fixtures, package state, or project files.
+
+The exact final source hashes are:
+
+- `CaptureException.cs`:
+  `88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd`;
+- `PassiveDriverBoundaries.cs`:
+  `0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09`;
+- `PassiveDriverBoundaryTests.cs`:
+  `20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc`;
+- cumulative `Program.cs`:
+  `6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd`.
+
+The pre-RED `Program.cs` SHA-256 is
+`2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb`.
+The approved design SHA-256 is
+`a8bb6d78ac51792bdcf82c6f701b512aaec21acaa2f1829e99eb1e1488fda665`.
+
+- [ ] **Step 1: Record non-circular dispatch pins and pass the clean pre-RED baseline**
+
+The plan cannot contain its own future commit or SHA-256, nor the hash of a
+brief regenerated from that future plan. After the plan-only amendment is
+committed and the Task 4.1 brief is regenerated, the controller must write
+exactly one literal value for each of these six field names into both
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md` and
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md`:
+`Task 4.1 execution base`, `Task 4.1 execution parent`,
+`Task 4.1 execution subject`, `Task 4.1 amended plan SHA-256`,
+`Task 4.1 regenerated brief SHA-256`, and
+`Task 4.1 approved design SHA-256`. The controller verifies those literal
+records immediately before dispatch and includes them verbatim in the
+implementer prompt. The implementer must reject absent, duplicate, malformed,
+or mismatched records. This controller-owned record is the non-circular pin;
+the implementer must not regenerate it.
+
+Run this exact self-contained gate before changing a tracked implementation
+file:
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$report_path")"
+dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$report_path")"
+dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$report_path")"
+dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$report_path")"
+dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+progress_dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$progress_path")"
+progress_dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$progress_path")"
+progress_dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$progress_path")"
+progress_dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$progress_path")"
+progress_dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$dispatch_subject"
+test "$(printf '%s\n' "$dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$progress_dispatch_subject"
+test "$(printf '%s\n' "$progress_dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_dispatch_parent" = "$dispatch_parent"
+test "$progress_dispatch_subject" = "$dispatch_subject"
+test "$progress_dispatch_plan_sha" = "$dispatch_plan_sha"
+test "$progress_dispatch_brief_sha" = "$dispatch_brief_sha"
+test "$progress_dispatch_design_sha" = "$dispatch_design_sha"
+test "$(git rev-parse HEAD)" = "$dispatch_base"
+test "$(git rev-parse HEAD^)" = "$dispatch_parent"
+test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
+test "$(shasum -a 256 docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md | awk '{print $1}')" = "$dispatch_plan_sha"
+test "$(shasum -a 256 .superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-brief.md | awk '{print $1}')" = "$dispatch_brief_sha"
+test "$(shasum -a 256 docs/superpowers/specs/2026-08-03-task-4.1-boundary-hardening-design.md | awk '{print $1}')" = "$dispatch_design_sha"
+test "$dispatch_design_sha" = "a8bb6d78ac51792bdcf82c6f701b512aaec21acaa2f1829e99eb1e1488fda665"
+test "$(shasum -a 256 oracle/plugin/Core/NdjsonTraceSink.cs | awk '{print $1}')" = "b3bd207ec4684de5e5a896d76eda1aeaaff88f8f5638ebdcee74f9a23535c6fb"
+test "$(shasum -a 256 oracle/plugin/tests/TraceSinkTests.cs | awk '{print $1}')" = "729f8677f8b2eb4e9e7c7bf423ffed8283d7a12800b7992752a6cd3850c5f6a1"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "2446d054a03363ec243faace5e2fe9e94f2bf3badc8b1fc044c115749c3ddbeb"
+test ! -e oracle/plugin/Core/CaptureException.cs
+test ! -e oracle/plugin/Core/PassiveDriverBoundaries.cs
+test ! -e oracle/plugin/tests/PassiveDriverBoundaryTests.cs
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+sink_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort sink 2>&1)"
+test "$sink_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$sink_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror 2>&1)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$sink_output
+$full_output
+$build_output" in
+  *"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+Do not use the absent `driver-boundary` cohort as a pre-RED baseline.
+
+- [ ] **Step 2: Apply the complete hardened tests and exact cumulative registry for RED**
+
+Create `oracle/plugin/tests/PassiveDriverBoundaryTests.cs` exactly:
+
+```csharp
 using System;
+using System.Reflection;
+using System.Threading;
+
+internal sealed class EqualOwner
+{
+    private readonly int value;
+
+    internal EqualOwner(int value)
+    {
+        this.value = value;
+    }
+
+    public override bool Equals(object other)
+    {
+        EqualOwner equal = other as EqualOwner;
+        return equal != null && value == equal.value;
+    }
+
+    public override int GetHashCode()
+    {
+        return value;
+    }
+}
+
+internal sealed class BoundaryFakePassiveReporter : IPassiveReporter
+{
+    internal int ReadyCalls;
+    internal int CompletedInputs;
+    internal int CompleteCalls;
+    internal int FailedCalls;
+    internal string FailedCode;
+    internal int DiagnosticCalls;
+    internal string DiagnosticMessage;
+
+    public void Ready(int completedInputs)
+    {
+        ReadyCalls++;
+        CompletedInputs = completedInputs;
+    }
+
+    public void Complete()
+    {
+        CompleteCalls++;
+    }
+
+    public void Failed(string code)
+    {
+        FailedCalls++;
+        FailedCode = code;
+    }
+
+    public void Diagnostic(string message)
+    {
+        DiagnosticCalls++;
+        DiagnosticMessage = message;
+    }
+}
 
 internal static class PassiveDriverBoundaryTests
 {
+    private const int WorkerTimeoutMilliseconds = 5000;
+
+    private static IPassiveReporter CompileBoundarySurface(
+        CaptureException captureException,
+        HookKind hookKind,
+        HookToken hookToken,
+        UpdateDirective updateDirective,
+        GateSampleKind gateSampleKind,
+        GateSample gateSample,
+        IPassiveReporter reporter)
+    {
+        return reporter;
+    }
+
+    private sealed class HookSnapshot
+    {
+        internal object Owner;
+        internal long Id;
+        internal HookKind Kind;
+        internal bool Active;
+        internal bool BelongsToOwner;
+    }
+
+    private sealed class DirectiveSnapshot
+    {
+        internal object Owner;
+        internal long Id;
+        internal long Epoch;
+        internal int SettleFrames;
+        internal double NowSeconds;
+        internal bool Active;
+        internal bool InspectGate;
+        internal bool TimeoutAfterSample;
+        internal bool BelongsToOwner;
+    }
+
     internal static void Register(TestRegistry tests)
     {
         tests.Add(
@@ -2888,79 +6573,1418 @@ internal static class PassiveDriverBoundaryTests
 
     private static void HookTokenIsOwnerBoundAndSingleConsume()
     {
+        AssertCaptureExceptionContract();
+        AssertHookKindContract();
+        AssertHookFactoryValidationAndShapes();
+        AssertSequentialHookConsumption();
+        AssertConcurrentHookConsumption();
+    }
+
+    private static void AssertCaptureExceptionContract()
+    {
+        Type type = typeof(CaptureException);
+        AssertGlobalInternalSealed(type, "CaptureException");
+        Check.True(
+            typeof(Exception).IsAssignableFrom(type),
+            "CaptureException derives from Exception");
+
+        ConstructorInfo[] constructors = type.GetConstructors(
+            BindingFlags.Instance
+            | BindingFlags.Public
+            | BindingFlags.NonPublic
+            | BindingFlags.DeclaredOnly);
+        Check.Equal(2, constructors.Length, "CaptureException constructor count");
+        ConstructorInfo plainConstructor = type.GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            new Type[] { typeof(string) },
+            null);
+        ConstructorInfo wrappedConstructor = type.GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            new Type[] { typeof(string), typeof(Exception) },
+            null);
+        Check.True(
+            plainConstructor != null && plainConstructor.IsAssembly,
+            "CaptureException message constructor is internal");
+        Check.True(
+            wrappedConstructor != null && wrappedConstructor.IsAssembly,
+            "CaptureException wrapping constructor is internal");
+
+        CaptureException plain = new CaptureException("plain");
+        Check.Equal("plain", plain.Message, "plain capture message");
+        Check.True(
+            plain.InnerException == null,
+            "plain capture has no inner exception");
+
+        InvalidOperationException inner =
+            new InvalidOperationException("inner");
+        CaptureException wrapped = new CaptureException("wrapped", inner);
+        Check.Equal("wrapped", wrapped.Message, "wrapped capture message");
+        Check.Same(inner, wrapped.InnerException, "wrapped capture inner identity");
+    }
+
+    private static void AssertHookKindContract()
+    {
+        AssertGlobalInternalEnum(typeof(HookKind), "HookKind");
+        string[] names = new string[]
+        {
+            "PlayerPoll", "ProcessInput", "Undo", "Restart", "StateSet"
+        };
+        Check.Sequence(
+            names,
+            Enum.GetNames(typeof(HookKind)),
+            "hook kind names");
+        int[] actualValues = new int[names.Length];
+        for (int index = 0; index < names.Length; index++)
+        {
+            actualValues[index] = (int)Enum.Parse(
+                typeof(HookKind), names[index], false);
+        }
+        Check.Sequence(
+            new int[] { 0, 1, 2, 3, 4 },
+            actualValues,
+            "hook kind numeric values");
+    }
+
+    private static void AssertHookFactoryValidationAndShapes()
+    {
+        AssertGlobalInternalSealed(typeof(HookToken), "HookToken");
         object owner = new object();
-        HookToken token = HookToken.Issued(owner, 7L, HookKind.Undo);
-        Check.True(token.Active, "issued token active");
-        Check.True(token.BelongsTo(owner), "owner identity");
-        Check.False(token.BelongsTo(new object()), "foreign identity");
-        Check.True(token.TryConsume(), "first consume");
-        Check.False(token.TryConsume(), "second consume rejected");
+        AssertArgumentNull(
+            "owner",
+            delegate { HookToken.Issued(null, 1L, HookKind.PlayerPoll); },
+            "issued hook rejects null owner");
+        AssertArgumentOutOfRange(
+            "id",
+            delegate { HookToken.Issued(owner, 0L, HookKind.PlayerPoll); },
+            "issued hook rejects zero ID");
+        AssertArgumentOutOfRange(
+            "id",
+            delegate { HookToken.Issued(owner, -1L, HookKind.PlayerPoll); },
+            "issued hook rejects negative ID");
+        AssertArgumentOutOfRange(
+            "kind",
+            delegate { HookToken.Issued(owner, 1L, (HookKind)(-1)); },
+            "issued hook rejects negative kind");
+        AssertArgumentOutOfRange(
+            "kind",
+            delegate { HookToken.Issued(owner, 1L, (HookKind)5); },
+            "issued hook rejects upper kind");
+        AssertArgumentOutOfRange(
+            "kind",
+            delegate { HookToken.Inert((HookKind)(-1)); },
+            "inert hook rejects negative kind");
+        AssertArgumentOutOfRange(
+            "kind",
+            delegate { HookToken.Inert((HookKind)5); },
+            "inert hook rejects upper kind");
+
+        HookKind[] kinds = new HookKind[]
+        {
+            HookKind.PlayerPoll,
+            HookKind.ProcessInput,
+            HookKind.Undo,
+            HookKind.Restart,
+            HookKind.StateSet
+        };
+        for (int index = 0; index < kinds.Length; index++)
+        {
+            string label = "hook kind " + kinds[index].ToString();
+            object issuedOwner = new object();
+            HookToken issued = HookToken.Issued(
+                issuedOwner, (long)index + 1L, kinds[index]);
+            Check.True(issued.Active, label + " issued active");
+            Check.Equal(
+                (long)index + 1L,
+                issued.Id,
+                label + " issued ID");
+            Check.Equal(kinds[index], issued.Kind, label + " issued kind");
+            Check.True(
+                issued.BelongsTo(issuedOwner),
+                label + " issued owner identity");
+            Check.False(
+                issued.BelongsTo(new object()),
+                label + " issued rejects foreign owner");
+            Check.False(
+                issued.BelongsTo(null),
+                label + " issued rejects null owner");
+
+            HookToken inert = HookToken.Inert(kinds[index]);
+            Check.False(inert.Active, label + " inert inactive");
+            Check.Equal(0L, inert.Id, label + " inert zero ID");
+            Check.Equal(kinds[index], inert.Kind, label + " inert kind");
+            Check.False(
+                inert.BelongsTo(null),
+                "inert token rejects null owner");
+            Check.False(
+                inert.BelongsTo(issuedOwner),
+                label + " inert rejects nonnull owner");
+            Check.False(inert.TryConsume(), label + " inert cannot consume");
+            Check.False(
+                inert.TryConsume(),
+                label + " inert retry cannot consume");
+            Check.False(inert.Active, label + " inert remains inactive");
+            Check.Equal(0L, inert.Id, label + " inert ID remains zero");
+            Check.Equal(
+                kinds[index],
+                inert.Kind,
+                label + " inert kind remains stable");
+        }
+
+        EqualOwner equalOwner = new EqualOwner(17);
+        EqualOwner equalForeign = new EqualOwner(17);
+        Check.True(equalOwner.Equals(equalForeign), "hook owners compare equal");
+        HookToken identity = HookToken.Issued(
+            equalOwner, 17L, HookKind.StateSet);
+        Check.True(
+            identity.BelongsTo(equalOwner),
+            "hook accepts identical owner reference");
         Check.False(
-            HookToken.Inert(HookKind.Undo).TryConsume(),
-            "inert token cannot consume");
+            identity.BelongsTo(equalForeign),
+            "hook rejects equal-looking owner");
+        HookToken maximum = HookToken.Issued(
+            owner, Int64.MaxValue, HookKind.PlayerPoll);
+        Check.Equal(
+            Int64.MaxValue,
+            maximum.Id,
+            "issued hook maximum ID accepted");
+        Check.True(maximum.TryConsume(), "maximum hook cleanup succeeds");
+    }
+
+    private static void AssertSequentialHookConsumption()
+    {
+        object owner = new object();
+        HookToken token = HookToken.Issued(owner, 31L, HookKind.Undo);
+        HookSnapshot before = SnapshotHook(token, owner);
+        Check.True(token.TryConsume(), "hook first consume succeeds");
+        AssertHookSnapshot(token, before, "hook first consume metadata");
+        Check.False(token.TryConsume(), "hook second consume rejected");
+        AssertHookSnapshot(token, before, "hook retry metadata");
+        Check.True(token.Active, "consumed hook remains active");
+    }
+
+    private static void AssertConcurrentHookConsumption()
+    {
+        object owner = new object();
+        HookToken token = HookToken.Issued(
+            owner, 7000000001L, HookKind.Restart);
+        HookSnapshot before = SnapshotHook(token, owner);
+        int winners = RunTwoWorkers(
+            delegate { return token.TryConsume(); },
+            delegate { return token.TryConsume(); },
+            "hook consume race");
+        Check.Equal(1, winners, "hook race exactly one winner");
+        Check.False(token.TryConsume(), "hook race leaves token consumed");
+        AssertHookSnapshot(token, before, "hook race metadata");
     }
 
     private static void UpdateDirectiveAuthorizesRebasesAndConsumesOnce()
     {
-        InvalidOperationException inner =
-            new InvalidOperationException("inner");
-        CaptureException plain =
-            new CaptureException("plain");
-        CaptureException wrapped =
-            new CaptureException("wrapped", inner);
-        Check.Equal("plain", plain.Message, "plain capture error");
-        Check.Same(inner, wrapped.InnerException, "wrapped capture error");
+        AssertUpdateTypeShapeAndInactiveContract();
+        AssertIssuedFactoryValidationAndFlagCombinations();
+        AssertDirectiveTransitionMatrixAndMetadata();
+        AssertDirectiveRebaseContract();
+        AssertDirectiveCompetitions();
+        AssertGateSampleContract();
+        AssertPassiveReporterContract();
+    }
 
+    private static void AssertUpdateTypeShapeAndInactiveContract()
+    {
+        Type type = typeof(UpdateDirective);
+        AssertGlobalInternalSealed(type, "UpdateDirective");
+        Check.True(
+            type.GetMethod(
+                "TryConsume",
+                BindingFlags.Instance
+                | BindingFlags.Public
+                | BindingFlags.NonPublic
+                | BindingFlags.DeclaredOnly) == null,
+            "update directive has no TryConsume alias");
+
+        AssertArgumentNull(
+            "owner",
+            delegate { UpdateDirective.Inactive(null); },
+            "inactive directive rejects null owner");
         object owner = new object();
-        UpdateDirective directive = UpdateDirective.Issued(
-            owner, 9L, 3L, 4, 2.5, true, true);
-        Check.True(directive.BelongsTo(owner), "owner identity");
-        Check.True(directive.TryAuthorize(), "issued to authorized");
-        Check.False(directive.TryAuthorize(), "authorize once");
-        directive.RebaseInitialEpoch(4L, 1);
-        Check.Equal(4L, directive.Epoch, "rebased epoch");
-        Check.Equal(1, directive.SettleFrames, "replacement is frame one");
-        Check.False(directive.InspectGate, "replacement not inspected");
+        UpdateDirective inactive = UpdateDirective.Inactive(owner);
+        Check.False(inactive.Active, "inactive directive inactive");
+        Check.Equal(0L, inactive.Id, "inactive directive zero ID");
+        Check.Equal(0L, inactive.Epoch, "inactive directive zero epoch");
+        Check.Equal(
+            0,
+            inactive.SettleFrames,
+            "inactive directive zero settle frames");
+        Check.Equal(
+            0.0,
+            inactive.NowSeconds,
+            "inactive directive zero time");
         Check.False(
+            inactive.InspectGate,
+            "inactive directive gate flag false");
+        Check.False(
+            inactive.TimeoutAfterSample,
+            "inactive directive timeout flag false");
+        Check.True(
+            inactive.BelongsTo(owner),
+            "inactive directive retains owner");
+        Check.False(
+            inactive.BelongsTo(new object()),
+            "inactive directive rejects foreign owner");
+        Check.False(
+            inactive.BelongsTo(null),
+            "inactive directive rejects null owner identity");
+
+        DirectiveSnapshot before = SnapshotDirective(inactive, owner);
+        Check.False(
+            inactive.TryAuthorize(),
+            "inactive directive authorization rejected");
+        Check.False(
+            inactive.TryComplete(),
+            "inactive directive completion rejected");
+        Check.False(
+            inactive.TryFail(),
+            "inactive directive failure rejected");
+        Check.Throws<InvalidOperationException>(
+            delegate { inactive.RebaseInitialEpoch(0L, 0); },
+            "inactive directive rebase rejected");
+        AssertDirectiveSnapshot(
+            inactive,
+            before,
+            "inactive directive rejected transitions preserve metadata");
+    }
+
+    private static void AssertIssuedFactoryValidationAndFlagCombinations()
+    {
+        object owner = new object();
+        AssertArgumentNull(
+            "owner",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    null, 1L, 0L, 0, 0.0, false, false);
+            },
+            "issued directive rejects null owner");
+        AssertArgumentOutOfRange(
+            "id",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner, 0L, 0L, 0, 0.0, false, false);
+            },
+            "issued directive rejects zero ID");
+        AssertArgumentOutOfRange(
+            "id",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner, -1L, 0L, 0, 0.0, false, false);
+            },
+            "issued directive rejects negative ID");
+        AssertArgumentOutOfRange(
+            "epoch",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner, 1L, -1L, 0, 0.0, false, false);
+            },
+            "issued directive rejects negative epoch");
+        AssertArgumentOutOfRange(
+            "settleFrames",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner, 1L, 0L, -1, 0.0, false, false);
+            },
+            "issued directive rejects negative settle frames");
+        AssertArgumentOutOfRange(
+            "nowSeconds",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner, 1L, 0L, 0, -0.5, false, false);
+            },
+            "issued directive rejects negative time");
+        AssertArgumentOutOfRange(
+            "nowSeconds",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner, 1L, 0L, 0, Double.NaN, false, false);
+            },
+            "issued directive rejects NaN time");
+        AssertArgumentOutOfRange(
+            "nowSeconds",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner,
+                    1L,
+                    0L,
+                    0,
+                    Double.PositiveInfinity,
+                    false,
+                    false);
+            },
+            "issued directive rejects positive infinite time");
+        AssertArgumentOutOfRange(
+            "nowSeconds",
+            delegate
+            {
+                UpdateDirective.Issued(
+                    owner,
+                    1L,
+                    0L,
+                    0,
+                    Double.NegativeInfinity,
+                    false,
+                    false);
+            },
+            "issued directive rejects negative infinite time");
+
+        UpdateDirective boundary = UpdateDirective.Issued(
+            owner, 1L, 0L, 0, 0.0, false, false);
+        Check.Equal(1L, boundary.Id, "issued directive minimum ID");
+        Check.Equal(0L, boundary.Epoch, "issued directive zero epoch accepted");
+        Check.Equal(
+            0,
+            boundary.SettleFrames,
+            "issued directive zero frames accepted");
+        Check.Equal(
+            0.0,
+            boundary.NowSeconds,
+            "issued directive zero time accepted");
+        Check.True(
+            boundary.TryAuthorize(),
+            "issued boundary cleanup authorization succeeds");
+        Check.True(
+            boundary.TryComplete(),
+            "issued boundary cleanup completion succeeds");
+
+        UpdateDirective maximum = UpdateDirective.Issued(
+            owner,
+            Int64.MaxValue,
+            Int64.MaxValue,
+            Int32.MaxValue,
+            Double.MaxValue,
+            true,
+            true);
+        Check.Equal(
+            Int64.MaxValue,
+            maximum.Id,
+            "issued directive maximum ID accepted");
+        Check.Equal(
+            Int64.MaxValue,
+            maximum.Epoch,
+            "issued directive maximum epoch accepted");
+        Check.Equal(
+            Int32.MaxValue,
+            maximum.SettleFrames,
+            "issued directive maximum frames accepted");
+        Check.Equal(
+            Double.MaxValue,
+            maximum.NowSeconds,
+            "issued directive maximum finite time accepted");
+        Check.True(
+            maximum.TryAuthorize(),
+            "maximum directive cleanup authorization succeeds");
+        Check.True(
+            maximum.TryComplete(),
+            "maximum directive cleanup completion succeeds");
+
+        bool[] flags = new bool[] { false, true };
+        int combination = 0;
+        for (int inspect = 0; inspect < flags.Length; inspect++)
+        {
+            for (int timeout = 0; timeout < flags.Length; timeout++)
+            {
+                combination++;
+                object flagOwner = new object();
+                UpdateDirective directive = UpdateDirective.Issued(
+                    flagOwner,
+                    100L + combination,
+                    10L + combination,
+                    combination,
+                    0.25 * combination,
+                    flags[inspect],
+                    flags[timeout]);
+                string label = "gate flag combination "
+                    + combination.ToString();
+                Check.True(directive.Active, label + " active");
+                Check.Equal(
+                    flags[inspect],
+                    directive.InspectGate,
+                    label + " inspect flag");
+                Check.Equal(
+                    flags[timeout],
+                    directive.TimeoutAfterSample,
+                    label + " timeout flag");
+                DirectiveSnapshot before = SnapshotDirective(
+                    directive, flagOwner);
+                Check.True(
+                    directive.TryAuthorize(),
+                    label + " authorization succeeds");
+                Check.True(
+                    directive.TryComplete(),
+                    label + " completion succeeds");
+                AssertDirectiveSnapshot(
+                    directive,
+                    before,
+                    label + " metadata survives completion");
+            }
+        }
+
+        EqualOwner equalOwner = new EqualOwner(29);
+        EqualOwner equalForeign = new EqualOwner(29);
+        Check.True(
+            equalOwner.Equals(equalForeign),
+            "directive owners compare equal");
+        UpdateDirective identity = UpdateDirective.Issued(
+            equalOwner, 29L, 0L, 0, 0.0, false, true);
+        Check.True(
+            identity.BelongsTo(equalOwner),
+            "directive accepts identical owner reference");
+        Check.False(
+            identity.BelongsTo(equalForeign),
+            "directive rejects equal-looking owner");
+        Check.False(
+            identity.BelongsTo(null),
+            "issued directive rejects null owner identity");
+        Check.True(
+            identity.TryAuthorize(),
+            "identity directive cleanup authorization succeeds");
+        Check.True(
+            identity.TryComplete(),
+            "identity directive cleanup completion succeeds");
+    }
+
+    private static void AssertDirectiveTransitionMatrixAndMetadata()
+    {
+        object issuedOwner = new object();
+        UpdateDirective issued = UpdateDirective.Issued(
+            issuedOwner, 201L, 3L, 4, 2.5, true, false);
+        DirectiveSnapshot issuedBefore = SnapshotDirective(
+            issued, issuedOwner);
+        Check.False(issued.TryComplete(), "issued complete rejected");
+        AssertDirectiveSnapshot(
+            issued,
+            issuedBefore,
+            "issued rejected completion preserves metadata");
+        Check.True(issued.TryAuthorize(), "issued authorization succeeds");
+        Check.False(
+            issued.TryAuthorize(),
+            "authorized directive rejects reauthorization");
+        Check.True(
+            issued.TryFail(),
+            "authorized cleanup after issued matrix succeeds");
+
+        object issuedFailOwner = new object();
+        UpdateDirective issuedFail = UpdateDirective.Issued(
+            issuedFailOwner, 202L, 5L, 6, 3.5, false, true);
+        DirectiveSnapshot issuedFailBefore = SnapshotDirective(
+            issuedFail, issuedFailOwner);
+        Check.True(issuedFail.TryFail(), "issued fail succeeds");
+        Check.False(
+            issuedFail.TryFail(),
+            "issued failed directive rejects second failure");
+        Check.False(
+            issuedFail.TryAuthorize(),
+            "issued failed directive rejects authorization");
+        Check.False(
+            issuedFail.TryComplete(),
+            "issued failed directive rejects completion");
+        AssertDirectiveSnapshot(
+            issuedFail,
+            issuedFailBefore,
+            "issued failure preserves metadata");
+        Check.Throws<InvalidOperationException>(
+            delegate { issuedFail.RebaseInitialEpoch(6L, 7); },
+            "issued failed directive rejects rebase");
+        AssertDirectiveSnapshot(
+            issuedFail,
+            issuedFailBefore,
+            "issued failure rebase rejection preserves metadata");
+
+        object completeOwner = new object();
+        UpdateDirective completed = UpdateDirective.Issued(
+            completeOwner, 203L, 7L, 8, 4.5, true, true);
+        Check.True(
+            completed.TryAuthorize(),
+            "completion path authorization succeeds");
+        DirectiveSnapshot completeBefore = SnapshotDirective(
+            completed, completeOwner);
+        Check.True(completed.TryComplete(), "authorized complete succeeds");
+        Check.False(
+            completed.TryFail(),
+            "completed directive fail rejected");
+        Check.False(
+            completed.TryComplete(),
+            "completed directive second completion rejected");
+        Check.False(
+            completed.TryAuthorize(),
+            "completed directive authorization rejected");
+        AssertDirectiveSnapshot(
+            completed,
+            completeBefore,
+            "completion preserves metadata");
+        Check.Throws<InvalidOperationException>(
+            delegate { completed.RebaseInitialEpoch(8L, 9); },
+            "completed directive rebase rejected");
+        AssertDirectiveSnapshot(
+            completed,
+            completeBefore,
+            "completed rebase rejection preserves metadata");
+
+        object authorizedFailOwner = new object();
+        UpdateDirective authorizedFail = UpdateDirective.Issued(
+            authorizedFailOwner, 204L, 9L, 10, 5.5, false, false);
+        Check.True(
+            authorizedFail.TryAuthorize(),
+            "authorized failure path authorization succeeds");
+        DirectiveSnapshot authorizedFailBefore = SnapshotDirective(
+            authorizedFail, authorizedFailOwner);
+        Check.True(
+            authorizedFail.TryFail(),
+            "authorized fail succeeds");
+        Check.False(
+            authorizedFail.TryFail(),
+            "authorized failed directive second failure rejected");
+        Check.False(
+            authorizedFail.TryComplete(),
+            "authorized failed directive completion rejected");
+        Check.False(
+            authorizedFail.TryAuthorize(),
+            "authorized failed directive authorization rejected");
+        AssertDirectiveSnapshot(
+            authorizedFail,
+            authorizedFailBefore,
+            "authorized failure preserves metadata");
+        Check.Throws<InvalidOperationException>(
+            delegate { authorizedFail.RebaseInitialEpoch(10L, 11); },
+            "authorized failed directive rejects rebase");
+        AssertDirectiveSnapshot(
+            authorizedFail,
+            authorizedFailBefore,
+            "authorized failure rebase rejection preserves metadata");
+    }
+
+    private static void AssertDirectiveRebaseContract()
+    {
+        object issuedOwner = new object();
+        UpdateDirective issued = UpdateDirective.Issued(
+            issuedOwner, 301L, 3L, 4, 2.5, true, true);
+        DirectiveSnapshot issuedBefore = SnapshotDirective(
+            issued, issuedOwner);
+        Check.Throws<InvalidOperationException>(
+            delegate { issued.RebaseInitialEpoch(4L, 1); },
+            "issued rebase rejected");
+        AssertDirectiveSnapshot(
+            issued,
+            issuedBefore,
+            "issued rebase rejection preserves metadata");
+        Check.True(
+            issued.TryAuthorize(),
+            "rebase directive authorization succeeds");
+
+        DirectiveSnapshot beforeNegativeEpoch = SnapshotDirective(
+            issued, issuedOwner);
+        AssertArgumentOutOfRange(
+            "replacementEpoch",
+            delegate { issued.RebaseInitialEpoch(-1L, 1); },
+            "negative replacement epoch");
+        AssertDirectiveSnapshot(
+            issued,
+            beforeNegativeEpoch,
+            "negative replacement epoch preserves metadata");
+
+        DirectiveSnapshot beforeNegativeFrames = SnapshotDirective(
+            issued, issuedOwner);
+        AssertArgumentOutOfRange(
+            "replacementFrames",
+            delegate { issued.RebaseInitialEpoch(4L, -1); },
+            "negative replacement frames");
+        AssertDirectiveSnapshot(
+            issued,
+            beforeNegativeFrames,
+            "negative replacement frames preserve metadata");
+
+        issued.RebaseInitialEpoch(0L, 0);
+        Check.Equal(0L, issued.Epoch, "rebase accepts zero epoch");
+        Check.Equal(0, issued.SettleFrames, "rebase accepts zero frames");
+        Check.Equal(301L, issued.Id, "rebase preserves ID");
+        Check.Equal(2.5, issued.NowSeconds, "rebase preserves time");
+        Check.True(issued.Active, "rebased directive remains active");
+        Check.True(
+            issued.BelongsTo(issuedOwner),
+            "rebase preserves owner identity");
+        Check.False(issued.InspectGate, "rebase clears inspect flag");
+        Check.False(
+            issued.TimeoutAfterSample,
+            "rebase clears timeout flag");
+
+        issued.RebaseInitialEpoch(8L, 2);
+        Check.Equal(8L, issued.Epoch, "repeated rebase replaces epoch");
+        Check.Equal(
+            2,
+            issued.SettleFrames,
+            "repeated rebase replaces frames");
+        Check.Equal(301L, issued.Id, "repeated rebase preserves ID");
+        Check.Equal(2.5, issued.NowSeconds, "repeated rebase preserves time");
+        Check.True(issued.Active, "repeated rebase remains active");
+        Check.True(
+            issued.BelongsTo(issuedOwner),
+            "repeated rebase preserves owner");
+        Check.False(
+            issued.InspectGate,
+            "repeated rebase keeps inspect clear");
+        Check.False(
+            issued.TimeoutAfterSample,
+            "repeated rebase keeps timeout clear");
+
+        issued.RebaseInitialEpoch(Int64.MaxValue, Int32.MaxValue);
+        Check.Equal(
+            Int64.MaxValue,
+            issued.Epoch,
+            "rebase accepts maximum epoch");
+        Check.Equal(
+            Int32.MaxValue,
+            issued.SettleFrames,
+            "rebase accepts maximum frames");
+        Check.Equal(301L, issued.Id, "maximum rebase preserves ID");
+        Check.Equal(2.5, issued.NowSeconds, "maximum rebase preserves time");
+        Check.True(issued.Active, "maximum rebase remains active");
+        Check.True(
+            issued.BelongsTo(issuedOwner),
+            "maximum rebase preserves owner");
+        Check.False(
+            issued.InspectGate,
+            "maximum rebase keeps inspect clear");
+        Check.False(
+            issued.TimeoutAfterSample,
+            "maximum rebase keeps timeout clear");
+
+        Check.True(
+            issued.TryComplete(),
+            "repeatedly rebased directive completes");
+        DirectiveSnapshot consumed = SnapshotDirective(issued, issuedOwner);
+        Check.Throws<InvalidOperationException>(
+            delegate { issued.RebaseInitialEpoch(9L, 3); },
+            "rebased consumed directive rejects rebase");
+        AssertDirectiveSnapshot(
+            issued,
+            consumed,
+            "consumed rebase rejection preserves metadata");
+    }
+
+    private static void AssertDirectiveCompetitions()
+    {
+        object authorizeOwner = new object();
+        UpdateDirective authorize = UpdateDirective.Issued(
+            authorizeOwner,
+            7000000002L,
+            1L,
+            1,
+            1.0,
+            false,
+            false);
+        DirectiveSnapshot authorizeBefore = SnapshotDirective(
+            authorize, authorizeOwner);
+        int authorizeWinners = RunTwoWorkers(
+            delegate { return authorize.TryAuthorize(); },
+            delegate { return authorize.TryAuthorize(); },
+            "directive authorize race");
+        Check.Equal(
+            1,
+            authorizeWinners,
+            "directive authorize race exactly one winner");
+        AssertDirectiveSnapshot(
+            authorize,
+            authorizeBefore,
+            "directive authorize race preserves metadata");
+        Check.True(
+            authorize.TryFail(),
+            "directive authorize race cleanup succeeds");
+
+        object completeOwner = new object();
+        UpdateDirective complete = UpdateDirective.Issued(
+            completeOwner,
+            7000000003L,
+            2L,
+            2,
+            2.0,
+            true,
+            false);
+        Check.True(
+            complete.TryAuthorize(),
+            "directive complete race authorization succeeds");
+        DirectiveSnapshot completeBefore = SnapshotDirective(
+            complete, completeOwner);
+        int completeWinners = RunTwoWorkers(
+            delegate { return complete.TryComplete(); },
+            delegate { return complete.TryComplete(); },
+            "directive complete race");
+        Check.Equal(
+            1,
+            completeWinners,
+            "directive complete race exactly one winner");
+        AssertDirectiveSnapshot(
+            complete,
+            completeBefore,
+            "directive complete race preserves metadata");
+        Check.False(
+            complete.TryFail(),
+            "directive complete race leaves consumed state");
+
+        object issuedFailOwner = new object();
+        UpdateDirective issuedFail = UpdateDirective.Issued(
+            issuedFailOwner,
+            7000000004L,
+            3L,
+            3,
+            3.0,
+            false,
+            true);
+        DirectiveSnapshot issuedFailBefore = SnapshotDirective(
+            issuedFail, issuedFailOwner);
+        int issuedFailWinners = RunTwoWorkers(
+            delegate { return issuedFail.TryFail(); },
+            delegate { return issuedFail.TryFail(); },
+            "directive issued fail race");
+        Check.Equal(
+            1,
+            issuedFailWinners,
+            "directive issued fail race exactly one winner");
+        AssertDirectiveSnapshot(
+            issuedFail,
+            issuedFailBefore,
+            "directive issued fail race preserves metadata");
+        Check.False(
+            issuedFail.TryAuthorize(),
+            "directive issued fail race leaves consumed state");
+
+        object authorizedFailOwner = new object();
+        UpdateDirective authorizedFail = UpdateDirective.Issued(
+            authorizedFailOwner,
+            7000000005L,
+            4L,
+            4,
+            4.0,
+            true,
+            true);
+        Check.True(
+            authorizedFail.TryAuthorize(),
+            "directive authorized fail race authorization succeeds");
+        DirectiveSnapshot authorizedFailBefore = SnapshotDirective(
+            authorizedFail, authorizedFailOwner);
+        int authorizedFailWinners = RunTwoWorkers(
+            delegate { return authorizedFail.TryFail(); },
+            delegate { return authorizedFail.TryFail(); },
+            "directive authorized fail race");
+        Check.Equal(
+            1,
+            authorizedFailWinners,
+            "directive authorized fail race exactly one winner");
+        AssertDirectiveSnapshot(
+            authorizedFail,
+            authorizedFailBefore,
+            "directive authorized fail race preserves metadata");
+        Check.False(
+            authorizedFail.TryComplete(),
+            "directive authorized fail race leaves consumed state");
+
+        object competingOwner = new object();
+        UpdateDirective competing = UpdateDirective.Issued(
+            competingOwner,
+            7000000006L,
+            5L,
+            5,
+            5.0,
+            false,
+            false);
+        Check.True(
+            competing.TryAuthorize(),
+            "complete-fail race authorization succeeds");
+        DirectiveSnapshot competingBefore = SnapshotDirective(
+            competing, competingOwner);
+        int competingWinners = RunTwoWorkers(
+            delegate { return competing.TryComplete(); },
+            delegate { return competing.TryFail(); },
+            "directive complete-fail race");
+        Check.Equal(
+            1,
+            competingWinners,
+            "authorized completion and failure exactly one winner");
+        AssertDirectiveSnapshot(
+            competing,
+            competingBefore,
+            "complete-fail race preserves metadata");
+        Check.False(
+            competing.TryComplete(),
+            "complete-fail race rejects later completion");
+        Check.False(
+            competing.TryFail(),
+            "complete-fail race rejects later failure");
+    }
+
+    private static void AssertGateSampleContract()
+    {
+        AssertGlobalInternalEnum(typeof(GateSampleKind), "GateSampleKind");
+        string[] names = new string[]
+        {
+            "NotInspected", "NonQuiescent", "Captured"
+        };
+        Check.Sequence(
+            names,
+            Enum.GetNames(typeof(GateSampleKind)),
+            "gate sample kind names");
+        int[] actualValues = new int[names.Length];
+        for (int index = 0; index < names.Length; index++)
+        {
+            actualValues[index] = (int)Enum.Parse(
+                typeof(GateSampleKind), names[index], false);
+        }
+        Check.Sequence(
+            new int[] { 0, 1, 2 },
+            actualValues,
+            "gate sample kind numeric values");
+
+        Type type = typeof(GateSample);
+        AssertGlobalInternalSealed(type, "GateSample");
+        ConstructorInfo[] constructors = type.GetConstructors(
+            BindingFlags.Instance
+            | BindingFlags.Public
+            | BindingFlags.NonPublic
+            | BindingFlags.DeclaredOnly);
+        Check.Equal(1, constructors.Length, "GateSample constructor count");
+        Check.True(
+            constructors[0].IsPrivate,
+            "GateSample constructor is private");
+        ParameterInfo[] constructorParameters =
+            constructors[0].GetParameters();
+        Check.Equal(
+            2,
+            constructorParameters.Length,
+            "GateSample constructor parameter count");
+        Check.Equal(
+            typeof(GateSampleKind),
+            constructorParameters[0].ParameterType,
+            "GateSample constructor kind type");
+        Check.Equal(
+            typeof(CaptureRecord),
+            constructorParameters[1].ParameterType,
+            "GateSample constructor capture type");
+
+        GateSample notInspected = GateSample.NotInspected();
+        Check.Equal(
+            GateSampleKind.NotInspected,
+            notInspected.Kind,
+            "not-inspected sample kind");
+        Check.True(
+            notInspected.Capture == null,
+            "not-inspected sample has null capture");
+
+        GateSample nonQuiescent = GateSample.NonQuiescent();
+        Check.Equal(
+            GateSampleKind.NonQuiescent,
+            nonQuiescent.Kind,
+            "nonquiescent sample kind");
+        Check.True(
+            nonQuiescent.Capture == null,
+            "nonquiescent sample has null capture");
+
+        CaptureRecord capture = ProtocolSamples.Capture("gate-sample");
+        GateSample captured = GateSample.Captured(capture);
+        Check.Equal(
+            GateSampleKind.Captured,
+            captured.Kind,
+            "captured sample kind");
+        Check.Same(
+            capture,
+            captured.Capture,
+            "captured sample preserves identity");
+        AssertArgumentNull(
+            "capture",
+            delegate { GateSample.Captured(null); },
+            "captured null rejected");
+    }
+
+    private static void AssertPassiveReporterContract()
+    {
+        Type type = typeof(IPassiveReporter);
+        Check.True(type.Namespace == null, "IPassiveReporter global namespace");
+        Check.True(type.IsNotPublic, "IPassiveReporter internal visibility");
+        Check.True(type.IsInterface, "IPassiveReporter interface shape");
+
+        MethodInfo[] methods = type.GetMethods(
+            BindingFlags.Instance
+            | BindingFlags.Public
+            | BindingFlags.NonPublic
+            | BindingFlags.DeclaredOnly);
+        Check.Equal(4, methods.Length, "reporter method count");
+        AssertReporterMethod(
+            methods,
+            "Ready",
+            new Type[] { typeof(int) },
+            new string[] { "completedInputs" });
+        AssertReporterMethod(
+            methods,
+            "Complete",
+            new Type[0],
+            new string[0]);
+        AssertReporterMethod(
+            methods,
+            "Failed",
+            new Type[] { typeof(string) },
+            new string[] { "code" });
+        AssertReporterMethod(
+            methods,
+            "Diagnostic",
+            new Type[] { typeof(string) },
+            new string[] { "message" });
+
+        BoundaryFakePassiveReporter fake = new BoundaryFakePassiveReporter();
+        IPassiveReporter contract = fake;
+        Check.Same(fake, contract, "fake reporter implements interface");
+        fake.Ready(6);
+        fake.Complete();
+        fake.Failed("capture_failed");
+        fake.Diagnostic("detail");
+        Check.Equal(1, fake.ReadyCalls, "reporter Ready call count");
+        Check.Equal(6, fake.CompletedInputs, "reporter Ready value");
+        Check.Equal(1, fake.CompleteCalls, "reporter Complete call count");
+        Check.Equal(1, fake.FailedCalls, "reporter Failed call count");
+        Check.Equal(
+            "capture_failed",
+            fake.FailedCode,
+            "reporter Failed value");
+        Check.Equal(
+            1,
+            fake.DiagnosticCalls,
+            "reporter Diagnostic call count");
+        Check.Equal(
+            "detail",
+            fake.DiagnosticMessage,
+            "reporter Diagnostic value");
+    }
+
+    private static void AssertReporterMethod(
+        MethodInfo[] methods,
+        string name,
+        Type[] parameterTypes,
+        string[] parameterNames)
+    {
+        MethodInfo found = null;
+        for (int index = 0; index < methods.Length; index++)
+        {
+            if (String.Equals(
+                    methods[index].Name,
+                    name,
+                    StringComparison.Ordinal))
+            {
+                Check.True(found == null, "reporter method unique " + name);
+                found = methods[index];
+            }
+        }
+        Check.True(found != null, "reporter method present " + name);
+        Check.Equal(typeof(void), found.ReturnType, "reporter return " + name);
+        Check.True(found.IsPublic, "reporter method public " + name);
+        Check.True(found.IsAbstract, "reporter method abstract " + name);
+        Check.False(found.IsStatic, "reporter method instance " + name);
+        ParameterInfo[] parameters = found.GetParameters();
+        Check.Equal(
+            parameterTypes.Length,
+            parameters.Length,
+            "reporter parameter count " + name);
+        Check.Equal(
+            parameterTypes.Length,
+            parameterNames.Length,
+            "reporter expected parameter metadata " + name);
+        for (int index = 0; index < parameters.Length; index++)
+        {
+            Check.Equal(
+                parameterTypes[index],
+                parameters[index].ParameterType,
+                "reporter parameter type " + name + " " + index.ToString());
+            Check.Equal(
+                parameterNames[index],
+                parameters[index].Name,
+                "reporter parameter name " + name + " " + index.ToString());
+        }
+    }
+
+    private static HookSnapshot SnapshotHook(
+        HookToken token,
+        object owner)
+    {
+        return new HookSnapshot
+        {
+            Owner = owner,
+            Id = token.Id,
+            Kind = token.Kind,
+            Active = token.Active,
+            BelongsToOwner = token.BelongsTo(owner)
+        };
+    }
+
+    private static void AssertHookSnapshot(
+        HookToken token,
+        HookSnapshot expected,
+        string label)
+    {
+        Check.Equal(expected.Id, token.Id, label + " ID");
+        Check.Equal(expected.Kind, token.Kind, label + " kind");
+        Check.Equal(expected.Active, token.Active, label + " active");
+        Check.Equal(
+            expected.BelongsToOwner,
+            token.BelongsTo(expected.Owner),
+            label + " owner identity");
+        Check.False(
+            token.BelongsTo(new object()),
+            label + " rejects foreign owner");
+    }
+
+    private static DirectiveSnapshot SnapshotDirective(
+        UpdateDirective directive,
+        object owner)
+    {
+        return new DirectiveSnapshot
+        {
+            Owner = owner,
+            Id = directive.Id,
+            Epoch = directive.Epoch,
+            SettleFrames = directive.SettleFrames,
+            NowSeconds = directive.NowSeconds,
+            Active = directive.Active,
+            InspectGate = directive.InspectGate,
+            TimeoutAfterSample = directive.TimeoutAfterSample,
+            BelongsToOwner = directive.BelongsTo(owner)
+        };
+    }
+
+    private static void AssertDirectiveSnapshot(
+        UpdateDirective directive,
+        DirectiveSnapshot expected,
+        string label)
+    {
+        Check.Equal(expected.Id, directive.Id, label + " ID");
+        Check.Equal(expected.Epoch, directive.Epoch, label + " epoch");
+        Check.Equal(
+            expected.SettleFrames,
+            directive.SettleFrames,
+            label + " settle frames");
+        Check.Equal(
+            expected.NowSeconds,
+            directive.NowSeconds,
+            label + " time");
+        Check.Equal(expected.Active, directive.Active, label + " active");
+        Check.Equal(
+            expected.InspectGate,
+            directive.InspectGate,
+            label + " inspect flag");
+        Check.Equal(
+            expected.TimeoutAfterSample,
             directive.TimeoutAfterSample,
-            "replacement cannot inherit timeout");
-        Check.True(directive.TryComplete(), "authorized to consumed");
-        Check.False(directive.TryComplete(), "consume once");
+            label + " timeout flag");
+        Check.Equal(
+            expected.BelongsToOwner,
+            directive.BelongsTo(expected.Owner),
+            label + " owner identity");
+        Check.False(
+            directive.BelongsTo(new object()),
+            label + " rejects foreign owner");
+    }
+
+    private static int RunTwoWorkers(
+        Func<bool> leftAction,
+        Func<bool> rightAction,
+        string label)
+    {
+        if (leftAction == null)
+            throw new ArgumentNullException("leftAction");
+        if (rightAction == null)
+            throw new ArgumentNullException("rightAction");
+
+        ManualResetEvent startGate = new ManualResetEvent(false);
+        ManualResetEvent leftReady = new ManualResetEvent(false);
+        ManualResetEvent rightReady = new ManualResetEvent(false);
+        bool[] results = new bool[2];
+        Exception[] failures = new Exception[2];
+        Thread left = CreateWorker(
+            leftAction,
+            startGate,
+            leftReady,
+            results,
+            failures,
+            0,
+            label + " left");
+        Thread right = CreateWorker(
+            rightAction,
+            startGate,
+            rightReady,
+            results,
+            failures,
+            1,
+            label + " right");
+
+        bool leftWasReady = false;
+        bool rightWasReady = false;
+        try
+        {
+            left.Start();
+            right.Start();
+            leftWasReady = leftReady.WaitOne(WorkerTimeoutMilliseconds);
+            rightWasReady = rightReady.WaitOne(WorkerTimeoutMilliseconds);
+        }
+        finally
+        {
+            startGate.Set();
+        }
+
+        bool leftJoined = left.Join(WorkerTimeoutMilliseconds);
+        bool rightJoined = right.Join(WorkerTimeoutMilliseconds);
+        Check.True(leftWasReady, label + " left ready timeout");
+        Check.True(rightWasReady, label + " right ready timeout");
+        Check.True(leftJoined, label + " left join timeout");
+        Check.True(rightJoined, label + " right join timeout");
+        if (failures[0] != null)
+        {
+            throw new InvalidOperationException(
+                label + " left worker failed", failures[0]);
+        }
+        if (failures[1] != null)
+        {
+            throw new InvalidOperationException(
+                label + " right worker failed", failures[1]);
+        }
+        return (results[0] ? 1 : 0) + (results[1] ? 1 : 0);
+    }
+
+    private static Thread CreateWorker(
+        Func<bool> action,
+        ManualResetEvent startGate,
+        ManualResetEvent ready,
+        bool[] results,
+        Exception[] failures,
+        int index,
+        string label)
+    {
+        Thread worker = new Thread(
+            delegate()
+            {
+                try
+                {
+                    ready.Set();
+                    if (!startGate.WaitOne(WorkerTimeoutMilliseconds))
+                    {
+                        throw new InvalidOperationException(
+                            label + " start gate timeout");
+                    }
+                    results[index] = action();
+                }
+                catch (Exception error)
+                {
+                    failures[index] = error;
+                }
+            });
+        worker.IsBackground = true;
+        return worker;
+    }
+
+    private static void AssertGlobalInternalSealed(Type type, string label)
+    {
+        Check.True(type.Namespace == null, label + " global namespace");
+        Check.True(type.IsNotPublic, label + " internal visibility");
+        Check.True(type.IsClass, label + " class shape");
+        Check.True(type.IsSealed, label + " sealed shape");
+    }
+
+    private static void AssertGlobalInternalEnum(Type type, string label)
+    {
+        Check.True(type.Namespace == null, label + " global namespace");
+        Check.True(type.IsNotPublic, label + " internal visibility");
+        Check.True(type.IsEnum, label + " enum shape");
+        Check.Equal(
+            typeof(int),
+            Enum.GetUnderlyingType(type),
+            label + " Int32 underlying type");
+    }
+
+    private static void AssertArgumentNull(
+        string parameterName,
+        Action action,
+        string message)
+    {
+        ArgumentNullException error = Check.Throws<ArgumentNullException>(
+            action, message);
+        Check.Equal(parameterName, error.ParamName, message + " parameter");
+    }
+
+    private static void AssertArgumentOutOfRange(
+        string parameterName,
+        Action action,
+        string message)
+    {
+        ArgumentOutOfRangeException error =
+            Check.Throws<ArgumentOutOfRangeException>(action, message);
+        Check.Equal(parameterName, error.ParamName, message + " parameter");
     }
 }
-~~~
+```
 
-Add PassiveDriverBoundaryTests.Register(tests) after
-TraceSinkTests.Register(tests).
-The cumulative Program manifest at this checkpoint is exactly:
+Replace `oracle/plugin/tests/Program.cs` exactly:
 
-~~~csharp
-tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+```csharp
+using System;
+using System.Collections.Generic;
+
+internal static class Program
 {
-    { "protocol", 4 },
-    { "encoding", 5 },
-    { "sink", 6 },
-    { "driver-boundary", 2 }
-});
-~~~
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        PassiveDriverBoundaryTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 },
+            { "driver-boundary", 2 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
+}
+```
 
-- [ ] **Step 2: Run RED**
+Apply only those two working-tree changes and do not stage them. Require:
 
-~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test ! -e oracle/plugin/Core/CaptureException.cs
+test ! -e oracle/plugin/Core/PassiveDriverBoundaries.cs
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "oracle/plugin/tests/PassiveDriverBoundaryTests.cs"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 3: Run the exact seven-surface, fourteen-diagnostic RED**
+
+Run only the focused cohort, capture the numeric exit status separately, and
+accept only the frozen candidate-preflight diagnostics. All Boolean operators
+in the awk program remain at the ends of their physical lines for macOS BSD
+awk compatibility.
+
+```bash
+set -euo pipefail
+set +e
+red_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary
-~~~
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
+red_status="$?"
+set -e
+printf '%s\n' "$red_output"
+test "$red_status" -ne 0
+printf '%s\n' "$red_output" | awk '
+  BEGIN {
+    diagnosticTotal = 0
+    capture = 0
+    gate = 0
+    gateKind = 0
+    kind = 0
+    hook = 0
+    reporter = 0
+    update = 0
+  }
+  /: error / || /: warning / {
+    diagnosticTotal++
+    if ($0 !~ /^.*\/oracle\/plugin\/tests\/PassiveDriverBoundaryTests\.cs\([0-9]+,[0-9]+\): error CS0246: The type or namespace name \047(CaptureException|GateSample|GateSampleKind|HookKind|HookToken|IPassiveReporter|UpdateDirective)\047 could not be found \(are you missing a using directive or an assembly reference\?\) \[.*\/oracle\/plugin\/tests\/SsrOracle\.UnitTests\.csproj\]$/)
+      exit 1
+    if ($0 ~ /\047CaptureException\047/)
+      capture++
+    else if ($0 ~ /\047GateSample\047/)
+      gate++
+    else if ($0 ~ /\047GateSampleKind\047/)
+      gateKind++
+    else if ($0 ~ /\047HookKind\047/)
+      kind++
+    else if ($0 ~ /\047HookToken\047/)
+      hook++
+    else if ($0 ~ /\047IPassiveReporter\047/)
+      reporter++
+    else if ($0 ~ /\047UpdateDirective\047/)
+      update++
+    else
+      exit 1
+  }
+  END {
+    if (diagnosticTotal != 14 ||
+        capture != 1 || gate != 1 || gateKind != 1 ||
+        kind != 2 || hook != 3 || reporter != 3 || update != 3)
+      exit 1
+  }
+'
+case "$red_output" in
+  *"cohort 'driver-boundary'"*|*"SDK"*|*"assets file"*|\
+  *"fixture"*|*"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|*"NU1"*|\
+  *"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test ! -e oracle/plugin/Core/CaptureException.cs
+test ! -e oracle/plugin/Core/PassiveDriverBoundaries.cs
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "oracle/plugin/tests/PassiveDriverBoundaryTests.cs"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
 
-Require a compiler error naming CaptureException, HookToken, or
-UpdateDirective. A fixture, SDK, or assets failure is not the intended RED.
+The only accepted compiler code is `CS0246`; the only accepted source
+basename is `PassiveDriverBoundaryTests.cs`; and the exact missing-type
+multiset is `CaptureException` once, `GateSample` once,
+`GateSampleKind` once, `HookKind` twice, `HookToken` three times,
+`IPassiveReporter` three times, and `UpdateDirective` three times. A
+compiler warning, runtime test failure, SDK/assets/fixture/permission/restore/
+package failure, extra type, extra diagnostic, different count, or different
+source is not the intended RED.
 
-- [ ] **Step 3: Implement the complete boundaries**
+The awk program consumes the complete `red_output`, not a prefiltered compiler
+subset. Every line containing `: error ` or `: warning ` must match the exact
+allowed `PassiveDriverBoundaryTests.cs` `CS0246` shape before contributing to
+the fourteen-instance multiset. This rejects extra compiler codes, MSBuild
+errors, arbitrary warnings, extra files, extra type names, and count drift.
 
-Create CaptureException.cs exactly. Task 7 consumes this type and must not
-redeclare it in GameObservation.cs:
+- [ ] **Step 4: Apply the two exact production bodies**
 
-~~~csharp
+Create `oracle/plugin/Core/CaptureException.cs` exactly:
+
+```csharp
 using System;
 
 internal sealed class CaptureException : Exception
@@ -2975,21 +7999,21 @@ internal sealed class CaptureException : Exception
     {
     }
 }
-~~~
+```
 
-Create PassiveDriverBoundaries.cs exactly:
+Create `oracle/plugin/Core/PassiveDriverBoundaries.cs` exactly:
 
-~~~csharp
+```csharp
 using System;
 using System.Threading;
 
 internal enum HookKind
 {
-    PlayerPoll,
-    ProcessInput,
-    Undo,
-    Restart,
-    StateSet
+    PlayerPoll = 0,
+    ProcessInput = 1,
+    Undo = 2,
+    Restart = 3,
+    StateSet = 4
 }
 
 internal sealed class HookToken
@@ -3011,6 +8035,7 @@ internal sealed class HookToken
 
     internal static HookToken Inert(HookKind kind)
     {
+        ValidateKind(kind);
         return new HookToken(null, 0L, kind, false);
     }
 
@@ -3023,18 +8048,34 @@ internal sealed class HookToken
             throw new ArgumentNullException("owner");
         if (id <= 0L)
             throw new ArgumentOutOfRangeException("id");
+        ValidateKind(kind);
         return new HookToken(owner, id, kind, true);
     }
 
     internal bool BelongsTo(object expectedOwner)
     {
-        return Object.ReferenceEquals(owner, expectedOwner);
+        return Active && Object.ReferenceEquals(owner, expectedOwner);
     }
 
     internal bool TryConsume()
     {
         return Active
             && Interlocked.Exchange(ref consumed, 1) == 0;
+    }
+
+    private static void ValidateKind(HookKind kind)
+    {
+        switch (kind)
+        {
+            case HookKind.PlayerPoll:
+            case HookKind.ProcessInput:
+            case HookKind.Undo:
+            case HookKind.Restart:
+            case HookKind.StateSet:
+                return;
+            default:
+                throw new ArgumentOutOfRangeException("kind");
+        }
     }
 }
 
@@ -3074,6 +8115,8 @@ internal sealed class UpdateDirective
 
     internal static UpdateDirective Inactive(object owner)
     {
+        if (owner == null)
+            throw new ArgumentNullException("owner");
         return new UpdateDirective(
             owner, 0L, 0L, 0, 0.0, false, false, false);
     }
@@ -3091,6 +8134,16 @@ internal sealed class UpdateDirective
             throw new ArgumentNullException("owner");
         if (id <= 0L)
             throw new ArgumentOutOfRangeException("id");
+        if (epoch < 0L)
+            throw new ArgumentOutOfRangeException("epoch");
+        if (settleFrames < 0)
+            throw new ArgumentOutOfRangeException("settleFrames");
+        if (Double.IsNaN(nowSeconds)
+            || Double.IsInfinity(nowSeconds)
+            || nowSeconds < 0.0)
+        {
+            throw new ArgumentOutOfRangeException("nowSeconds");
+        }
         return new UpdateDirective(
             owner,
             id,
@@ -3118,8 +8171,12 @@ internal sealed class UpdateDirective
         int replacementFrames)
     {
         if (Interlocked.CompareExchange(ref stage, 1, 1) != 1)
+        {
             throw new InvalidOperationException(
                 "only an authorized directive may be rebased");
+        }
+        if (replacementEpoch < 0L)
+            throw new ArgumentOutOfRangeException("replacementEpoch");
         if (replacementFrames < 0)
             throw new ArgumentOutOfRangeException("replacementFrames");
         Epoch = replacementEpoch;
@@ -3151,18 +8208,13 @@ internal sealed class UpdateDirective
             }
         }
     }
-
-    internal bool TryConsume()
-    {
-        return TryFail();
-    }
 }
 
 internal enum GateSampleKind
 {
-    NotInspected,
-    NonQuiescent,
-    Captured
+    NotInspected = 0,
+    NonQuiescent = 1,
+    Captured = 2
 }
 
 internal sealed class GateSample
@@ -3201,34 +8253,4006 @@ internal interface IPassiveReporter
     void Failed(string code);
     void Diagnostic(string message);
 }
+```
 
-~~~
+The implementation deliberately has no `UpdateDirective.TryConsume` alias.
+`HookKind` and `GateSampleKind` pin explicit numeric values. Both
+`HookToken` factories validate the kind. An inert hook cannot belong even to
+null. Directive factories validate every scalar, accept all four independent
+flag combinations, and preserve metadata after consumption. Rebase is
+authorized-only, accepts zero boundaries, rejects negative replacements
+without mutation, permits repeated main-thread rebases, and clears both gate
+flags. Every competing lifecycle transition uses `Interlocked`; rebase and
+metadata reads are not concurrent operations.
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 5: Run provisional focused/full/net35 GREEN and exact four-file gates**
 
-~~~bash
+```bash
+set -euo pipefail
+focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
+test "$focused_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$focused_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror 2>&1)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$focused_output
+$full_output
+$build_output" in
+  *"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 6: Prove the hardened assertions with twelve controlled mutants**
+
+Run M01 through M12 in order. Every mutant below is a complete five-action
+sequence: pristine gate, exact forward patch, persisted focused evidence,
+mandatory exact inverse plus restoration gate, and only then acceptance of the
+persisted exit status and named first failure. Never inspect or branch on
+mutation evidence before the inverse and restoration pass. No mutant is staged
+or committed. M04's sentinel ID `7000000001L` appears nowhere else; its
+mutation-local two-party barrier makes the race failure deterministic while
+all ordinary paths retain the atomic implementation.
+
+### M01 — discard the wrapped `CaptureException` inner exception
+
+**Why this mutant is binding:** the message-only constructor and wrapped message still pass; the
+identical injected inner reference is the first corrupted observation.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureException.cs
+@@
+     internal CaptureException(string message, Exception inner)
+-        : base(message, inner)
++        : base(message)
+     {
+     }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-boundary
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
-  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt'
+set -e
+printf '%s\n' "captured M01 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureException.cs
+@@
+     internal CaptureException(string message, Exception inner)
+-        : base(message)
++        : base(message, inner)
+     {
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
 git diff --check
-git diff -- oracle/plugin/Core/CaptureException.cs \
-  oracle/plugin/Core/PassiveDriverBoundaries.cs \
-  oracle/plugin/tests/PassiveDriverBoundaryTests.cs \
-  oracle/plugin/tests/Program.cs
-~~~
+```
 
-- [ ] **Step 5: Commit only the Task 4.1 boundary slice**
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
 
-~~~bash
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M01-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M01 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"wrapped capture inner identity"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `hook token is owner bound and single consume`.
+- Required full first-failure fragment: `wrapped capture inner identity`.
+
+### M02 — move `HookKind.StateSet` outside its exact numeric slot
+
+**Why this mutant is binding:** all five names remain compilable, their value-sorted order remains
+unchanged, and the switch remains valid. The first changed observation is
+therefore the closed numeric vector rather than the preceding names check.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-    StateSet = 4
++    StateSet = 5
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt'
+set -e
+printf '%s\n' "captured M02 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-    StateSet = 5
++    StateSet = 4
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M02-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M02 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"hook kind numeric values at index 4"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `hook token is owner bound and single consume`.
+- Required full first-failure fragment: `hook kind numeric values at index 4`.
+
+### M03 — let an inert hook token belong to null
+
+**Why this mutant is binding:** issued-owner identity remains correct; the exact inactive ownership
+rule is the first behavior changed.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool BelongsTo(object expectedOwner)
+     {
+-        return Active && Object.ReferenceEquals(owner, expectedOwner);
++        return Object.ReferenceEquals(owner, expectedOwner);
+     }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt'
+set -e
+printf '%s\n' "captured M03 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool BelongsTo(object expectedOwner)
+     {
+-        return Object.ReferenceEquals(owner, expectedOwner);
++        return Active && Object.ReferenceEquals(owner, expectedOwner);
+     }
+-
++
+     internal bool TryConsume()
+     {
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M03-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M03 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"inert token rejects null owner"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `hook token is owner bound and single consume`.
+- Required full first-failure fragment: `inert token rejects null owner`.
+
+### M04 — replace atomic hook consumption with a deterministic two-reader race
+
+**Why this mutant is binding:** both sentinel workers read zero before either writes. The second
+arrival releases both within a finite timeout, so both return true
+deterministically. All non-sentinel paths retain the approved atomic code.
+The test workers themselves remain background threads with longer finite
+wait/join timeouts and a `finally` release of their start gate.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+ internal sealed class HookToken
+ {
++    private const long MutationRaceId = 7000000001L;
++    private static readonly ManualResetEvent MutationRaceRelease =
++        new ManualResetEvent(false);
++    private static int mutationRaceArrivals;
+     private readonly object owner;
+     private int consumed;
+@@
+     internal bool TryConsume()
+     {
+-        return Active
+-            && Interlocked.Exchange(ref consumed, 1) == 0;
++        if (!Active)
++            return false;
++        if (Id == MutationRaceId)
++        {
++            int observed = consumed;
++            if (Interlocked.Increment(ref mutationRaceArrivals) == 2)
++                MutationRaceRelease.Set();
++            if (!MutationRaceRelease.WaitOne(2000, false))
++            {
++                throw new InvalidOperationException(
++                    "mutation race barrier timed out");
++            }
++            consumed = 1;
++            return observed == 0;
++        }
++        return Interlocked.Exchange(ref consumed, 1) == 0;
+     }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt'
+set -e
+printf '%s\n' "captured M04 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+ internal sealed class HookToken
+ {
+-    private const long MutationRaceId = 7000000001L;
+-    private static readonly ManualResetEvent MutationRaceRelease =
+-        new ManualResetEvent(false);
+-    private static int mutationRaceArrivals;
+     private readonly object owner;
+     private int consumed;
+@@
+     internal bool TryConsume()
+     {
+-        if (!Active)
+-            return false;
+-        if (Id == MutationRaceId)
+-        {
+-            int observed = consumed;
+-            if (Interlocked.Increment(ref mutationRaceArrivals) == 2)
+-                MutationRaceRelease.Set();
+-            if (!MutationRaceRelease.WaitOne(2000, false))
+-            {
+-                throw new InvalidOperationException(
+-                    "mutation race barrier timed out");
+-            }
+-            consumed = 1;
+-            return observed == 0;
+-        }
+-        return Interlocked.Exchange(ref consumed, 1) == 0;
++        return Active
++            && Interlocked.Exchange(ref consumed, 1) == 0;
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M04-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M04 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"hook race exactly one winner"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `hook token is owner bound and single consume`.
+- Required full first-failure fragment: `hook race exactly one winner`.
+
+### M05 — mark every inactive directive active
+
+**Why this mutant is binding:** inactive metadata remains zero and its stage remains consumed; the
+direct `Active` shape assertion is the first changed observation.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+         Epoch = epoch;
+         SettleFrames = settleFrames;
+         NowSeconds = nowSeconds;
+-        Active = active;
++        Active = true;
+         InspectGate = inspectGate;
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt'
+set -e
+printf '%s\n' "captured M05 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+         Epoch = epoch;
+         SettleFrames = settleFrames;
+         NowSeconds = nowSeconds;
+-        Active = true;
++        Active = active;
+         InspectGate = inspectGate;
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M05-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M05 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"inactive directive inactive"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `inactive directive inactive`.
+
+### M06 — permit completion from both authorized and issued
+
+**Why this mutant is binding:** inactive checks and every earlier authorized completion still pass.
+Short-circuiting performs the second CAS only when the first observes issued
+stage 0, so the issued transition-matrix probe becomes a successful and
+consuming operation.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+         return Active
+-            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
++            && (Interlocked.CompareExchange(ref stage, 2, 1) == 1
++                || Interlocked.CompareExchange(ref stage, 2, 0) == 0);
+     }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt'
+set -e
+printf '%s\n' "captured M06 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+         return Active
+-            && (Interlocked.CompareExchange(ref stage, 2, 1) == 1
+-                || Interlocked.CompareExchange(ref stage, 2, 0) == 0);
++            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M06-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M06 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"issued complete rejected"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `issued complete rejected`.
+
+### M07 — make issued-state failure impossible
+
+**Why this mutant is binding:** the complete and authorized-failure paths are untouched; the first
+issued-failure transition returns false instead of claiming stage 0.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+             int observed =
+                 Interlocked.CompareExchange(ref stage, 0, 0);
+-            if (observed == 2)
++            if (observed == 0 || observed == 2)
+                 return false;
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt'
+set -e
+printf '%s\n' "captured M07 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+             int observed =
+                 Interlocked.CompareExchange(ref stage, 0, 0);
+-            if (observed == 0 || observed == 2)
++            if (observed == 2)
+                 return false;
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M07-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M07 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"issued fail succeeds"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `issued fail succeeds`.
+
+### M08 — let completion win without consuming the authorized stage
+
+**Why this mutant is binding:** the first completion still reports success, but restoring stage 1
+permits the immediately following failure to report a second winner. The
+required assertion order makes this deterministic and targeted.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+-        return Active
+-            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
++        if (!Active
++            || Interlocked.CompareExchange(ref stage, 2, 1) != 1)
++        {
++            return false;
++        }
++        stage = 1;
++        return true;
+     }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt'
+set -e
+printf '%s\n' "captured M08 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+-        if (!Active
+-            || Interlocked.CompareExchange(ref stage, 2, 1) != 1)
+-        {
+-            return false;
+-        }
+-        stage = 1;
+-        return true;
++        return Active
++            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M08-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M08 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"completed directive fail rejected"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `completed directive fail rejected`.
+
+### M09 — weaken the rebase guard to admit issued directives
+
+**Why this mutant is binding:** inactive and every earlier consumed directive remain stage 2 and
+still throw. Authorized rebase remains legal, but valid replacement values
+now make an issued rebase return normally at the named oracle.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal void RebaseInitialEpoch(
+         long replacementEpoch,
+         int replacementFrames)
+     {
+-        if (Interlocked.CompareExchange(ref stage, 1, 1) != 1)
++        if (Interlocked.CompareExchange(ref stage, 1, 1) == 2)
+         {
+             throw new InvalidOperationException(
+                 "only an authorized directive may be rebased");
+         }
+         if (replacementEpoch < 0L)
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt'
+set -e
+printf '%s\n' "captured M09 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal void RebaseInitialEpoch(
+         long replacementEpoch,
+         int replacementFrames)
+     {
+-        if (Interlocked.CompareExchange(ref stage, 1, 1) == 2)
++        if (Interlocked.CompareExchange(ref stage, 1, 1) != 1)
+         {
+             throw new InvalidOperationException(
+                 "only an authorized directive may be rebased");
+         }
+         if (replacementEpoch < 0L)
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M09-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M09 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"issued rebase rejected: no exception"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `issued rebase rejected: no exception`.
+
+### M10 — accept replacement frame `-1`
+
+**Why this mutant is binding:** the preceding authorized-stage and negative-epoch checks remain
+correct; exactly the required `-1` frame boundary is admitted.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-        if (replacementFrames < 0)
++        if (replacementFrames < -1)
+             throw new ArgumentOutOfRangeException("replacementFrames");
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt'
+set -e
+printf '%s\n' "captured M10 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-        if (replacementFrames < -1)
++        if (replacementFrames < 0)
+             throw new ArgumentOutOfRangeException("replacementFrames");
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M10-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M10 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"negative replacement frames: no exception"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `negative replacement frames: no exception`.
+
+### M11 — accept a null captured sample
+
+**Why this mutant is binding:** all three kind values and non-null sample identity remain unchanged;
+only the closed-factory null boundary is lost.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal static GateSample Captured(CaptureRecord capture)
+     {
+-        if (capture == null)
+-            throw new ArgumentNullException("capture");
+         return new GateSample(GateSampleKind.Captured, capture);
+     }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt'
+set -e
+printf '%s\n' "captured M11 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal static GateSample Captured(CaptureRecord capture)
+     {
++        if (capture == null)
++            throw new ArgumentNullException("capture");
+         return new GateSample(GateSampleKind.Captured, capture);
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M11-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M11 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"captured null rejected: no exception"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `captured null rejected: no exception`.
+
+### M12 — remove `Diagnostic` only from the reporter interface
+
+**Why this mutant is binding:** the concrete fake deliberately retains its public
+`Diagnostic(string)` method, so compilation and direct fake calls still
+succeed. Reflection over `IPassiveReporter` alone exposes the missing member.
+
+**Action 1 — prove pristine bytes, index, scope, and status.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt'
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 2 — apply this exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     void Ready(int completedInputs);
+     void Complete();
+     void Failed(string code);
+-    void Diagnostic(string message);
+ }
+*** End Patch
+```
+
+**Action 3 — persist the real focused result without evaluating it.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt'
+set -e
+printf '%s\n' "captured M12 focused evidence; inverse is now mandatory"
+exit 0
+```
+
+The capture block deliberately exits zero after attempting both evidence writes. Apply the inverse even if evidence creation failed; the post-restoration acceptance then fails safely.
+
+**Action 4 — apply this exact inverse immediately, then prove complete restoration.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     void Ready(int completedInputs);
+     void Complete();
+     void Failed(string code);
++    void Diagnostic(string message);
+ }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+**Action 5 — only after restoration, accept the persisted named behavioral failure.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-M12-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "M12 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"reporter method count"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- Required registration: `update directive authorizes rebases and consumes once`.
+- Required full first-failure fragment: `reporter method count`.
+
+- [ ] **Step 7: Run the fresh post-mutation precommit GREEN gate**
+
+This is a new execution after M12's inverse and acceptance, not evidence reused
+from Step 5.
+
+```bash
+set -euo pipefail
+focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
+test "$focused_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$focused_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror 2>&1)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$focused_output
+$full_output
+$build_output" in
+  *"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+```
+
+- [ ] **Step 8: Re-establish GREEN, stage only four paths, and commit**
+
+Immediately before staging, independently rerun the complete behavioral,
+net35, hash, index, scope, status, and diff preconditions:
+
+```bash
+set -euo pipefail
+focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
+test "$focused_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$focused_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror 2>&1)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$focused_output
+$full_output
+$build_output" in
+  *"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/CaptureException.cs' \
+  '?? oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  '?? oracle/plugin/tests/PassiveDriverBoundaryTests.cs')"
+git diff --check
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$report_path")"
+dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$report_path")"
+dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$report_path")"
+dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$report_path")"
+dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+progress_dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$progress_path")"
+progress_dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$progress_path")"
+progress_dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$progress_path")"
+progress_dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$progress_path")"
+progress_dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$dispatch_subject"
+test "$(printf '%s\n' "$dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$progress_dispatch_subject"
+test "$(printf '%s\n' "$progress_dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_dispatch_parent" = "$dispatch_parent"
+test "$progress_dispatch_subject" = "$dispatch_subject"
+test "$progress_dispatch_plan_sha" = "$dispatch_plan_sha"
+test "$progress_dispatch_brief_sha" = "$dispatch_brief_sha"
+test "$progress_dispatch_design_sha" = "$dispatch_design_sha"
+test "$(git rev-parse HEAD)" = "$dispatch_base"
+test "$(git rev-parse HEAD^)" = "$dispatch_parent"
+test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
+test "$(shasum -a 256 docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md | awk '{print $1}')" = "$dispatch_plan_sha"
+test "$(shasum -a 256 .superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-brief.md | awk '{print $1}')" = "$dispatch_brief_sha"
+test "$(shasum -a 256 docs/superpowers/specs/2026-08-03-task-4.1-boundary-hardening-design.md | awk '{print $1}')" = "$dispatch_design_sha"
+test "$dispatch_design_sha" = "a8bb6d78ac51792bdcf82c6f701b512aaec21acaa2f1829e99eb1e1488fda665"
 git add oracle/plugin/Core/CaptureException.cs \
   oracle/plugin/Core/PassiveDriverBoundaries.cs \
   oracle/plugin/tests/PassiveDriverBoundaryTests.cs \
   oracle/plugin/tests/Program.cs
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'A  oracle/plugin/Core/CaptureException.cs' \
+  'A  oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'A  oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'M  oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+git diff --cached --check
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution parent:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution subject:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 amended plan SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 regenerated brief SHA-256:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 approved design SHA-256:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$report_path")"
+dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$report_path")"
+dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$report_path")"
+dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$report_path")"
+dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+progress_dispatch_parent="$(sed -n 's/^Task 4[.]1 execution parent: //p' "$progress_path")"
+progress_dispatch_subject="$(sed -n 's/^Task 4[.]1 execution subject: //p' "$progress_path")"
+progress_dispatch_plan_sha="$(sed -n 's/^Task 4[.]1 amended plan SHA-256: //p' "$progress_path")"
+progress_dispatch_brief_sha="$(sed -n 's/^Task 4[.]1 regenerated brief SHA-256: //p' "$progress_path")"
+progress_dispatch_design_sha="$(sed -n 's/^Task 4[.]1 approved design SHA-256: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$dispatch_subject"
+test "$(printf '%s\n' "$dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test -n "$progress_dispatch_subject"
+test "$(printf '%s\n' "$progress_dispatch_plan_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_brief_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_design_sha" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_dispatch_parent" = "$dispatch_parent"
+test "$progress_dispatch_subject" = "$dispatch_subject"
+test "$progress_dispatch_plan_sha" = "$dispatch_plan_sha"
+test "$progress_dispatch_brief_sha" = "$dispatch_brief_sha"
+test "$progress_dispatch_design_sha" = "$dispatch_design_sha"
+test "$(git rev-parse HEAD)" = "$dispatch_base"
+test "$(git rev-parse HEAD^)" = "$dispatch_parent"
+test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
+test "$(shasum -a 256 docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md | awk '{print $1}')" = "$dispatch_plan_sha"
+test "$(shasum -a 256 .superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-brief.md | awk '{print $1}')" = "$dispatch_brief_sha"
+test "$(shasum -a 256 docs/superpowers/specs/2026-08-03-task-4.1-boundary-hardening-design.md | awk '{print $1}')" = "$dispatch_design_sha"
+test "$dispatch_design_sha" = "a8bb6d78ac51792bdcf82c6f701b512aaec21acaa2f1829e99eb1e1488fda665"
 git commit -m "feat: define passive driver boundaries"
-~~~
+```
+
+If Git cannot create its index lock because of workspace permissions, record
+the exact error and hand only that already-verified Git write to the
+controller. Do not retry through another mechanism.
+
+- [ ] **Step 9: Run a fresh postcommit behavioral and repository gate**
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+test -f "$report_path"
+test "$(grep -c '^Task 4[.]1 execution base: ' "$report_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+test "$(git rev-parse HEAD^)" = "$dispatch_base"
+focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
+test "$focused_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$focused_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror 2>&1)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$focused_output
+$full_output
+$build_output" in
+  *"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test "$(grep -F -c '            \"driver-boundary\",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
+test "$(grep -F -c '        PassiveDriverBoundaryTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"protocol\", 4 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"encoding\", 5 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"sink\", 6 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"driver-boundary\", 2 }' oracle/plugin/tests/Program.cs)" = "1"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check HEAD^ HEAD
+```
+
+Record the literal implementation commit, its parent, subject, scope, four
+blob hashes, and all Step 9 outputs in
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md`
+and the progress ledger before review. Both records must contain exactly one line whose key prefix is
+`Task 4.1 implementation commit:`. Each full line must be exactly
+`Task 4.1 implementation commit: <40-character-lowercase-commit-ID>`; the
+report and progress values must be identical, and every controller-replay gate
+binds HEAD to that shared recorded literal.
+
+- [ ] **Step 10: Obtain independent specification and quality approval**
+
+Dispatch a fresh specification reviewer with the approved design, amended Task
+4.1 section and regenerated brief, exact implementation commit and diff, and
+the complete RED/GREEN/mutation/postcommit report. The reviewer must report no
+Critical or Important contract findings.
+
+Dispatch a different fresh quality reviewer with the same package plus every
+M01-M12 evidence pair. The reviewer must report no Critical or Important
+code/test-quality findings. The quality review explicitly checks background
+workers, finite waits and joins, `finally` start-gate release,
+main-thread surfacing of worker exceptions, complete post-consumption metadata
+snapshots, all four gate-flag pairs, exact reflected type surfaces, and absence
+of `UpdateDirective.TryConsume`.
+
+- [ ] **Step 11: Independently replay all twelve mutants from the committed state**
+
+The controller, not the implementer or either reviewer, performs this replay.
+It begins at the exact Task 4.1 implementation commit, retains the implementer
+evidence, and writes separate
+`task-4.1-controller-M01` through
+`task-4.1-controller-M12` evidence pairs. Each replay starts and
+ends at the committed four hashes, empty index, clean tracked/untracked status,
+and clean diff. The complete literal replay blocks follow.
+
+### Controller M01 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureException.cs
+@@
+     internal CaptureException(string message, Exception inner)
+-        : base(message, inner)
++        : base(message)
+     {
+     }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt'
+set -e
+printf '%s\n' "captured controller M01 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/CaptureException.cs
+@@
+     internal CaptureException(string message, Exception inner)
+-        : base(message)
++        : base(message, inner)
+     {
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M01-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M01 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"wrapped capture inner identity"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M02 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-    StateSet = 4
++    StateSet = 5
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt'
+set -e
+printf '%s\n' "captured controller M02 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-    StateSet = 5
++    StateSet = 4
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M02-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M02 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"hook kind numeric values at index 4"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M03 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool BelongsTo(object expectedOwner)
+     {
+-        return Active && Object.ReferenceEquals(owner, expectedOwner);
++        return Object.ReferenceEquals(owner, expectedOwner);
+     }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt'
+set -e
+printf '%s\n' "captured controller M03 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool BelongsTo(object expectedOwner)
+     {
+-        return Object.ReferenceEquals(owner, expectedOwner);
++        return Active && Object.ReferenceEquals(owner, expectedOwner);
+     }
+-
++
+     internal bool TryConsume()
+     {
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M03-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M03 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"inert token rejects null owner"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M04 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+ internal sealed class HookToken
+ {
++    private const long MutationRaceId = 7000000001L;
++    private static readonly ManualResetEvent MutationRaceRelease =
++        new ManualResetEvent(false);
++    private static int mutationRaceArrivals;
+     private readonly object owner;
+     private int consumed;
+@@
+     internal bool TryConsume()
+     {
+-        return Active
+-            && Interlocked.Exchange(ref consumed, 1) == 0;
++        if (!Active)
++            return false;
++        if (Id == MutationRaceId)
++        {
++            int observed = consumed;
++            if (Interlocked.Increment(ref mutationRaceArrivals) == 2)
++                MutationRaceRelease.Set();
++            if (!MutationRaceRelease.WaitOne(2000, false))
++            {
++                throw new InvalidOperationException(
++                    "mutation race barrier timed out");
++            }
++            consumed = 1;
++            return observed == 0;
++        }
++        return Interlocked.Exchange(ref consumed, 1) == 0;
+     }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt'
+set -e
+printf '%s\n' "captured controller M04 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+ internal sealed class HookToken
+ {
+-    private const long MutationRaceId = 7000000001L;
+-    private static readonly ManualResetEvent MutationRaceRelease =
+-        new ManualResetEvent(false);
+-    private static int mutationRaceArrivals;
+     private readonly object owner;
+     private int consumed;
+@@
+     internal bool TryConsume()
+     {
+-        if (!Active)
+-            return false;
+-        if (Id == MutationRaceId)
+-        {
+-            int observed = consumed;
+-            if (Interlocked.Increment(ref mutationRaceArrivals) == 2)
+-                MutationRaceRelease.Set();
+-            if (!MutationRaceRelease.WaitOne(2000, false))
+-            {
+-                throw new InvalidOperationException(
+-                    "mutation race barrier timed out");
+-            }
+-            consumed = 1;
+-            return observed == 0;
+-        }
+-        return Interlocked.Exchange(ref consumed, 1) == 0;
++        return Active
++            && Interlocked.Exchange(ref consumed, 1) == 0;
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M04-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M04 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'hook token is owner bound and single consume'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"hook race exactly one winner"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+
+### Controller M05 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+         Epoch = epoch;
+         SettleFrames = settleFrames;
+         NowSeconds = nowSeconds;
+-        Active = active;
++        Active = true;
+         InspectGate = inspectGate;
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt'
+set -e
+printf '%s\n' "captured controller M05 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+         Epoch = epoch;
+         SettleFrames = settleFrames;
+         NowSeconds = nowSeconds;
+-        Active = true;
++        Active = active;
+         InspectGate = inspectGate;
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M05-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M05 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"inactive directive inactive"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M06 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+         return Active
+-            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
++            && (Interlocked.CompareExchange(ref stage, 2, 1) == 1
++                || Interlocked.CompareExchange(ref stage, 2, 0) == 0);
+     }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt'
+set -e
+printf '%s\n' "captured controller M06 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+         return Active
+-            && (Interlocked.CompareExchange(ref stage, 2, 1) == 1
+-                || Interlocked.CompareExchange(ref stage, 2, 0) == 0);
++            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M06-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M06 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"issued complete rejected"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M07 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+             int observed =
+                 Interlocked.CompareExchange(ref stage, 0, 0);
+-            if (observed == 2)
++            if (observed == 0 || observed == 2)
+                 return false;
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt'
+set -e
+printf '%s\n' "captured controller M07 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+             int observed =
+                 Interlocked.CompareExchange(ref stage, 0, 0);
+-            if (observed == 0 || observed == 2)
++            if (observed == 2)
+                 return false;
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M07-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M07 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"issued fail succeeds"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M08 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+-        return Active
+-            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
++        if (!Active
++            || Interlocked.CompareExchange(ref stage, 2, 1) != 1)
++        {
++            return false;
++        }
++        stage = 1;
++        return true;
+     }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt'
+set -e
+printf '%s\n' "captured controller M08 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal bool TryComplete()
+     {
+-        if (!Active
+-            || Interlocked.CompareExchange(ref stage, 2, 1) != 1)
+-        {
+-            return false;
+-        }
+-        stage = 1;
+-        return true;
++        return Active
++            && Interlocked.CompareExchange(ref stage, 2, 1) == 1;
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M08-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M08 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"completed directive fail rejected"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M09 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal void RebaseInitialEpoch(
+         long replacementEpoch,
+         int replacementFrames)
+     {
+-        if (Interlocked.CompareExchange(ref stage, 1, 1) != 1)
++        if (Interlocked.CompareExchange(ref stage, 1, 1) == 2)
+         {
+             throw new InvalidOperationException(
+                 "only an authorized directive may be rebased");
+         }
+         if (replacementEpoch < 0L)
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt'
+set -e
+printf '%s\n' "captured controller M09 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal void RebaseInitialEpoch(
+         long replacementEpoch,
+         int replacementFrames)
+     {
+-        if (Interlocked.CompareExchange(ref stage, 1, 1) == 2)
++        if (Interlocked.CompareExchange(ref stage, 1, 1) != 1)
+         {
+             throw new InvalidOperationException(
+                 "only an authorized directive may be rebased");
+         }
+         if (replacementEpoch < 0L)
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M09-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M09 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"issued rebase rejected: no exception"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M10 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-        if (replacementFrames < 0)
++        if (replacementFrames < -1)
+             throw new ArgumentOutOfRangeException("replacementFrames");
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt'
+set -e
+printf '%s\n' "captured controller M10 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+-        if (replacementFrames < -1)
++        if (replacementFrames < 0)
+             throw new ArgumentOutOfRangeException("replacementFrames");
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M10-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M10 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"negative replacement frames: no exception"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M11 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal static GateSample Captured(CaptureRecord capture)
+     {
+-        if (capture == null)
+-            throw new ArgumentNullException("capture");
+         return new GateSample(GateSampleKind.Captured, capture);
+     }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt'
+set -e
+printf '%s\n' "captured controller M11 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     internal static GateSample Captured(CaptureRecord capture)
+     {
++        if (capture == null)
++            throw new ArgumentNullException("capture");
+         return new GateSample(GateSampleKind.Captured, capture);
+     }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M11-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M11 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"captured null rejected: no exception"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+### Controller M12 replay
+
+**Committed-state pristine gate.**
+
+```bash
+set -euo pipefail
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt'
+test ! -e '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt'
+test ! -L '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Exact forward patch.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     void Ready(int completedInputs);
+     void Complete();
+     void Failed(string code);
+-    void Diagnostic(string message);
+ }
+*** End Patch
+```
+
+**Persist focused evidence without evaluation.**
+
+```bash
+set -euo pipefail
+set -o noclobber
+set +e
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary \
+  > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt' 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt'
+set -e
+printf '%s\n' "captured controller M12 evidence; inverse is now mandatory"
+exit 0
+```
+
+**Exact inverse, followed by the complete committed-state restoration gate.**
+
+```diff
+*** Begin Patch
+*** Update File: oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@
+     void Ready(int completedInputs);
+     void Complete();
+     void Failed(string code);
++    void Diagnostic(string message);
+ }
+*** End Patch
+```
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+```
+
+**Post-restoration acceptance with the literal registration and full fragment.**
+
+```bash
+set -euo pipefail
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt'
+test -f '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt'
+test "$(wc -l < '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt')" -eq 1
+mutation_status="$(sed -n '1p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-status.txt')"
+mutation_output="$(sed -n '1,$p' '.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-controller-M12-output.txt')"
+printf '%s\n' "$mutation_output"
+case "$mutation_status" in
+  ''|*[!0-9]*) exit 1 ;;
+  0)
+    printf '%s\n' "controller M12 mutant unexpectedly passed" >&2
+    exit 1 ;;
+esac
+test "$mutation_status" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-boundary', test 'update directive authorizes rebases and consumes once'"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *"reporter method count"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+```
+
+- [ ] **Step 12: Run the final post-replay acceptance gate**
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+test -f "$report_path"
+test -f "$progress_path"
+test "$(grep -c '^Task 4[.]1 execution base:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 execution base:' "$progress_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]1 implementation commit:' "$progress_path")" = "1"
+dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$report_path")"
+progress_dispatch_base="$(sed -n 's/^Task 4[.]1 execution base: //p' "$progress_path")"
+implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$report_path")"
+progress_implementation_commit="$(sed -n 's/^Task 4[.]1 implementation commit: //p' "$progress_path")"
+test "$(printf '%s\n' "$dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_dispatch_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(printf '%s\n' "$progress_implementation_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$progress_dispatch_base" = "$dispatch_base"
+test "$progress_implementation_commit" = "$implementation_commit"
+test "$(git rev-parse HEAD)" = "$implementation_commit"
+test "$(git rev-parse HEAD^)" = "$dispatch_base"
+focused_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -- --cohort driver-boundary 2>&1)"
+test "$focused_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$focused_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror 2>&1)"
+printf '%s\n' "$build_output"
+case "$build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$focused_output
+$full_output
+$build_output" in
+  *"SDK"*|*"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"NU1"*|*"package"*|*"Package"*|*"restore"*)
+    exit 1 ;;
+esac
+test "$(git show -s --format=%s HEAD)" = "feat: define passive driver boundaries"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/CaptureException.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverBoundaryTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')" = "88e7fa226a595059a72e01eea69f33160b08721f6c61db68a69c25fc334db2bd"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test "$(grep -F -c '            \"driver-boundary\",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
+test "$(grep -F -c '        PassiveDriverBoundaryTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"protocol\", 4 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"encoding\", 5 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"sink\", 6 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { \"driver-boundary\", 2 }' oracle/plugin/tests/Program.cs)" = "1"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+git diff --check HEAD^ HEAD
+```
+
+Append the controller M01-M12 evidence results and the final gate output to
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.1-report.md`
+and the progress ledger. Task 4.1 is complete only after both independent
+reviewers report no Critical or Important findings, all twelve implementer
+mutants and all twelve controller replays fail at their literal named
+behavioral oracles, every inverse restores the appropriate exact scope and
+four hashes, and Step 12 passes from the exact implementation commit.
 
 #### Task 4.2: Implement initial epochs, authorization, debounce, and deadlines
 
@@ -3664,6 +12688,25 @@ internal static class PassiveDriverInitialTests
             PassivePhase.Ready,
             fixture.Driver.Phase,
             "ready after flushed pair");
+
+        DriverFixture failedMarker = DriverFixture.Active();
+        failedMarker.Reporter.ReadyFailure =
+            new InvalidOperationException("ready marker");
+        failedMarker.Observe(
+            failedMarker.State, failedMarker.State, 1.0, true,
+            ProtocolSamples.InitialCapture);
+        failedMarker.Neutral();
+        failedMarker.Observe(
+            failedMarker.State, failedMarker.State, 2.0, true,
+            ProtocolSamples.InitialCapture);
+        failedMarker.Observe(
+            failedMarker.State, failedMarker.State, 3.0, true,
+            ProtocolSamples.InitialCapture);
+        ErrorRecord markerError = failedMarker.Sink.ErrorRecords[0];
+        Check.Equal("observer_exception", markerError.Code,
+            "initial Ready failure code");
+        Check.True(markerError.LastCapture == null,
+            "completed initial epoch is not retained as last_capture");
     }
 
     private static void NotInspectedBreaksPair()
@@ -4771,10 +13814,10 @@ internal sealed partial class PassiveDriver : IDisposable
         currentFrames = 0;
         neutralSeen = false;
         candidateSignature = null;
+        lastCapture = null;
         try
         {
             reporter.Ready(0);
-            lastCapture = null;
         }
         catch (Exception)
         {
@@ -5166,7 +14209,7 @@ internal sealed partial class PassiveDriver : IDisposable
 }
 ~~~
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ~~~bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -5749,6 +14792,7 @@ internal sealed partial class PassiveDriver
         completedInputs++;
         stableState = attemptState;
         ClearAttemptAfterStep();
+        lastCapture = null;
 
         if (completedInputs == expectedInputCount)
         {
@@ -5766,7 +14810,6 @@ internal sealed partial class PassiveDriver
         try
         {
             reporter.Ready(completedInputs);
-            lastCapture = null;
         }
         catch (Exception)
         {
@@ -5785,10 +14828,9 @@ internal sealed partial class PassiveDriver
 git diff --check
 ~~~
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 5: Inspect the task diff and commit**
 
-Review the full diff and obtain spec-compliance plus code-quality approval.
-Then run exactly:
+Inspect the full diff, retain it with the task report, and then run exactly:
 
 ~~~bash
 git diff -- oracle/plugin/Core/PassiveDriverInput.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
@@ -6184,9 +15226,9 @@ SetGameState patch without dereferencing game types.
 git diff --check
 ~~~
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 5: Inspect the task diff and commit**
 
-Obtain spec-compliance and code-quality approval, then run exactly:
+Retain the complete task diff and GREEN evidence, then run exactly:
 
 ~~~bash
 git diff -- oracle/plugin/Core/PassiveDriverLifecycleHooks.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
@@ -6308,6 +15350,18 @@ internal static class PassiveDriverTerminalTests
         Check.Equal(1, during.SettleFrames, "pending frames");
         Check.Same(ProtocolSamples.MovedCapture, during.LastCapture,
             "latest bounded capture");
+
+        DriverFixture failedProgress = DriverFixture.Ready();
+        failedProgress.Reporter.ReadyFailure =
+            new InvalidOperationException("ready marker");
+        failedProgress.OpenDirection(2, true, true, 10.0);
+        failedProgress.SettleCurrent(
+            ProtocolSamples.MovedCapture, 11.0);
+        ErrorRecord progressError = failedProgress.Sink.ErrorRecords[0];
+        Check.Equal("observer_exception", progressError.Code,
+            "intermediate Ready failure code");
+        Check.True(progressError.LastCapture == null,
+            "completed step epoch is not retained as last_capture");
 
         DriverFixture restart = DriverFixture.Ready();
         restart.OpenDirection(2, true, true, 10.0);
@@ -6572,9 +15626,9 @@ internal sealed partial class PassiveDriver
 git diff --check
 ~~~
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 5: Inspect the task diff and commit**
 
-Obtain spec-compliance and code-quality approval, then run exactly:
+Retain the complete task diff and GREEN evidence, then run exactly:
 
 ~~~bash
 git diff -- oracle/plugin/Core/PassiveDriverCompletion.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverTerminalTests.cs oracle/plugin/tests/PassiveDriverTests.cs oracle/plugin/tests/Program.cs
@@ -7562,14 +16616,13 @@ Expected: all six selected config tests pass in both runs, including the
 261-byte pinned fixture in the second run; stdout contains only the harness
 success line, stderr is empty, and the net35 build has zero warnings/errors.
 
-- [ ] **Step 5: Pass both fresh review gates**
+- [ ] **Step 5: Freeze Task 6.1 review evidence**
 
-Dispatch a fresh specification reviewer with the Task 6.1 diff, this task
-body, and design Sections 5.1 and 6. Require explicit `APPROVE` for exact
-Off/passive grammar, typed codes, byte identity, fixed values, and absence of
-writes. Then dispatch a separate fresh code-quality reviewer with the same
-diff and both framework outputs. Resolve every finding and rerun Step 4; do
-not combine either review with Task 6.2.
+Record the Task 6.1 diff, this task body, design Sections 5.1 and 6, and both
+framework outputs in the task report. The post-commit reviewer must return
+explicit verdicts for exact Off/passive grammar, typed codes, byte identity,
+fixed values, absence of writes, and code quality. Task 6.2 receives its own
+fresh reviewer.
 
 - [ ] **Step 6: Make only the Task 6.1 ledger commit**
 
@@ -7689,6 +16742,20 @@ internal static class PhysicalPathTests
             Check.Sequence(new string[0], identity.MissingComponents,
                 "existing missing suffix");
         }
+
+        Check.Equal(
+            "/tmp/é/雪",
+            MacPhysicalPathOperations.DecodeNativePath(new byte[]
+            {
+                0x2f, 0x74, 0x6d, 0x70, 0x2f,
+                0xc3, 0xa9, 0x2f, 0xe9, 0x9b, 0xaa
+            }),
+            "native path bytes decode as strict UTF-8");
+        Check.Throws<System.IO.IOException>(delegate
+        {
+            MacPhysicalPathOperations.DecodeNativePath(
+                new byte[] { 0xff });
+        }, "invalid native path UTF-8");
     }
 
     private static void MissingSuffixIsPreserved()
@@ -8139,6 +17206,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 internal enum PhysicalPathComponentKind
 {
@@ -8221,6 +17289,9 @@ internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations
     internal static readonly MacPhysicalPathOperations Instance =
         new MacPhysicalPathOperations();
 
+    private static readonly UTF8Encoding StrictUtf8 =
+        new UTF8Encoding(false, true);
+
     private MacPhysicalPathOperations() { }
 
     public PhysicalPathComponentKind Classify(string path)
@@ -8255,14 +17326,34 @@ internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations
         }
         try
         {
-            string value = Marshal.PtrToStringAnsi(pointer);
-            if (String.IsNullOrEmpty(value))
-                throw new IOException("realpath returned an empty path");
-            return value;
+            ulong nativeLength = strlen(pointer).ToUInt64();
+            if (nativeLength > Int32.MaxValue)
+                throw new IOException("realpath returned an oversized path");
+            byte[] bytes = new byte[(int)nativeLength];
+            if (bytes.Length != 0)
+                Marshal.Copy(pointer, bytes, 0, bytes.Length);
+            return DecodeNativePath(bytes);
         }
         finally
         {
             free(pointer);
+        }
+    }
+
+    internal static string DecodeNativePath(byte[] bytes)
+    {
+        if (bytes == null)
+            throw new ArgumentNullException("bytes");
+        try
+        {
+            string value = StrictUtf8.GetString(bytes);
+            if (String.IsNullOrEmpty(value) || value.IndexOf('\0') >= 0)
+                throw new IOException("realpath returned an invalid path");
+            return value;
+        }
+        catch (DecoderFallbackException error)
+        {
+            throw new IOException("realpath returned invalid UTF-8", error);
         }
     }
 
@@ -8275,6 +17366,9 @@ internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations
         CharSet = CharSet.Ansi)]
     private static extern IntPtr readlink(
         string path, byte[] buffer, UIntPtr bufferSize);
+
+    [DllImport("/usr/lib/libSystem.B.dylib")]
+    private static extern UIntPtr strlen(IntPtr value);
 
     [DllImport("/usr/lib/libSystem.B.dylib")]
     private static extern void free(IntPtr pointer);
@@ -8647,16 +17741,14 @@ Expected: all six path tests and all six retained config tests pass; each run
 prints only the harness success line with empty stderr, and the net35 build has
 zero warnings/errors.
 
-- [ ] **Step 6: Pass both fresh review gates**
+- [ ] **Step 6: Freeze Task 6.2 review evidence**
 
-Dispatch a fresh specification reviewer with the Task 6.2 diff, this task
-body, and design Section 6. Require explicit `APPROVE` for per-component
-`readlink`, allocated `realpath` cleanup, lexical missing-suffix handling,
-boundary containment, exact standard config overloads, and all four
-deterministic between-scan changes. Then dispatch a separate fresh
-code-quality reviewer with the same diff and all three framework outputs.
-Resolve every finding and rerun Step 5; neither approval may be reused from
-Task 6.1.
+Record the Task 6.2 diff, this task body, design Section 6, and all three
+framework outputs in the task report. The post-commit reviewer must return
+explicit verdicts for per-component `readlink`, allocated `realpath` cleanup,
+strict UTF-8 native-path decoding, lexical missing-suffix handling, boundary
+containment, exact standard config overloads, all four deterministic
+between-scan changes, and code quality. Task 6.1 approval is not reusable.
 
 - [ ] **Step 7: Make only the Task 6.2 ledger commit**
 
@@ -8682,6 +17774,9 @@ git commit -m "feat: validate physical oracle paths"
 **Interfaces:**
 - Produces: `GameContract.ValidatePassiveSurface() -> void` and preserves
   `GameContract.ValidateLegacySurface() -> void` for Mode-off.
+- Pins the native `Direction` constants used by Core attribution exactly:
+  `North=0`, `South=1`, `West=2`, `East=3`, and `None=8`, both in the
+  external metadata characterization and passive runtime validation.
 - Produces Unity-free `GameGateValues`, `CaptureValues`,
   `GameObservationPolicy.IsQuiescent(GameGateValues)`, and
   `CaptureMapping.Create(CaptureValues) -> CaptureRecord`; invalid mapping
@@ -8995,7 +18090,7 @@ internal static class CaptureMapping
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -9007,9 +18102,8 @@ internal static class CaptureMapping
 git diff --check
 ```
 
-Require the exact harness success line and a clean net35 build. Send this
-Task 7.1 diff and both outputs to fresh specification and code-quality
-reviewers, resolve every finding, and rerun the commands before committing.
+Require the exact harness success line and a clean net35 build. Retain the
+Task 7.1 diff and both outputs in the task report for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 7.1 observation-policy slice**
 
@@ -9513,6 +18607,50 @@ internal sealed class MetadataImage : IDisposable
             new FieldShape(owner, name, visibility, isStatic, fieldType));
     }
 
+    internal int RequireInt32EnumConstant(string owner, string name)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        FieldDefinitionHandle found = default(FieldDefinitionHandle);
+        foreach (FieldDefinitionHandle handle in definition.GetFields())
+        {
+            FieldDefinition field = Reader.GetFieldDefinition(handle);
+            if (Reader.GetString(field.Name) != name)
+                continue;
+            if (!found.IsNil)
+                throw new InvalidOperationException(
+                    "duplicate enum constant: " + owner + "::" + name);
+            found = handle;
+        }
+        if (found.IsNil)
+            throw new InvalidOperationException(
+                "missing enum constant: " + owner + "::" + name);
+
+        FieldDefinition value = Reader.GetFieldDefinition(found);
+        FieldAttributes required = FieldAttributes.Public
+            | FieldAttributes.Static
+            | FieldAttributes.Literal
+            | FieldAttributes.HasDefault;
+        if ((value.Attributes & required) != required
+            || value.DecodeSignature(provider, null) != owner)
+        {
+            throw new InvalidOperationException(
+                "invalid enum constant shape: " + owner + "::" + name);
+        }
+        ConstantHandle constantHandle = value.GetDefaultValue();
+        if (constantHandle.IsNil)
+            throw new InvalidOperationException(
+                "missing enum constant value: " + owner + "::" + name);
+        Constant constant = Reader.GetConstant(constantHandle);
+        if (constant.TypeCode != ConstantTypeCode.Int32)
+            throw new InvalidOperationException(
+                "enum constant is not Int32: " + owner + "::" + name);
+        BlobReader bytes = Reader.GetBlobReader(constant.Value);
+        int result = bytes.ReadInt32();
+        if (bytes.RemainingBytes != 0)
+            throw new BadImageFormatException("trailing enum constant bytes");
+        return result;
+    }
+
     internal bool HasCustomAttribute(
         CustomAttributeHandleCollection attributes,
         string expectedType)
@@ -9899,6 +19037,21 @@ internal static class AssemblySurfaceTests
                 {
                     P("System.Boolean"), P("System.Boolean")
                 });
+            Check.Equal(0,
+                image.RequireInt32EnumConstant("Direction", "North"),
+                "Direction.North");
+            Check.Equal(1,
+                image.RequireInt32EnumConstant("Direction", "South"),
+                "Direction.South");
+            Check.Equal(2,
+                image.RequireInt32EnumConstant("Direction", "West"),
+                "Direction.West");
+            Check.Equal(3,
+                image.RequireInt32EnumConstant("Direction", "East"),
+                "Direction.East");
+            Check.Equal(8,
+                image.RequireInt32EnumConstant("Direction", "None"),
+                "Direction.None");
         }
     }
 
@@ -10953,6 +20106,11 @@ internal static class GameContract
     internal static void ValidatePassiveSurface()
     {
         ValidateLegacySurface();
+        RequireDirectionValue("North", 0);
+        RequireDirectionValue("South", 1);
+        RequireDirectionValue("West", 2);
+        RequireDirectionValue("East", 3);
+        RequireDirectionValue("None", 8);
         RequireMethod(typeof(Game), "Update",
             BindingFlags.Instance | BindingFlags.NonPublic,
             typeof(void), new Type[0]);
@@ -11034,6 +20192,25 @@ internal static class GameContract
             throw new MissingMethodException(type.FullName, name);
     }
 
+    private static void RequireDirectionValue(string name, int expected)
+    {
+        FieldInfo field = typeof(Direction).GetField(
+            name, BindingFlags.Public | BindingFlags.Static);
+        if (field == null || !field.IsLiteral
+            || field.FieldType != typeof(Direction))
+        {
+            throw new MissingFieldException(
+                typeof(Direction).FullName, name);
+        }
+        object raw = field.GetRawConstantValue();
+        if (raw == null || raw.GetType() != typeof(int)
+            || (int)raw != expected)
+        {
+            throw new InvalidOperationException(
+                "unexpected Direction value: " + name);
+        }
+    }
+
     private static void RequireField(
         Type type, string name, BindingFlags flags, Type fieldType)
     {
@@ -11072,12 +20249,11 @@ errors, proving the newly created `GameContract.cs` compiles before its Task
 assembly/assets file/metadata reader is not GREEN, and the old name-only plugin
 checks are not sufficient. Do not load or launch the plugin.
 
-- [ ] **Step 5: Obtain both fresh reviews of the pinned metadata contract**
+- [ ] **Step 5: Freeze the pinned-metadata review evidence**
 
-Require the exact harness success line. Send the Task 7.2-only diff, the
+Require the exact harness success line. Retain the Task 7.2-only diff, the
 zero-warning pinned plugin compile, and the external characterization output
-to fresh specification and code-quality reviewers; resolve every finding,
-rerun Step 4, and check the final diff:
+in the task report for post-commit review, then check the final diff:
 
 ```bash
 git diff --check
@@ -11473,7 +20649,7 @@ This task proves Unity pseudo-null, `activeSelf`, `Save(false, false)` argument
 constants, and absence of `GameState.Lost()`. Task 9.2 adds the two exclusive
 controller-to-adapter movement caller checks when that caller exists.
 
-- [ ] **Step 4: Run every GREEN gate and obtain both fresh reviews**
+- [ ] **Step 4: Run every GREEN gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -11504,10 +20680,9 @@ fi
 ```
 
 Require the exact success line from all three harness runs and a successful
-real plugin build. Send the Task 7.3-only diff plus all three GREEN outputs to
-fresh specification and code-quality reviewers. Resolve every finding and
-rerun this complete gate; approvals from Tasks 7.1 or 7.2 do not carry
-forward.
+real plugin build. Retain the Task 7.3-only diff plus all three GREEN outputs
+in the task report. Its post-commit review is fresh; Task 7.1 or 7.2 approval
+does not carry forward.
 
 - [ ] **Step 5: Commit only the adapter surface**
 
@@ -11827,7 +21002,7 @@ internal static class PatchBoundary
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -11839,8 +21014,8 @@ internal static class PatchBoundary
 git diff --check
 ```
 
-Require the exact five registrations, then obtain fresh specification and
-code-quality approval and rerun this gate after resolving every finding.
+Require the exact five registrations and retain the pristine output for
+post-commit review.
 
 - [ ] **Step 5: Commit only the Task 8.1 firewall slice**
 
@@ -11966,7 +21141,7 @@ internal static class PluginModePolicy
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -11978,8 +21153,7 @@ internal static class PluginModePolicy
 git diff --check
 ```
 
-Require both tests, obtain fresh specification and code-quality approval, and
-rerun this gate after resolving every finding.
+Require both tests and retain the pristine output for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 8.2 Off-policy slice**
 
@@ -12495,7 +21669,7 @@ internal sealed class PassiveStartup : IDisposable
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -12507,8 +21681,7 @@ internal sealed class PassiveStartup : IDisposable
 git diff --check
 ```
 
-Require `startup=7`, then obtain fresh specification and code-quality
-approval and rerun this gate after resolving every finding.
+Require `startup=7` and retain the pristine output for post-commit review.
 
 - [ ] **Step 5: Commit only the Task 8.3 startup slice**
 
@@ -12713,10 +21886,10 @@ internal sealed class PassiveLogReporter : IPassiveReporter
 }
 ```
 
-- [ ] **Step 4: Run GREEN, the net35 gate, and both fresh reviews**
+- [ ] **Step 4: Run GREEN and the net35 gate**
 
 Run `--cohort reporter` plus the net35 Core gate, require all four exact tests,
-run the diff check, and obtain both fresh reviews before adding Harmony:
+run the diff check, and retain the output for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
@@ -12787,9 +21960,17 @@ still pass; a build, asset, or decoder failure is not the intended RED.
 The Core-owned `PassiveUpdateBoundary` is the behavioral seam behind the new
 plugin test. Its fake `IPassiveUpdateObservation` proves the ordered calls
 `state, now, path, state, gate, capture, utc` through the static call-sequence
-check plus per-operation counters: a false path stops at `path`, and a
-different second state stops after the second `state`. Both cases assert zero
-quiescence and capture calls and the exact driver fault. Implement the
+check plus per-operation counters. A false path stops at `path`, performs no
+gate or capture, and faults with `save_path_changed`. A different second state
+during pre-initial observation continues the observation sequence as
+`state, now, path, state, utc`, rebases the same callback into a new initial
+epoch, uses `GateSampleKind.NotInspected`, skips gate and capture, and
+completes without fault.
+A different second state during stable or settling observation still stops
+after the second `state`, performs no gate or capture, and faults with
+`state_replaced`.
+
+Implement the
 controller's game-backed observation and normal Update body with this exact
 control flow:
 
@@ -13402,12 +22583,12 @@ internal sealed class PassiveController :
 }
 ```
 
-- [ ] **Step 4: Run the real plugin GREEN gate and both fresh reviews**
+- [ ] **Step 4: Run the real plugin GREEN gate**
 
 Run the two cumulative plugin tests and real build, then require the
 metadata call graph to show `PassiveUpdateBoundary.Observe` and no direct
-gate/capture/complete call from `PassiveController.ObserveUpdate`. Obtain both
-fresh reviews and resolve every finding before the commit:
+gate/capture/complete call from `PassiveController.ObserveUpdate`. Retain the
+diff and output for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
@@ -13782,10 +22963,10 @@ internal static class SetGameStatePatch
 }
 ```
 
-- [ ] **Step 4: Run the real plugin GREEN gate and both fresh reviews**
+- [ ] **Step 4: Run the real plugin GREEN gate**
 
 Build the real net35 plugin and require all three cumulative plugin tests to
-pass. Obtain both fresh reviews and resolve every finding before the commit:
+pass. Retain the diff and output for post-commit review:
 
 ```bash
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
@@ -13829,14 +23010,14 @@ internal static void Register(TestRegistry tests, HarnessOptions options)
         delegate { ExactRequiredFields(options.AssemblyPath); });
     tests.Add("assembly", "metadata matcher rejects near misses",
         SyntheticMatcherRejectsNearMisses);
-    tests.Add("plugin", "PE CLR and direct references are pinned",
-        delegate { PluginPeAndReferences(options.PluginPath); });
-    tests.Add("plugin", "eight Harmony patch contracts are exact",
-        delegate { ExactPatchSurface(options.PluginPath); });
     tests.Add("plugin", "game adapter call surface is passive",
         delegate { AdapterCallSurface(options.PluginPath); });
     tests.Add("plugin", "controller crosses authorized update boundary",
         delegate { ControllerUsesAuthorizedBoundary(options.PluginPath); });
+    tests.Add("plugin", "eight Harmony patch contracts are exact",
+        delegate { ExactPatchSurface(options.PluginPath); });
+    tests.Add("plugin", "PE CLR and direct references are pinned",
+        delegate { PluginPeAndReferences(options.PluginPath); });
     tests.Add("plugin", "BepInPlugin identity is exact",
         delegate { BepInPluginIdentity(options.PluginPath); });
     tests.Add("plugin", "typed modes and owner teardown are closed",
@@ -14031,7 +23212,7 @@ namespace SsrOracle
 }
 ```
 
-- [ ] **Step 4: Build, run exact GREEN gates, and obtain both fresh reviews**
+- [ ] **Step 4: Build and run the exact GREEN gates**
 
 ```bash
 if test ! -f oracle/plugin/obj/project.assets.json; then
@@ -14058,7 +23239,7 @@ fi
 Require both harness runs to print exactly the success line. The plugin
 cohort asserts positional `__0` parameters, tokenless Update finalizer,
 adapter movement/capture call sites, exact metadata pins, and typed config
-load. Obtain both fresh reviews, resolve every finding, and rerun this gate.
+load. Retain the diff and every gate output for post-commit review.
 
 - [ ] **Step 5: Commit only the typed plugin and metadata slice**
 
@@ -14109,6 +23290,16 @@ shasum -a 256 \
   "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.dll" \
   "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.CoreModule.dll" \
   "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll"
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core/BepInEx.dll" | awk '{print $1}')" = \
+  19eb836818955e4f86818306aaf2baaee989be566d7da697f835b429ab585149
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core/0Harmony.dll" | awk '{print $1}')" = \
+  1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.dll" | awk '{print $1}')" = \
+  f8bc81e00aa5f4372cbebe4951e5be7b21e54ba5f978e21c53ae2e8713ca3ca0
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/UnityEngine.CoreModule.dll" | awk '{print $1}')" = \
+  b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3
+test "$(shasum -a 256 "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll" | awk '{print $1}')" = \
+  886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564
 ```
 
 Authenticate the exact package bytes consumed by every net35 restore, then
@@ -14229,6 +23420,10 @@ test "$(rg -o '^                    \{ "[a-z-]+", [0-9]+ \},?$' oracle/plugin/te
 ```
 
 ```bash
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/SsrOracle.Plugin.csproj -c Release --no-restore -warnaserror \
+  -p:GameManagedDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed" \
+  -p:BepInExCoreDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core"
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
   -c Release --no-restore -- \
@@ -14247,7 +23442,7 @@ Require the one exact success line and no stderr.
 Use two `mktemp -d` roots. Restore each root independently with matching
 `BaseIntermediateOutputPath` and `MSBuildProjectExtensionsPath`; a restore in
 the default `obj` directory cannot support `--no-restore` in a fresh root.
-The default Task 9.4 build must remain in place: do not clean source-tree
+The default Step 2 build must remain in place: do not clean source-tree
 `obj/` or `bin/`. First prove that generated C# is present and that the project
 has stable explicit exclusions; this makes the independent-root build test the
 previously dangerous dirty-source-tree case. Then pass the same two properties
@@ -14413,16 +23608,65 @@ MaxSettleSeconds = 30
 Run the offline gates from the repository root:
 
 ```bash
+set -euo pipefail
+SSR_GAME_MANAGED_DIR="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed"
+SSR_BEPINEX_CORE_DIR="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core"
+SSR_PLUGIN_PACKAGES=$(mktemp -d /tmp/ssr-plugin-readme-packages.XXXXXX)
+SSR_MODE_OFF_SOURCE="/Users/jlsor/Documents/Research/SSR/.worktrees/ssr-executable-oracle/data/oracle/boot-probe.cfg"
+SSR_MODE_OFF_DESTINATION="$PWD/data/oracle/boot-probe.cfg"
+readonly SSR_GAME_MANAGED_DIR SSR_BEPINEX_CORE_DIR SSR_PLUGIN_PACKAGES \
+  SSR_MODE_OFF_SOURCE SSR_MODE_OFF_DESTINATION
+chmod 700 "$SSR_PLUGIN_PACKAGES"
+test "$(shasum -a 256 "$SSR_BEPINEX_CORE_DIR/BepInEx.dll" | awk '{print $1}')" = \
+  19eb836818955e4f86818306aaf2baaee989be566d7da697f835b429ab585149
+test "$(shasum -a 256 "$SSR_BEPINEX_CORE_DIR/0Harmony.dll" | awk '{print $1}')" = \
+  1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031
+test "$(shasum -a 256 "$SSR_GAME_MANAGED_DIR/UnityEngine.dll" | awk '{print $1}')" = \
+  f8bc81e00aa5f4372cbebe4951e5be7b21e54ba5f978e21c53ae2e8713ca3ca0
+test "$(shasum -a 256 "$SSR_GAME_MANAGED_DIR/UnityEngine.CoreModule.dll" | awk '{print $1}')" = \
+  b9aa7294a63984fc7a86cf68bceba4a92b254f8e140943d402e34c397146edf3
+test "$(shasum -a 256 "$SSR_GAME_MANAGED_DIR/Assembly-CSharp.dll" | awk '{print $1}')" = \
+  886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564
+test "$(shasum -a 256 "$PWD/data/oracle/compat/feed/microsoft.netframework.referenceassemblies.1.0.3.nupkg" | awk '{print $1}')" = \
+  141a093f90c7645d101ccd312e6f727781c965540eb92a52280f95411a698441
+test "$(shasum -a 256 "$PWD/data/oracle/compat/feed/microsoft.netframework.referenceassemblies.net35.1.0.3.nupkg" | awk '{print $1}')" = \
+  b16156111a88670d91a757fbd465fcb4856e034b1a4d523ae2c41a470f3578f9
+test "$(shasum -a 256 "$SSR_MODE_OFF_SOURCE" | awk '{print $1}')" = \
+  cd0f6f26a4f49d8eec9ca9bbf8a91aacf35d03c3f09f4cf52d193bd5036f787d
+if test -e "$SSR_MODE_OFF_DESTINATION"; then
+  test "$SSR_MODE_OFF_SOURCE" -ef "$SSR_MODE_OFF_DESTINATION"
+else
+  mkdir -p "$PWD/data/oracle"
+  ln "$SSR_MODE_OFF_SOURCE" "$SSR_MODE_OFF_DESTINATION"
+fi
+git check-ignore "$SSR_MODE_OFF_DESTINATION"
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
+  oracle/plugin/SsrOracle.Plugin.csproj \
+  --source "$PWD/data/oracle/compat/feed" \
+  --packages "$SSR_PLUGIN_PACKAGES" --no-http-cache \
+  -p:GameManagedDir="$SSR_GAME_MANAGED_DIR" \
+  -p:BepInExCoreDir="$SSR_BEPINEX_CORE_DIR"
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  --source "$PWD/data/oracle/compat/feed" \
+  --packages "$SSR_PLUGIN_PACKAGES" --no-http-cache
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet restore \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  --source "$PWD/data/oracle/compat/feed" \
+  --packages "$SSR_PLUGIN_PACKAGES" --no-http-cache
+/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/SsrOracle.Plugin.csproj -c Release --no-restore -warnaserror \
+  -p:GameManagedDir="$SSR_GAME_MANAGED_DIR" \
+  -p:BepInExCoreDir="$SSR_BEPINEX_CORE_DIR"
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
   --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
   -c Release --no-restore -- \
-  --assembly "/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll" \
+  --assembly "$SSR_GAME_MANAGED_DIR/Assembly-CSharp.dll" \
   --plugin "$PWD/oracle/plugin/bin/Release/net35/SsrOracle.Plugin.dll" \
-  --mode-off-fixture "$PWD/data/oracle/boot-probe.cfg"
+  --mode-off-fixture "$SSR_MODE_OFF_DESTINATION"
 /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
-  oracle/plugin/SsrOracle.Plugin.csproj -c Release --no-restore -warnaserror \
-  -p:GameManagedDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/Sausage.app/Contents/Resources/Data/Managed" \
-  -p:BepInExCoreDir="/Users/jlsor/Library/Application Support/Steam/steamapps/common/Stephen's Sausage Roll/BepInEx/core"
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror
 ```
 
 The offline harness must finish with exactly `SSR oracle unit harness ready`. Runtime progress markers are `SSR oracle passive trace ready: 0/3`, `SSR oracle passive trace ready: 1/3`, and `SSR oracle passive trace ready: 2/3`; success is `SSR oracle passive trace complete`; failure begins with `SSR oracle passive trace failed: ` and ends with one exact code from the closed schema-v1 record-code or marker-only tables. Real traces, generated configs, isolated saves, recovery trees, and probe evidence remain ignored below `data/oracle/`.
@@ -14453,19 +23697,20 @@ rg -n 'Mode = passive|SSR oracle passive trace ready:|SSR oracle passive trace c
   oracle/README.md
 ```
 
-- [ ] **Step 6: Run complete offline acceptance and both final reviews**
+- [ ] **Step 6: Run complete offline acceptance**
 
 ```bash
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
+set -euo pipefail
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
   tests/test_oracle_protocol.py \
   > data/oracle/plugin-plan-evidence/protocol-collection.txt
 rg -q '^240 tests collected in ' \
   data/oracle/plugin-plan-evidence/protocol-collection.txt
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest --collect-only -q \
   > data/oracle/plugin-plan-evidence/full-collection.txt
 rg -q '^1948 tests collected in ' \
   data/oracle/plugin-plan-evidence/full-collection.txt
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run pytest -q -rxX \
   > data/oracle/plugin-plan-evidence/post-plugin-pytest.txt
 test "$(rg -o '[0-9]+ passed' \
   data/oracle/plugin-plan-evidence/post-plugin-pytest.txt | tail -n 1)" = '1822 passed'
@@ -14482,9 +23727,11 @@ cmp data/oracle/plugin-plan-evidence/pre-plugin-xfail-nodeids.txt \
   data/oracle/plugin-plan-evidence/post-plugin-xfail-nodeids.txt
 test "$(rg -c '^XPASS ' \
   data/oracle/plugin-plan-evidence/post-plugin-pytest.txt)" = 6
-UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python -m compileall -q src tools tests
+UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache uv run python -m compileall -q src tools tests
 git diff --check
-git diff --name-status origin/main..HEAD
+SSR_PLUGIN_BRANCH_BASE=$(git merge-base main HEAD)
+readonly SSR_PLUGIN_BRANCH_BASE
+git diff --name-status "$SSR_PLUGIN_BRANCH_BASE"
 git status --short --branch
 ```
 
@@ -14519,9 +23766,9 @@ done
 ```
 
 Every other collected item must pass. Verify no `bin`, `obj`, real trace,
-config, save, decompiled source, or user path fixture is tracked. Send the
-complete Tasks 1-10 diff and all acceptance evidence to fresh specification
-and code-quality reviewers, resolve every finding, and rerun the affected gate.
+config, save, decompiled source, or user path fixture is tracked. Retain the
+complete Tasks 1-10 diff and all acceptance evidence for Task 10.1's
+post-commit review and the separate final whole-branch review.
 
 - [ ] **Step 7: Commit only the literal reviewed runbook evidence**
 
