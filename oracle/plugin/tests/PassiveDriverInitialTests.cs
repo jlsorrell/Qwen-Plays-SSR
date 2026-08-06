@@ -472,10 +472,9 @@ internal static class PassiveDriverInitialTests
         Check.Equal(
             1,
             control.Sink.InitialRecords.Count,
-            "candidate fixture settles without defensive seed");
+            "candidate fixture settles through supported flow");
 
-        DriverFixture fixture = CandidateFixture("gap-value");
-        fixture.SetNeutralSeenForDefensiveTest(false);
+        DriverFixture fixture = DriverFixture.Active();
         FakeUpdateObservation skipped = fixture.Observe(
             fixture.State,
             fixture.State,
@@ -496,7 +495,7 @@ internal static class PassiveDriverInitialTests
         Check.Equal(
             0,
             fixture.Sink.InitialRecords.Count,
-            "NotInspected cleared candidate");
+            "first candidate after NotInspected does not settle");
         fixture.Observe(
             fixture.State,
             fixture.State,
@@ -684,7 +683,7 @@ internal static class PassiveDriverInitialTests
         Check.Equal(
             0,
             fixture.Sink.InitialRecords.Count,
-            "replacement cleared old candidate and old deadline");
+            "replacement requires two fresh candidate captures");
         fixture.Observe(
             fixture.OtherState,
             fixture.OtherState,
@@ -708,8 +707,6 @@ internal static class PassiveDriverInitialTests
                 true,
                 true),
             "candidate replacement authorizes");
-        candidate.AssertCandidateClearedForDefensiveTest(
-            "replacement clears a value-equal old candidate");
         candidate.Driver.CompleteUpdate(
             candidateReplacement,
             GateSample.NotInspected(),

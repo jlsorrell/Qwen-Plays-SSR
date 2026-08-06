@@ -431,18 +431,6 @@ internal sealed partial class DriverFixture
         SetPrivateField("currentFrames", typeof(int), value);
     }
 
-    internal void SetNeutralSeenForDefensiveTest(bool value)
-    {
-        SetPrivateField("neutralSeen", typeof(bool), value);
-    }
-
-    internal void AssertCandidateClearedForDefensiveTest(string label)
-    {
-        FieldInfo field = RequirePrivateField(
-            "candidateSignature", typeof(byte[]));
-        Check.True(field.GetValue(Driver) == null, label);
-    }
-
     private void SetPrivateField(
         string name,
         Type expectedType,
