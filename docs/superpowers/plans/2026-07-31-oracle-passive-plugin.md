@@ -12264,7 +12264,14 @@ four hashes, and Step 12 passes from the exact implementation commit.
 > establish completion. Use only
 > `docs/superpowers/plans/2026-08-04-task-4.2-review-correction.md` at its
 > accepted commit-pinned correction round, together with its tracked evidence
-> seal and passing post-seal terminal verifier. Historical `task-4.2-*` ignored
+> seal and passing post-seal terminal verifier. Correction round `r01`, anchored
+> at `360436f8667407f5360fdf54701ab999a2729552`, was rejected before RED when
+> its embedded driver failed the baseline gate under Apple Bash 3.2 because a
+> literal brace expression was expanded into extra command arguments. Its
+> commit, 44 ledger rows, and 26 ignored artifacts are preserved as historical
+> evidence and cannot satisfy any `r02` gate. The authoritative gate status was
+> `2` with `/bin/bash: line 201: test: too many arguments`; no `r01` test commit
+> or evidence seal exists. Historical `task-4.2-*` ignored
 > artifacts are not correction evidence. Task 5 execution may begin only after
 > that seal and from the seal-pinned corrected test hashes; the exact-hash
 > checkpoints and helper-dependent Task 5 test text below require a descendant
