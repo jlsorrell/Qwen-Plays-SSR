@@ -12256,6 +12256,21 @@ four hashes, and Step 12 passes from the exact implementation commit.
 
 #### Task 4.2: Implement the scope-pure initial driver
 
+> **Superseded Task 4.2 completion workflow (2026-08-04).** Commit
+> `622abf4d22232ecdf3dfa831d02a985578a145f3`, its production behavior,
+> and the Task 5.1--5.3 ownership transfer remain unchanged. However, every
+> Task 4.2 execution, mutation, review, ignored-evidence, and completion
+> instruction below is historical and MUST NOT be run, replayed, or cited to
+> establish completion. Use only
+> `docs/superpowers/plans/2026-08-04-task-4.2-review-correction.md` at its
+> accepted commit-pinned correction round, together with its tracked evidence
+> seal and passing post-seal terminal verifier. Historical `task-4.2-*` ignored
+> artifacts are not correction evidence. Task 5 execution may begin only after
+> that seal and from the seal-pinned corrected test hashes; the exact-hash
+> checkpoints and helper-dependent Task 5 test text below require a descendant
+> rebase before Task 5.1 and are not authorized from
+> `622abf4d22232ecdf3dfa831d02a985578a145f3` alone.
+
 **Goal:** Add the Unity-free initial-state driver only: one-shot preparation
 and activation, initial epochs, ordered two-stage update authorization,
 neutral-input debounce over two equal complete capture signatures, exact
