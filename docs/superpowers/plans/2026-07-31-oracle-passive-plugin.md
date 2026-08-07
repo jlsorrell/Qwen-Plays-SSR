@@ -12258,7 +12258,8 @@ four hashes, and Step 12 passes from the exact implementation commit.
 
 > **Superseded Task 4.2 completion workflow (2026-08-04).** Commit
 > `622abf4d22232ecdf3dfa831d02a985578a145f3`, its production behavior,
-> and the Task 5.1--5.3 ownership transfer remain unchanged. However, every
+> and the required Task 5.1--5.3 ownership semantics remain unchanged.
+> However, every
 > Task 4.2 execution, mutation, review, ignored-evidence, and completion
 > instruction below is historical and MUST NOT be run, replayed, or cited to
 > establish completion. Use only
@@ -12273,13 +12274,22 @@ four hashes, and Step 12 passes from the exact implementation commit.
 > shell-gate review because canonical preseal output would be created before a
 > manifest-53 absent-path check. Round `r01` has 44 frozen ledger rows and 26
 > artifacts; `r02` has 80 frozen rows and 82 artifacts. Neither has an evidence
-> seal, and neither namespace can satisfy the gate-only `r03` round. Historical
-> `task-4.2-*` ignored artifacts are not correction evidence. Task 5 execution
-> may begin only after the accepted `r03` seal and from the seal-pinned corrected
-> test hashes; the exact-hash
-> checkpoints and helper-dependent Task 5 test text below require a descendant
-> rebase before Task 5.1 and are not authorized from
-> `622abf4d22232ecdf3dfa831d02a985578a145f3` alone.
+> seal. Correction round `r03`, anchored and tipped at
+> `98020fe367ab8dd922e2a2703502c0d8edb0db6a`, was rejected when its exact
+> Task 8 preseal launcher exited `1` before canonical publication. Its capture
+> wrapper leaked private-file `umask 077` into the helper and pytest; the
+> descriptor-mode fixture was therefore already `0600`, so `chmod(0600)` was
+> not a mutation. Round `r03` has 110 frozen ledger rows and 132 artifacts;
+> its two canonical preseal paths and evidence seal are absent. None of the
+> three rejected namespaces can satisfy the gate-only `r04` round. Historical
+> `task-4.2-*` ignored artifacts are not correction evidence. S4 is the first
+> canonical Task 4.2 seal, and Task 4.2 acceptance additionally requires a live
+> terminal-verifier status `0` from exact S4. Task 5 remains blocked after S4:
+> do not execute any legacy Task 5.1--5.3 text below. Only a descendant Task 5
+> ownership/rebase plan that starts from the exact seal, is written and
+> approved, recomputes the seal-pinned corrected test/document/helper hashes
+> and every affected patch context, and preserves the approved Task 5.1--5.3
+> ownership semantics may authorize Task 5.
 
 **Goal:** Add the Unity-free initial-state driver only: one-shot preparation
 and activation, initial epochs, ordered two-stage update authorization,
