@@ -10310,12 +10310,12 @@ test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
 test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
-test "$(grep -F -c '            \"driver-boundary\",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
+test "$(grep -F -c '            "driver-boundary",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
 test "$(grep -F -c '        PassiveDriverBoundaryTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"protocol\", 4 },' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"encoding\", 5 },' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"sink\", 6 },' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"driver-boundary\", 2 }' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "protocol", 4 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "encoding", 5 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "sink", 6 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "driver-boundary", 2 }' oracle/plugin/tests/Program.cs)" = "1"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
 git diff --check HEAD^ HEAD
@@ -12234,12 +12234,12 @@ test "$(shasum -a 256 oracle/plugin/Core/CaptureException.cs | awk '{print $1}')
 test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
 test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverBoundaryTests.cs | awk '{print $1}')" = "20c90060294a822967ff7d9e75f6a86fdae2ba247b6a9a08eb327b623424e0fc"
 test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
-test "$(grep -F -c '            \"driver-boundary\",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
+test "$(grep -F -c '            "driver-boundary",' oracle/plugin/tests/PassiveDriverBoundaryTests.cs)" = "2"
 test "$(grep -F -c '        PassiveDriverBoundaryTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"protocol\", 4 },' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"encoding\", 5 },' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"sink\", 6 },' oracle/plugin/tests/Program.cs)" = "1"
-test "$(grep -F -c '            { \"driver-boundary\", 2 }' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "protocol", 4 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "encoding", 5 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "sink", 6 },' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "driver-boundary", 2 }' oracle/plugin/tests/Program.cs)" = "1"
 test -z "$(git diff --cached --name-only)"
 test -z "$(git status --short --untracked-files=all)"
 git diff --check
@@ -12254,36 +12254,293 @@ mutants and all twelve controller replays fail at their literal named
 behavioral oracles, every inverse restores the appropriate exact scope and
 four hashes, and Step 12 passes from the exact implementation commit.
 
-#### Task 4.2: Implement initial epochs, authorization, debounce, and deadlines
+#### Task 4.2: Implement the scope-pure initial driver
 
-- [ ] **Step 1: Add the complete fake boundary and exactly eight RED tests**
+> **Superseded Task 4.2 completion workflow (2026-08-04).** Commit
+> `622abf4d22232ecdf3dfa831d02a985578a145f3`, its production behavior,
+> and the required Task 5.1--5.3 ownership semantics remain unchanged.
+> However, every
+> Task 4.2 execution, mutation, review, ignored-evidence, and completion
+> instruction below is historical and MUST NOT be run, replayed, or cited to
+> establish completion. Use only
+> `docs/superpowers/plans/2026-08-04-task-4.2-review-correction.md` at its
+> accepted commit-pinned correction round, together with its tracked evidence
+> seal and passing post-seal terminal verifier. Correction round `r01`, anchored
+> at `360436f8667407f5360fdf54701ab999a2729552`, was rejected before RED when
+> Apple Bash 3.2 expanded a quoted brace literal; its authoritative status was
+> `2` with `/bin/bash: line 201: test: too many arguments`. Correction round
+> `r02`, anchored at `2471b92048592f13928969c04395f3e9495a476c` with corrected
+> test commit `489cc1ce2a06e5a6db60759f5484ed2f170b4d5a`, was rejected by its
+> shell-gate review because canonical preseal output would be created before a
+> manifest-53 absent-path check. Round `r01` has 44 frozen ledger rows and 26
+> artifacts; `r02` has 80 frozen rows and 82 artifacts. Neither has an evidence
+> seal. Correction round `r03`, anchored and tipped at
+> `98020fe367ab8dd922e2a2703502c0d8edb0db6a`, was rejected when its exact
+> Task 8 preseal launcher exited `1` before canonical publication. Its capture
+> wrapper leaked private-file `umask 077` into the helper and pytest; the
+> descriptor-mode fixture was therefore already `0600`, so `chmod(0600)` was
+> not a mutation. Round `r03` has 110 frozen ledger rows and 132 artifacts;
+> its two canonical preseal paths and evidence seal are absent. None of the
+> three rejected namespaces can satisfy the gate-only `r04` round. Historical
+> `task-4.2-*` ignored artifacts are not correction evidence. S4 is the first
+> canonical Task 4.2 seal, and Task 4.2 acceptance additionally requires a live
+> terminal-verifier status `0` from exact S4. Task 5 remains blocked after S4:
+> do not execute any legacy Task 5.1--5.3 text below. Only a descendant Task 5
+> ownership/rebase plan that starts from the exact seal, is written and
+> approved, recomputes the seal-pinned corrected test/document/helper hashes
+> and every affected patch context, and preserves the approved Task 5.1--5.3
+> ownership semantics may authorize Task 5.
+
+**Goal:** Add the Unity-free initial-state driver only: one-shot preparation
+and activation, initial epochs, ordered two-stage update authorization,
+neutral-input debounce over two equal complete capture signatures, exact
+frame/time deadlines, reachable typed failure ownership, and idempotent
+disable/disposal.
 
 **Files:**
-- Modify: oracle/plugin/Core/PassiveDriverBoundaries.cs
-- Create: oracle/plugin/Core/PassiveDriver.cs
-- Create: oracle/plugin/tests/PassiveDriverTestSupport.cs
-- Create: oracle/plugin/tests/PassiveDriverInitialTests.cs
-- Modify: oracle/plugin/tests/Program.cs
+- Modify: `oracle/plugin/Core/PassiveDriverBoundaries.cs`
+- Create: `oracle/plugin/Core/PassiveDriver.cs`
+- Create: `oracle/plugin/tests/PassiveDriverTestSupport.cs`
+- Create: `oracle/plugin/tests/PassiveDriverInitialTests.cs`
+- Modify: `oracle/plugin/tests/Program.cs`
+
+**File responsibility map:**
+
+- `PassiveDriverBoundaries.cs` retains the Task 4.1 token, directive, gate,
+  and reporter contracts, and adds only `IPassiveUpdateObservation` plus the
+  ordered `PassiveUpdateBoundary` firewall. `LastDirective` is the
+  same-assembly seam that proves replacement epoch/frame rebasing.
+- `PassiveDriver.cs` owns preparation, activation, initial epochs, physical
+  neutral/cardinal observation, directive consumption, signature debounce,
+  initial record emission, reachable failure arbitration, and teardown. It
+  is deliberately non-partial in this task.
+- `PassiveDriverTestSupport.cs` implements the complete existing `ITraceSink`
+  and `IPassiveReporter` interfaces plus a fully ordered observation fake.
+  Its Step and End members are interface stubs; Task 4.2 requires their call
+  and record counts to remain zero.
+- `PassiveDriverInitialTests.cs` retains the eight already-approved manifest
+  identities but uses named helper assertions to cover the complete behavior,
+  exception, deadline, replacement, and teardown matrix.
+- `Program.cs` adds the eight-test cohort after `driver-boundary`; the
+  cumulative manifest is exactly `protocol=4`, `encoding=5`, `sink=6`,
+  `driver-boundary=2`, and `driver-initial=8`.
 
 **Interfaces:**
-- Produces partial PassiveDriver with constructor
-  PassiveDriver(ITraceSink, IPassiveReporter, int, int, double), Prepare,
-  Activate, BeginUpdate, AuthorizeUpdate, CompleteUpdate, FailUpdate,
-  PlayerPollEntered, tokenless PhysicalPollReturned, PlayerPollReturned,
-  PlayerPollThrew, TryFault, ObserverFailed, Disable, and Dispose.
-- Observation state is Unity-main-thread-only. Terminal selection, directive
-  stages, hook-token consumption, teardown, and sink-close ownership use
-  Interlocked. No sink or reporter method is invoked while a monitor is held.
-- A pre-initial replacement detected after the path check starts a new epoch
-  on that same callback with currentFrames equal to 1, rebases the authorized
-  directive, resets neutral/candidate/last-capture state, and completes that
-  callback as NotInspected.
 
-Create PassiveDriverTestSupport.cs:
+- Consumes the Task 4.1 global-namespace internal `HookToken`,
+  `UpdateDirective`, `GateSample`, `CaptureException`, and
+  `IPassiveReporter` contracts without modifying their semantics.
+- Produces `IPassiveUpdateObservation` with exact methods
+  `TryGetState(out object)`, `VerifySavePath()`, `IsQuiescent(object)`,
+  `Capture(object)`, `NowSeconds()`, and `UtcNow()`.
+- Produces `PassiveUpdateBoundary(PassiveDriver)`,
+  `LastDirective`, and `Observe(IPassiveUpdateObservation)`.
+- Produces `PassiveDriver(ITraceSink, IPassiveReporter, int, int, double)`,
+  `Phase`, `CurrentSettleFrames`, `StartedAtUtc`, `Prepare`, `Activate`,
+  `BeginUpdate`, `AuthorizeUpdate`, `CompleteUpdate`, `FailUpdate`,
+  `PlayerPollEntered`, tokenless `PhysicalPollReturned`,
+  `PlayerPollReturned`, `PlayerPollThrew`, `ObserverFailed`, `TryFault`,
+  `Disable`, and `Dispose`.
+- Observation state is serialized on Unity's main thread. Interlocked state
+  owns one-shot preparation/activation, directive stages, token consumption,
+  terminal selection, disable/disposal, and sink close. No sink or reporter
+  call occurs while a monitor is held, and this task adds no monitor.
 
-~~~csharp
+**Strict scope exclusions:** Task 4.2 must not contain `completedInputs`,
+pending-attempt fields or properties, manual-attempt creation/cleanup,
+ProcessInput or Undo correlation, settled Step emission, End completion,
+Restart/state-set behavior, `stableState`, or partial-method seams. Task 5.1
+will explicitly modify `PassiveDriver.cs` when its RED tests first need that
+state. Task 5.3 remains the owner of successful terminal completion and the
+full competing-fault lifecycle.
+
+**Execution constraints:** Work only in the isolated worktree. Every `dotnet`
+command is offline and uses `--no-restore`; every Python command uses
+`UV_OFFLINE=1`. Do not launch the game or a GUI, access a save, deploy,
+restore packages, use the network, or modify installed configuration. Build
+the unit and net35 projects sequentially with `-warnaserror -t:Rebuild`; never
+accept an incremental result after a failed compile. Run focused/full
+harnesses from the freshly rebuilt unit artifact with `--no-build` and require
+stdout exactly `SSR oracle unit harness ready`.
+
+The approved design SHA-256 is
+`1c97f6feeab11f50d16cbc0ebcbfe0e5dce764566537e1999273a49c4a6b9c2a`.
+The pre-RED `PassiveDriverBoundaries.cs` SHA-256 is
+`0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09` and
+the pre-RED `Program.cs` SHA-256 is
+`6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd`.
+The exact final source hashes are:
+
+- `PassiveDriverBoundaries.cs`:
+  `1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133`;
+- `PassiveDriver.cs`:
+  `0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6`;
+- `PassiveDriverTestSupport.cs`:
+  `96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33`;
+- `PassiveDriverInitialTests.cs`:
+  `a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b`;
+- cumulative `Program.cs`:
+  `9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004`.
+
+- [ ] **Step 1: Record dispatch pins and pass the clean pre-RED baseline**
+
+The plan cannot contain its own future commit/SHA or the hash of a brief
+generated from that future plan. After this documentation amendment is
+committed and the controller regenerates the Task 4.2 brief, the controller
+writes exactly one literal value for each of these six keys into both
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md` and
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-report.md`:
+
+```text
+Task 4.2 execution base:
+Task 4.2 execution parent:
+Task 4.2 execution subject:
+Task 4.2 amended plan SHA-256:
+Task 4.2 regenerated brief SHA-256:
+Task 4.2 approved design SHA-256:
+```
+
+The controller verifies the six literal values immediately before dispatch
+and supplies them in the implementer prompt. The implementer must not
+regenerate or rewrite the brief. Run this self-contained gate before changing
+any tracked implementation file:
+
+```bash
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+plan_path='docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md'
+brief_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-brief.md'
+design_path='docs/superpowers/specs/2026-08-04-task-4.2-scope-pure-hardening-design.md'
+for evidence_path in "$report_path" "$progress_path"; do
+  test -f "$evidence_path"
+  for key in \
+    'execution base' \
+    'execution parent' \
+    'execution subject' \
+    'amended plan SHA-256' \
+    'regenerated brief SHA-256' \
+    'approved design SHA-256'; do
+    test "$(grep -F -c "Task 4.2 $key:" "$evidence_path")" = "1"
+  done
+done
+read_pin() {
+  sed -n "s/^Task 4[.]2 $2: //p" "$1"
+}
+dispatch_base="$(read_pin "$report_path" 'execution base')"
+dispatch_parent="$(read_pin "$report_path" 'execution parent')"
+dispatch_subject="$(read_pin "$report_path" 'execution subject')"
+dispatch_plan_sha="$(read_pin "$report_path" 'amended plan SHA-256')"
+dispatch_brief_sha="$(read_pin "$report_path" 'regenerated brief SHA-256')"
+dispatch_design_sha="$(read_pin "$report_path" 'approved design SHA-256')"
+progress_base="$(read_pin "$progress_path" 'execution base')"
+progress_parent="$(read_pin "$progress_path" 'execution parent')"
+progress_subject="$(read_pin "$progress_path" 'execution subject')"
+progress_plan_sha="$(read_pin "$progress_path" 'amended plan SHA-256')"
+progress_brief_sha="$(read_pin "$progress_path" 'regenerated brief SHA-256')"
+progress_design_sha="$(read_pin "$progress_path" 'approved design SHA-256')"
+is_sha1() {
+  test "$(printf '%s\n' "$1" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+}
+is_sha256() {
+  test "$(printf '%s\n' "$1" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+}
+is_sha1 "$dispatch_base"
+is_sha1 "$dispatch_parent"
+test -n "$dispatch_subject"
+is_sha256 "$dispatch_plan_sha"
+is_sha256 "$dispatch_brief_sha"
+is_sha256 "$dispatch_design_sha"
+is_sha1 "$progress_base"
+is_sha1 "$progress_parent"
+test -n "$progress_subject"
+is_sha256 "$progress_plan_sha"
+is_sha256 "$progress_brief_sha"
+is_sha256 "$progress_design_sha"
+test "$progress_base" = "$dispatch_base"
+test "$progress_parent" = "$dispatch_parent"
+test "$progress_subject" = "$dispatch_subject"
+test "$progress_plan_sha" = "$dispatch_plan_sha"
+test "$progress_brief_sha" = "$dispatch_brief_sha"
+test "$progress_design_sha" = "$dispatch_design_sha"
+test "$(git rev-parse HEAD)" = "$dispatch_base"
+test "$(git rev-parse HEAD^)" = "$dispatch_parent"
+test "$(git show -s --format=%s HEAD)" = "$dispatch_subject"
+test "$(shasum -a 256 "$plan_path" | awk '{print $1}')" = "$dispatch_plan_sha"
+test "$(shasum -a 256 "$brief_path" | awk '{print $1}')" = "$dispatch_brief_sha"
+test "$(shasum -a 256 "$design_path" | awk '{print $1}')" = "$dispatch_design_sha"
+test "$dispatch_design_sha" = "1c97f6feeab11f50d16cbc0ebcbfe0e5dce764566537e1999273a49c4a6b9c2a"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "6fae5a616b38241bf018d7458aa79803b0d12fac129fd4f611a6c50e6bda11dd"
+test ! -e oracle/plugin/Core/PassiveDriver.cs
+test ! -e oracle/plugin/tests/PassiveDriverTestSupport.cs
+test ! -e oracle/plugin/tests/PassiveDriverInitialTests.cs
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+python_output="$(UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache \
+  /opt/homebrew/bin/uv run pytest -q -rX 2>&1)"
+printf '%s\n' "$python_output"
+case "$python_output" in
+  *"1822 passed, 120 xfailed, 6 xpassed in "*) ;;
+  *) exit 1 ;;
+esac
+unit_build_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild -m:1 \
+  -p:UseSharedCompilation=false 2>&1)"
+printf '%s\n' "$unit_build_output"
+case "$unit_build_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+boundary_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build -- --cohort driver-boundary 2>&1)"
+test "$boundary_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$boundary_output"
+full_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build -- --cohort all 2>&1)"
+test "$full_output" = "SSR oracle unit harness ready"
+printf '%s\n' "$full_output"
+net35_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild -m:1 \
+  -p:UseSharedCompilation=false 2>&1)"
+printf '%s\n' "$net35_output"
+case "$net35_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$python_output
+$unit_build_output
+$boundary_output
+$full_output
+$net35_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|*"SDK"*|\
+  *"assets file"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|\
+  *"NU1"*|*"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+```
+
+- [ ] **Step 2: Add the complete fake boundary and eight RED registrations**
+
+Create `oracle/plugin/tests/PassiveDriverTestSupport.cs` exactly:
+
+```csharp
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 
 internal sealed class FakeTraceSink : ITraceSink
 {
@@ -12294,6 +12551,8 @@ internal sealed class FakeTraceSink : ITraceSink
         this.events = events;
     }
 
+    internal readonly List<RunRecord> RunRecords =
+        new List<RunRecord>();
     internal readonly List<InitialRecord> InitialRecords =
         new List<InitialRecord>();
     internal readonly List<StepRecord> StepRecords =
@@ -12304,49 +12563,54 @@ internal sealed class FakeTraceSink : ITraceSink
         new List<ErrorRecord>();
     internal Exception RunFailure { get; set; }
     internal Exception InitialFailure { get; set; }
-    internal Exception StepFailure { get; set; }
-    internal Exception EndFailure { get; set; }
     internal Exception ErrorFailure { get; set; }
     internal Exception CloseFailure { get; set; }
+    internal int RunCalls;
+    internal int InitialCalls;
+    internal int StepCalls;
+    internal int EndCalls;
+    internal int ErrorCalls;
     internal int CloseCalls;
 
     public void WriteRun(RunRecord record)
     {
+        RunCalls++;
+        Add("sink:run");
         if (RunFailure != null)
             throw RunFailure;
-        Add("sink:run");
+        RunRecords.Add(record);
     }
 
     public void WriteInitial(InitialRecord record)
     {
+        InitialCalls++;
+        Add("sink:initial");
         if (InitialFailure != null)
             throw InitialFailure;
         InitialRecords.Add(record);
-        Add("sink:initial");
     }
 
     public void WriteStep(StepRecord record)
     {
-        if (StepFailure != null)
-            throw StepFailure;
+        StepCalls++;
+        Add("sink:step");
         StepRecords.Add(record);
-        Add("sink:step:" + record.InputIndex.ToString());
     }
 
     public void WriteEnd(EndRecord record)
     {
-        if (EndFailure != null)
-            throw EndFailure;
-        EndRecords.Add(record);
+        EndCalls++;
         Add("sink:end");
+        EndRecords.Add(record);
     }
 
     public void WriteError(ErrorRecord record)
     {
+        ErrorCalls++;
+        Add("sink:error:" + record.Code);
         if (ErrorFailure != null)
             throw ErrorFailure;
         ErrorRecords.Add(record);
-        Add("sink:error:" + record.Code);
     }
 
     public void Close()
@@ -12359,8 +12623,7 @@ internal sealed class FakeTraceSink : ITraceSink
 
     private void Add(string value)
     {
-        lock (events)
-            events.Add(value);
+        events.Add(value);
     }
 }
 
@@ -12373,13 +12636,19 @@ internal sealed class FakePassiveReporter : IPassiveReporter
         this.events = events;
     }
 
+    internal readonly List<int> ReadyValues = new List<int>();
+    internal readonly List<string> FailedCodes = new List<string>();
+    internal readonly List<string> Diagnostics = new List<string>();
     internal Exception ReadyFailure { get; set; }
-    internal Exception CompleteFailure { get; set; }
     internal Exception FailedFailure { get; set; }
     internal Exception DiagnosticFailure { get; set; }
+    internal int CompleteCalls;
+    internal int FailedCalls;
+    internal int DiagnosticCalls;
 
     public void Ready(int completedInputs)
     {
+        ReadyValues.Add(completedInputs);
         Add("report:ready:" + completedInputs.ToString() + "/3");
         if (ReadyFailure != null)
             throw ReadyFailure;
@@ -12387,13 +12656,14 @@ internal sealed class FakePassiveReporter : IPassiveReporter
 
     public void Complete()
     {
+        CompleteCalls++;
         Add("report:complete");
-        if (CompleteFailure != null)
-            throw CompleteFailure;
     }
 
     public void Failed(string code)
     {
+        FailedCalls++;
+        FailedCodes.Add(code);
         Add("report:failed:" + code);
         if (FailedFailure != null)
             throw FailedFailure;
@@ -12401,6 +12671,8 @@ internal sealed class FakePassiveReporter : IPassiveReporter
 
     public void Diagnostic(string message)
     {
+        DiagnosticCalls++;
+        Diagnostics.Add(message);
         Add("report:diagnostic:" + message);
         if (DiagnosticFailure != null)
             throw DiagnosticFailure;
@@ -12408,14 +12680,20 @@ internal sealed class FakePassiveReporter : IPassiveReporter
 
     private void Add(string value)
     {
-        lock (events)
-            events.Add(value);
+        events.Add(value);
     }
 }
 
 internal sealed class FakeUpdateObservation :
     IPassiveUpdateObservation
 {
+    private readonly IList<string> events;
+
+    internal FakeUpdateObservation(IList<string> events)
+    {
+        this.events = events;
+    }
+
     internal object FirstState;
     internal object SecondState;
     internal bool FirstUsable = true;
@@ -12426,30 +12704,42 @@ internal sealed class FakeUpdateObservation :
         ProtocolSamples.InitialCapture;
     internal double Now;
     internal DateTime Utc = DriverFixture.UtcFinish;
+    internal Exception FirstStateFailure { get; set; }
+    internal Exception SecondStateFailure { get; set; }
+    internal Exception NowFailure { get; set; }
     internal Exception PathFailure { get; set; }
     internal Exception GateFailure { get; set; }
     internal Exception CaptureFailure { get; set; }
+    internal Exception UtcFailure { get; set; }
     internal int PathCalls;
     internal int StateCalls;
     internal int GateCalls;
     internal int CaptureCalls;
+    internal int NowCalls;
+    internal int UtcCalls;
     internal object GateState;
     internal object CaptureState;
+    internal Func<bool> AuthorizationProbe;
+    internal bool GateSawAuthorized;
 
     public bool TryGetState(out object stateReference)
     {
-        if (StateCalls++ == 0)
-        {
-            stateReference = FirstState;
-            return FirstUsable;
-        }
-        stateReference = SecondState;
-        return SecondUsable;
+        bool first = StateCalls == 0;
+        StateCalls++;
+        Add(first ? "observer:state:begin" : "observer:state:verified");
+        Exception failure = first
+            ? FirstStateFailure
+            : SecondStateFailure;
+        if (failure != null)
+            throw failure;
+        stateReference = first ? FirstState : SecondState;
+        return first ? FirstUsable : SecondUsable;
     }
 
     public bool VerifySavePath()
     {
         PathCalls++;
+        Add("observer:path");
         if (PathFailure != null)
             throw PathFailure;
         return SavePathMatches;
@@ -12459,6 +12749,9 @@ internal sealed class FakeUpdateObservation :
     {
         GateCalls++;
         GateState = stateReference;
+        if (AuthorizationProbe != null)
+            GateSawAuthorized = AuthorizationProbe();
+        Add("observer:gate");
         if (GateFailure != null)
             throw GateFailure;
         return Quiescent;
@@ -12468,6 +12761,7 @@ internal sealed class FakeUpdateObservation :
     {
         CaptureCalls++;
         CaptureState = stateReference;
+        Add("observer:capture");
         if (CaptureFailure != null)
             throw CaptureFailure;
         return CaptureValue;
@@ -12475,12 +12769,25 @@ internal sealed class FakeUpdateObservation :
 
     public double NowSeconds()
     {
+        NowCalls++;
+        Add("observer:time");
+        if (NowFailure != null)
+            throw NowFailure;
         return Now;
     }
 
     public DateTime UtcNow()
     {
+        UtcCalls++;
+        Add("observer:utc");
+        if (UtcFailure != null)
+            throw UtcFailure;
         return Utc;
+    }
+
+    private void Add(string value)
+    {
+        events.Add(value);
     }
 }
 
@@ -12503,8 +12810,24 @@ internal sealed partial class DriverFixture
         Sink = new FakeTraceSink(Events);
         Reporter = new FakePassiveReporter(Events);
         Driver = new PassiveDriver(
-            Sink, Reporter, 3, maxFrames, maxSeconds);
+            Sink,
+            Reporter,
+            OracleProtocol.ExpectedInputCount,
+            maxFrames,
+            maxSeconds);
         Boundary = new PassiveUpdateBoundary(Driver);
+    }
+
+    internal static DriverFixture Unprepared()
+    {
+        return Unprepared(600, 30.0);
+    }
+
+    internal static DriverFixture Unprepared(
+        int maxFrames,
+        double maxSeconds)
+    {
+        return new DriverFixture(maxFrames, maxSeconds);
     }
 
     internal static DriverFixture Active()
@@ -12517,7 +12840,7 @@ internal sealed partial class DriverFixture
         double maxSeconds)
     {
         DriverFixture fixture =
-            new DriverFixture(maxFrames, maxSeconds);
+            Unprepared(maxFrames, maxSeconds);
         Check.True(
             fixture.Driver.Prepare(ProtocolSamples.Run),
             "prepare");
@@ -12529,19 +12852,30 @@ internal sealed partial class DriverFixture
     {
         DriverFixture fixture = Active();
         fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.Capture("ready-a"));
         fixture.Neutral();
-        FakeUpdateObservation firstSample = fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
-        Check.Same(fixture.State, firstSample.GateState,
-            "gate receives verified state");
-        Check.Same(fixture.State, firstSample.CaptureState,
-            "capture receives verified state");
         fixture.Observe(
-            fixture.State, fixture.State, 3.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            2.0,
+            true,
+            ProtocolSamples.Capture("ready-pair"));
+        fixture.Observe(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            3.0,
+            true,
+            ProtocolSamples.Capture("ready-pair"));
         Check.Equal(
             PassivePhase.Ready,
             fixture.Driver.Phase,
@@ -12556,19 +12890,65 @@ internal sealed partial class DriverFixture
         bool quiescent,
         CaptureRecord capture)
     {
+        return Observe(
+            firstState,
+            firstState != null,
+            secondState,
+            secondState != null,
+            now,
+            quiescent,
+            capture);
+    }
+
+    internal FakeUpdateObservation Observe(
+        object firstState,
+        bool firstUsable,
+        object secondState,
+        bool secondUsable,
+        double now,
+        bool quiescent,
+        CaptureRecord capture)
+    {
         FakeUpdateObservation observation =
-            new FakeUpdateObservation
-            {
-                FirstState = firstState,
-                SecondState = secondState,
-                FirstUsable = firstState != null,
-                SecondUsable = secondState != null,
-                Now = now,
-                Quiescent = quiescent,
-                CaptureValue = capture,
-                Utc = UtcFinish
-            };
+            NewObservation(
+                firstState,
+                firstUsable,
+                secondState,
+                secondUsable,
+                now,
+                quiescent,
+                capture);
         Boundary.Observe(observation);
+        return observation;
+    }
+
+    internal FakeUpdateObservation NewObservation(
+        object firstState,
+        bool firstUsable,
+        object secondState,
+        bool secondUsable,
+        double now,
+        bool quiescent,
+        CaptureRecord capture)
+    {
+        FakeUpdateObservation observation =
+            new FakeUpdateObservation(Events)
+        {
+            FirstState = firstState,
+            FirstUsable = firstUsable,
+            SecondState = secondState,
+            SecondUsable = secondUsable,
+            Now = now,
+            Quiescent = quiescent,
+            CaptureValue = capture,
+            Utc = UtcFinish
+        };
+        observation.AuthorizationProbe = delegate
+        {
+            UpdateDirective directive = Boundary.LastDirective;
+            return directive != null
+                && ReadUpdateStage(directive) == 1;
+        };
         return observation;
     }
 
@@ -12585,14 +12965,73 @@ internal sealed partial class DriverFixture
         Driver.PhysicalPollReturned(rawDirection);
         Driver.PlayerPollReturned(poll);
     }
+
+    internal void SetCurrentFramesForDefensiveTest(int value)
+    {
+        SetPrivateField("currentFrames", typeof(int), value);
+    }
+
+    internal void SetNeutralSeenForDefensiveTest(bool value)
+    {
+        SetPrivateField("neutralSeen", typeof(bool), value);
+    }
+
+    internal void AssertCandidateClearedForDefensiveTest(string label)
+    {
+        FieldInfo field = RequirePrivateField(
+            "candidateSignature", typeof(byte[]));
+        Check.True(field.GetValue(Driver) == null, label);
+    }
+
+    private void SetPrivateField(
+        string name,
+        Type expectedType,
+        object value)
+    {
+        FieldInfo field = RequirePrivateField(name, expectedType);
+        field.SetValue(Driver, value);
+    }
+
+    private static int ReadUpdateStage(UpdateDirective directive)
+    {
+        FieldInfo field = typeof(UpdateDirective).GetField(
+            "stage",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Check.True(field != null, "directive stage reflection seam");
+        Check.Same(
+            typeof(UpdateDirective),
+            field.DeclaringType,
+            "directive stage declaring type");
+        Check.Same(typeof(int), field.FieldType,
+            "directive stage field type");
+        Check.True(field.IsPrivate, "directive stage is private");
+        return (int)field.GetValue(directive);
+    }
+
+    private static FieldInfo RequirePrivateField(
+        string name,
+        Type expectedType)
+    {
+        FieldInfo field = typeof(PassiveDriver).GetField(
+            name,
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Check.True(field != null, name + " reflection seam");
+        Check.Same(
+            typeof(PassiveDriver),
+            field.DeclaringType,
+            name + " declaring type");
+        Check.Same(expectedType, field.FieldType, name + " field type");
+        Check.True(field.IsPrivate, name + " is private");
+        return field;
+    }
 }
-~~~
+```
 
-Create PassiveDriverInitialTests.cs with exactly eight registrations and eight
-method bodies:
+Create `oracle/plugin/tests/PassiveDriverInitialTests.cs` exactly:
 
-~~~csharp
+```csharp
 using System;
+using System.Collections.Generic;
 
 internal static class PassiveDriverInitialTests
 {
@@ -12618,19 +13057,125 @@ internal static class PassiveDriverInitialTests
 
     private static void PrepareActivateSeparation()
     {
-        DriverFixture fixture = DriverFixture.Active();
+        IList<string> events = new List<string>();
+        FakeTraceSink sink = new FakeTraceSink(events);
+        FakePassiveReporter reporter = new FakePassiveReporter(events);
+        Check.Throws<ArgumentNullException>(
+            delegate { new PassiveUpdateBoundary(null); },
+            "null boundary driver rejected");
+        Check.Throws<ArgumentNullException>(
+            delegate
+            {
+                new PassiveDriver(
+                    null,
+                    reporter,
+                    OracleProtocol.ExpectedInputCount,
+                    600,
+                    30.0);
+            },
+            "null sink rejected");
+        Check.Throws<ArgumentNullException>(
+            delegate
+            {
+                new PassiveDriver(
+                    sink,
+                    null,
+                    OracleProtocol.ExpectedInputCount,
+                    600,
+                    30.0);
+            },
+            "null reporter rejected");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveDriver(sink, reporter, 2, 600, 30.0);
+            },
+            "wrong expected count rejected");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveDriver(
+                    sink,
+                    reporter,
+                    OracleProtocol.ExpectedInputCount,
+                    1,
+                    30.0);
+            },
+            "short frame limit rejected");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveDriver(
+                    sink,
+                    reporter,
+                    OracleProtocol.ExpectedInputCount,
+                    OracleProtocol.MaxSettleFrames + 1,
+                    30.0);
+            },
+            "large frame limit rejected");
+        AssertBadSeconds(0.0, sink, reporter, "zero seconds");
+        AssertBadSeconds(-1.0, sink, reporter, "negative seconds");
+        AssertBadSeconds(Double.NaN, sink, reporter, "NaN seconds");
+        AssertBadSeconds(
+            Double.PositiveInfinity,
+            sink,
+            reporter,
+            "infinite seconds");
+
+        DriverFixture nullRun = DriverFixture.Unprepared();
+        Check.Throws<ArgumentNullException>(
+            delegate { nullRun.Driver.Prepare(null); },
+            "null Run rejected");
+        Check.Equal(0, nullRun.Sink.RunCalls,
+            "null Run never reaches sink");
+        Check.Throws<ArgumentNullException>(
+            delegate { nullRun.Boundary.Observe(null); },
+            "null observation rejected while inactive");
+
+        DriverFixture fixture = DriverFixture.Unprepared();
+        Check.Equal(
+            PassivePhase.Disabled,
+            fixture.Driver.Phase,
+            "constructor phase");
+        Check.False(fixture.Driver.Activate(), "activation needs run");
+        Check.True(
+            fixture.Driver.Prepare(ProtocolSamples.Run),
+            "first prepare");
+        Check.Same(
+            ProtocolSamples.Run,
+            fixture.Sink.RunRecords[0],
+            "prepared run identity");
+        Check.Equal(
+            ProtocolSamples.Run.StartedAtUtc,
+            fixture.Driver.StartedAtUtc,
+            "started timestamp retained after flush");
         Check.Sequence(
             new string[] { "sink:run" },
             fixture.Events.ToArray(),
-            "prepare precedes all reports");
+            "prepare writes before any report");
+        Check.False(
+            fixture.Driver.Prepare(ProtocolSamples.Run),
+            "prepare is one shot");
+        Check.True(fixture.Driver.Activate(), "first activate");
+        Check.False(fixture.Driver.Activate(), "activate is one shot");
         Check.Equal(
             PassivePhase.AwaitGame,
             fixture.Driver.Phase,
             "activated phase");
+        AssertNoStepOrEnd(fixture, "initial lifecycle");
+
+        DriverFixture disabledBeforeActivation =
+            DriverFixture.Unprepared();
+        Check.True(
+            disabledBeforeActivation.Driver.Prepare(ProtocolSamples.Run),
+            "prepare before disable");
+        disabledBeforeActivation.Driver.Disable();
         Check.False(
-            fixture.Driver.Prepare(ProtocolSamples.Run),
-            "second prepare");
-        Check.False(fixture.Driver.Activate(), "second activate");
+            disabledBeforeActivation.Driver.Activate(),
+            "disable prevents first activation");
+
+        AssertPrepareFailureIsMarkerOnly();
+        AssertDisableDisposeAndLateCallbacks();
     }
 
     private static void PreEpochNeutralDoesNotLeak()
@@ -12638,318 +13183,1742 @@ internal static class PassiveDriverInitialTests
         DriverFixture fixture = DriverFixture.Active();
         fixture.Neutral();
         FakeUpdateObservation first = fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
-            ProtocolSamples.InitialCapture);
-        Check.Equal(0, first.CaptureCalls, "old neutral ignored");
-        fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
-        Check.Equal(
-            0, fixture.Sink.InitialRecords.Count,
-            "no initial without epoch neutral");
+            fixture.State,
+            fixture.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("pre-neutral"));
+        Check.Equal(0, first.GateCalls, "old neutral skips gate");
+        Check.Equal(0, first.CaptureCalls, "old neutral skips capture");
         fixture.Neutral();
         fixture.Observe(
-            fixture.State, fixture.State, 3.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("new-neutral"));
+        Check.Equal(
+            0,
+            fixture.Sink.InitialRecords.Count,
+            "one new-epoch sample is not enough");
         fixture.Observe(
-            fixture.State, fixture.State, 4.0, true,
+            fixture.State,
+            fixture.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("new-neutral"));
+        Check.Equal(
+            1,
+            fixture.Sink.InitialRecords.Count,
+            "new epoch neutral enables pair");
+
+        DriverFixture lateUsable = DriverFixture.Active();
+        FakeUpdateObservation becameUsable = lateUsable.Observe(
+            null,
+            false,
+            lateUsable.State,
+            true,
+            4.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        UpdateDirective started = lateUsable.Boundary.LastDirective;
+        Check.True(started != null && started.Active,
+            "late usable directive active");
+        Check.Equal(1, started.SettleFrames,
+            "verified usable state starts frame one");
+        Check.False(started.InspectGate,
+            "new same-callback epoch is not inspected");
+        Check.False(started.TimeoutAfterSample,
+            "new same-callback epoch has fresh deadline");
+        Check.Equal(0, becameUsable.GateCalls,
+            "verified usable callback skips gate");
+        Check.Equal(
+            PassivePhase.AwaitInitialNeutral,
+            lateUsable.Driver.Phase,
+            "verified usable starts epoch");
+
+        DriverFixture lost = DriverFixture.Active();
+        FakeUpdateObservation becameUnusable = lost.Observe(
+            lost.State,
+            true,
+            null,
+            false,
+            5.0,
+            true,
             ProtocolSamples.InitialCapture);
         Check.Equal(
-            1, fixture.Sink.InitialRecords.Count,
-            "new neutral enables pair");
+            PassivePhase.AwaitGame,
+            lost.Driver.Phase,
+            "verified unusable returns to AwaitGame");
+        Check.Equal(0, lost.Driver.CurrentSettleFrames,
+            "unusable reset clears frames");
+        Check.Equal(0, becameUnusable.GateCalls,
+            "unusable callback skips gate");
+        Check.Equal(0, lost.Boundary.LastDirective.SettleFrames,
+            "unusable directive rebases to frame zero");
+
+        DriverFixture reset = CandidateFixture("reset-old");
+        FakeUpdateObservation resetToAwaitGame = reset.Observe(
+            reset.State,
+            true,
+            null,
+            false,
+            2.0,
+            true,
+            ProtocolSamples.Capture("ignored"));
+        Check.Equal(0, resetToAwaitGame.GateCalls,
+            "verified unusable skips old neutral gate");
+        Check.Equal(
+            PassivePhase.AwaitGame,
+            reset.Driver.Phase,
+            "verified unusable clears populated epoch");
+        FakeUpdateObservation resetReentry = reset.Observe(
+            null,
+            false,
+            reset.OtherState,
+            true,
+            29.0,
+            true,
+            ProtocolSamples.Capture("ignored"));
+        Check.Equal(0, resetReentry.GateCalls,
+            "reentry does not inherit old neutral");
+        Check.Equal(1, reset.Boundary.LastDirective.SettleFrames,
+            "reentry begins at frame one");
+        FakeUpdateObservation resetFailure = reset.NewObservation(
+            reset.OtherState,
+            true,
+            reset.OtherState,
+            true,
+            30.0,
+            true,
+            ProtocolSamples.Capture("ignored"));
+        resetFailure.PathFailure =
+            new InvalidOperationException("after reset");
+        reset.Boundary.Observe(resetFailure);
+        AssertFaultCode(
+            reset,
+            "observer_exception",
+            "fault after unusable reset");
+        Check.True(
+            reset.Sink.ErrorRecords[0].LastCapture == null,
+            "unusable reset clears old last_capture");
+
+        DriverFixture nullUsable = DriverFixture.Active();
+        nullUsable.Observe(
+            null,
+            true,
+            null,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        AssertFaultCode(
+            nullUsable,
+            "capture_failed",
+            "usable null state faults");
+
+        DriverFixture backwards = DriverFixture.Active();
+        backwards.Observe(
+            backwards.State,
+            backwards.State,
+            2.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        FakeUpdateObservation oldTime = backwards.NewObservation(
+            backwards.State,
+            true,
+            backwards.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        backwards.Boundary.Observe(oldTime);
+        Check.Equal(0, oldTime.PathCalls,
+            "backwards time faults before path");
+        AssertFaultCode(
+            backwards,
+            "observer_exception",
+            "backwards monotonic time faults");
     }
 
     private static void MatchingPairWritesInitial()
     {
-        DriverFixture fixture = DriverFixture.Active();
-        fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
-            ProtocolSamples.InitialCapture);
-        fixture.Neutral();
-        fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
-        Check.Equal(
-            0, fixture.Sink.InitialRecords.Count,
-            "one sample is not a pair");
-        fixture.Observe(
-            fixture.State, fixture.State, 3.0, true,
-            ProtocolSamples.InitialCapture);
+        DriverFixture equal = DriverFixture.Active();
+        equal.Observe(
+            equal.State,
+            equal.State,
+            0.0,
+            true,
+            ProtocolSamples.Capture("epoch"));
+        equal.Neutral();
+        equal.Events.Clear();
+        CaptureRecord firstValue = ProtocolSamples.Capture("equal-value");
+        CaptureRecord secondValue = ProtocolSamples.Capture("equal-value");
+        Check.False(
+            Object.ReferenceEquals(firstValue, secondValue),
+            "equal captures are distinct objects");
+        FakeUpdateObservation firstEqual = equal.Observe(
+            equal.State,
+            equal.State,
+            1.0,
+            true,
+            firstValue);
+        Check.True(firstEqual.GateSawAuthorized,
+            "authorization precedes gate inspection");
         Check.Sequence(
             new string[]
             {
-                "sink:run",
+                "observer:state:begin",
+                "observer:time",
+                "observer:path",
+                "observer:state:verified",
+                "observer:gate",
+                "observer:capture",
+                "observer:utc"
+            },
+            equal.Events.ToArray(),
+            "authorized sample order");
+        equal.Events.Clear();
+        equal.Observe(
+            equal.State,
+            equal.State,
+            2.0,
+            true,
+            secondValue);
+        Check.Sequence(
+            new string[]
+            {
+                "observer:state:begin",
+                "observer:time",
+                "observer:path",
+                "observer:state:verified",
+                "observer:gate",
+                "observer:capture",
+                "observer:utc",
                 "sink:initial",
                 "report:ready:0/3"
             },
-            fixture.Events.ToArray(),
-            "record before progress");
+            equal.Events.ToArray(),
+            "Initial flush precedes Ready");
         Check.Equal(
             PassivePhase.Ready,
-            fixture.Driver.Phase,
-            "ready after flushed pair");
+            equal.Driver.Phase,
+            "equal signatures settle");
+        Check.Same(
+            secondValue,
+            equal.Sink.InitialRecords[0].Capture,
+            "second complete capture is emitted");
+        AssertNoStepOrEnd(equal, "initial settle");
 
-        DriverFixture failedMarker = DriverFixture.Active();
-        failedMarker.Reporter.ReadyFailure =
-            new InvalidOperationException("ready marker");
-        failedMarker.Observe(
-            failedMarker.State, failedMarker.State, 1.0, true,
+        DriverFixture unequal = DriverFixture.Active();
+        unequal.Observe(
+            unequal.State,
+            unequal.State,
+            0.0,
+            true,
             ProtocolSamples.InitialCapture);
-        failedMarker.Neutral();
-        failedMarker.Observe(
-            failedMarker.State, failedMarker.State, 2.0, true,
+        unequal.Neutral();
+        unequal.Observe(
+            unequal.State,
+            unequal.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("signature-a"));
+        unequal.Observe(
+            unequal.State,
+            unequal.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("signature-b"));
+        Check.Equal(
+            0,
+            unequal.Sink.InitialRecords.Count,
+            "any two captures do not settle");
+        unequal.Observe(
+            unequal.State,
+            unequal.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("signature-b"));
+        Check.Equal(
+            1,
+            unequal.Sink.InitialRecords.Count,
+            "later equal consecutive signatures settle");
+
+        DriverFixture completeSignature = DriverFixture.Active();
+        completeSignature.Observe(
+            completeSignature.State,
+            completeSignature.State,
+            0.0,
+            true,
             ProtocolSamples.InitialCapture);
-        failedMarker.Observe(
-            failedMarker.State, failedMarker.State, 3.0, true,
-            ProtocolSamples.InitialCapture);
-        ErrorRecord markerError = failedMarker.Sink.ErrorRecords[0];
-        Check.Equal("observer_exception", markerError.Code,
-            "initial Ready failure code");
-        Check.True(markerError.LastCapture == null,
-            "completed initial epoch is not retained as last_capture");
+        completeSignature.Neutral();
+        CaptureRecord oneMovement = new CaptureRecord(
+            "same-raw-save", "17", "", false, false, false, false,
+            "", "", 0, 1, 0);
+        CaptureRecord twoMovements = new CaptureRecord(
+            "same-raw-save", "17", "", false, false, false, false,
+            "", "", 0, 2, 0);
+        CaptureRecord twoMovementsAgain = new CaptureRecord(
+            "same-raw-save", "17", "", false, false, false, false,
+            "", "", 0, 2, 0);
+        completeSignature.Observe(
+            completeSignature.State,
+            completeSignature.State,
+            1.0,
+            true,
+            oneMovement);
+        completeSignature.Observe(
+            completeSignature.State,
+            completeSignature.State,
+            2.0,
+            true,
+            twoMovements);
+        Check.Equal(
+            0,
+            completeSignature.Sink.InitialRecords.Count,
+            "same raw save with unequal complete signature does not settle");
+        completeSignature.Observe(
+            completeSignature.State,
+            completeSignature.State,
+            3.0,
+            true,
+            twoMovementsAgain);
+        Check.Equal(
+            1,
+            completeSignature.Sink.InitialRecords.Count,
+            "complete signature equality settles");
+
+        AssertReadyFailureOccursAfterInitial();
     }
 
     private static void NotInspectedBreaksPair()
     {
-        DriverFixture fixture = DriverFixture.Active();
-        fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
-            ProtocolSamples.InitialCapture);
-        fixture.Neutral();
-        fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
-        fixture.CardinalOnly(0);
+        DriverFixture control = CandidateFixture("gap-control");
+        control.Observe(
+            control.State,
+            control.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("gap-control"));
+        Check.Equal(
+            1,
+            control.Sink.InitialRecords.Count,
+            "candidate fixture settles without defensive seed");
+
+        DriverFixture fixture = CandidateFixture("gap-value");
+        fixture.SetNeutralSeenForDefensiveTest(false);
         FakeUpdateObservation skipped = fixture.Observe(
-            fixture.State, fixture.State, 3.0, true,
-            ProtocolSamples.InitialCapture);
-        Check.Equal(0, skipped.GateCalls, "not inspected");
+            fixture.State,
+            fixture.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("gap-value"));
+        Check.Equal(0, skipped.GateCalls,
+            "NotInspected does not call gate");
+        Check.Equal(0, skipped.CaptureCalls,
+            "NotInspected does not capture");
         fixture.Neutral();
         fixture.Observe(
-            fixture.State, fixture.State, 4.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("gap-value"));
         Check.Equal(
-            0, fixture.Sink.InitialRecords.Count,
-            "first post-gap sample");
+            0,
+            fixture.Sink.InitialRecords.Count,
+            "NotInspected cleared candidate");
         fixture.Observe(
-            fixture.State, fixture.State, 5.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            4.0,
+            true,
+            ProtocolSamples.Capture("gap-value"));
         Check.Equal(
-            1, fixture.Sink.InitialRecords.Count,
-            "second post-gap sample");
+            1,
+            fixture.Sink.InitialRecords.Count,
+            "new pair settles after NotInspected");
     }
 
     private static void NonquiescentBreaksPair()
     {
-        DriverFixture fixture = DriverFixture.Active();
+        DriverFixture fixture = CandidateFixture("quiet-value");
+        FakeUpdateObservation blocked = fixture.Observe(
+            fixture.State,
+            fixture.State,
+            2.0,
+            false,
+            ProtocolSamples.Capture("quiet-value"));
+        Check.Equal(1, blocked.GateCalls,
+            "nonquiescent callback inspects gate");
+        Check.Equal(0, blocked.CaptureCalls,
+            "nonquiescent callback cannot capture");
         fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
-            ProtocolSamples.InitialCapture);
-        fixture.Neutral();
-        fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
-        fixture.Observe(
-            fixture.State, fixture.State, 3.0, false,
-            ProtocolSamples.InitialCapture);
-        fixture.Observe(
-            fixture.State, fixture.State, 4.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("quiet-value"));
         Check.Equal(
-            0, fixture.Sink.InitialRecords.Count,
-            "nonquiescent broke pair");
+            0,
+            fixture.Sink.InitialRecords.Count,
+            "nonquiescent sample cleared candidate");
         fixture.Observe(
-            fixture.State, fixture.State, 5.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            4.0,
+            true,
+            ProtocolSamples.Capture("quiet-value"));
         Check.Equal(
-            1, fixture.Sink.InitialRecords.Count,
-            "new consecutive pair");
+            1,
+            fixture.Sink.InitialRecords.Count,
+            "new pair settles after nonquiescent sample");
+
+        AssertPathAndAuthorizationOrder();
+        AssertBoundaryExceptionFirewall();
     }
 
     private static void CardinalClearsCandidate()
     {
-        DriverFixture fixture = DriverFixture.Active();
-        fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
-            ProtocolSamples.InitialCapture);
-        fixture.Neutral();
-        fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
+        DriverFixture fixture = CandidateFixture("cardinal-value");
         fixture.CardinalOnly(3);
         fixture.Neutral();
         fixture.Observe(
-            fixture.State, fixture.State, 3.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("cardinal-value"));
         Check.Equal(
-            0, fixture.Sink.InitialRecords.Count,
-            "cardinal cleared first candidate");
+            0,
+            fixture.Sink.InitialRecords.Count,
+            "cardinal input cleared candidate");
         fixture.Observe(
-            fixture.State, fixture.State, 4.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("cardinal-value"));
         Check.Equal(
-            1, fixture.Sink.InitialRecords.Count,
-            "pair after cardinal");
+            1,
+            fixture.Sink.InitialRecords.Count,
+            "new pair settles after cardinal input");
+
+        DriverFixture neutralReset = DriverFixture.Active();
+        neutralReset.Observe(
+            neutralReset.State,
+            neutralReset.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        neutralReset.Neutral();
+        neutralReset.CardinalOnly(3);
+        neutralReset.Observe(
+            neutralReset.State,
+            neutralReset.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("neutral-reset"));
+        neutralReset.Observe(
+            neutralReset.State,
+            neutralReset.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("neutral-reset"));
+        Check.Equal(
+            0,
+            neutralReset.Sink.InitialRecords.Count,
+            "cardinal input cleared neutral eligibility");
+        neutralReset.Neutral();
+        neutralReset.Observe(
+            neutralReset.State,
+            neutralReset.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("neutral-reset"));
+        neutralReset.Observe(
+            neutralReset.State,
+            neutralReset.State,
+            4.0,
+            true,
+            ProtocolSamples.Capture("neutral-reset"));
+        Check.Equal(
+            1,
+            neutralReset.Sink.InitialRecords.Count,
+            "new pair settles after a fresh neutral");
+
+        AssertDirectiveOwnership();
+        AssertPlayerPollScopeRules();
+        AssertTerminalOrderingAndFailureFallbacks();
     }
 
     private static void ReplacementRebasesSameCallback()
     {
-        DriverFixture path = DriverFixture.Active();
-        FakeUpdateObservation changedPath =
-            new FakeUpdateObservation
-            {
-                FirstState = path.State,
-                SecondState = path.State,
-                SavePathMatches = false,
-                Now = 1.0,
-                CaptureValue = ProtocolSamples.InitialCapture
-            };
-        path.Boundary.Observe(changedPath);
-        Check.Equal(1, changedPath.PathCalls, "path checked once");
-        Check.Equal(1, changedPath.StateCalls, "false path skips identity reread");
-        Check.Equal(0, changedPath.GateCalls, "false path skips gate");
-        Check.Equal(0, changedPath.CaptureCalls, "false path skips save");
-        Check.Equal(
-            "save_path_changed",
-            path.Sink.ErrorRecords[0].Code,
-            "path failure precedes capture");
-
         DriverFixture fixture = DriverFixture.Active();
         fixture.Observe(
-            fixture.State, fixture.State, 1.0, true,
+            fixture.State,
+            fixture.State,
+            0.0,
+            true,
             ProtocolSamples.InitialCapture);
+        long oldEpoch = fixture.Boundary.LastDirective.Epoch;
         fixture.Neutral();
         fixture.Observe(
-            fixture.State, fixture.State, 2.0, true,
-            ProtocolSamples.InitialCapture);
+            fixture.State,
+            fixture.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("replacement-candidate"));
 
-        FakeUpdateObservation replacement =
-            fixture.Observe(
-                fixture.State,
-                fixture.OtherState,
-                3.0,
-                true,
-                ProtocolSamples.MovedCapture);
-
-        Check.Equal(1, replacement.PathCalls, "path checked");
-        Check.Equal(2, replacement.StateCalls, "identity reread once");
-        Check.Equal(0, replacement.GateCalls, "neutral reset");
-        Check.Equal(0, replacement.CaptureCalls, "no replacement capture");
-        Check.Equal(
-            1, fixture.Driver.CurrentSettleFrames,
+        FakeUpdateObservation replacement = fixture.Observe(
+            fixture.State,
+            true,
+            fixture.OtherState,
+            true,
+            29.0,
+            true,
+            ProtocolSamples.Capture("replacement-candidate"));
+        UpdateDirective rebased = fixture.Boundary.LastDirective;
+        Check.True(rebased.Epoch > oldEpoch,
+            "replacement directive uses new epoch");
+        Check.Equal(1, rebased.SettleFrames,
             "replacement callback is frame one");
+        Check.False(rebased.InspectGate,
+            "replacement clears neutral eligibility");
+        Check.False(rebased.TimeoutAfterSample,
+            "replacement resets post-sample timeout");
+        Check.Equal(0, replacement.GateCalls,
+            "replacement callback skips gate");
+        Check.Equal(0, replacement.CaptureCalls,
+            "replacement callback skips capture");
         Check.Equal(
             PassivePhase.AwaitInitialNeutral,
             fixture.Driver.Phase,
-            "new initial epoch");
-
+            "replacement starts new initial epoch");
+        FakeUpdateObservation noNeutral = fixture.Observe(
+            fixture.OtherState,
+            fixture.OtherState,
+            30.0,
+            true,
+            ProtocolSamples.Capture("replacement-candidate"));
+        Check.Equal(0, noNeutral.GateCalls,
+            "replacement neutral does not leak to next callback");
+        Check.Equal(0, noNeutral.CaptureCalls,
+            "replacement needs a new neutral poll");
         fixture.Neutral();
         fixture.Observe(
-            fixture.OtherState, fixture.OtherState, 4.0, true,
-            ProtocolSamples.MovedCapture);
-        fixture.Observe(
-            fixture.OtherState, fixture.OtherState, 5.0, true,
-            ProtocolSamples.MovedCapture);
+            fixture.OtherState,
+            fixture.OtherState,
+            31.0,
+            true,
+            ProtocolSamples.Capture("replacement-candidate"));
         Check.Equal(
-            1, fixture.Sink.InitialRecords.Count,
-            "new epoch completes");
+            0,
+            fixture.Sink.InitialRecords.Count,
+            "replacement cleared old candidate and old deadline");
+        fixture.Observe(
+            fixture.OtherState,
+            fixture.OtherState,
+            32.0,
+            true,
+            ProtocolSamples.Capture("replacement-candidate"));
+        Check.Equal(
+            1,
+            fixture.Sink.InitialRecords.Count,
+            "new epoch pair settles inside reset deadline");
+
+        DriverFixture candidate =
+            CandidateFixture("same-after-replacement");
+        UpdateDirective candidateReplacement =
+            candidate.Driver.BeginUpdate(
+                candidate.State, true, 2.0);
+        Check.True(
+            candidate.Driver.AuthorizeUpdate(
+                candidateReplacement,
+                candidate.OtherState,
+                true,
+                true),
+            "candidate replacement authorizes");
+        candidate.AssertCandidateClearedForDefensiveTest(
+            "replacement clears a value-equal old candidate");
+        candidate.Driver.CompleteUpdate(
+            candidateReplacement,
+            GateSample.NotInspected(),
+            DriverFixture.UtcFinish);
+        candidate.Neutral();
+        candidate.Observe(
+            candidate.OtherState,
+            candidate.OtherState,
+            3.0,
+            true,
+            ProtocolSamples.Capture("same-after-replacement"));
+        Check.Equal(
+            0,
+            candidate.Sink.InitialRecords.Count,
+            "replacement candidate starts a fresh pair");
+        candidate.Observe(
+            candidate.OtherState,
+            candidate.OtherState,
+            4.0,
+            true,
+            ProtocolSamples.Capture("same-after-replacement"));
+        Check.Equal(
+            1,
+            candidate.Sink.InitialRecords.Count,
+            "fresh replacement pair settles");
+
+        DriverFixture last = CandidateFixture("old-last");
+        last.Observe(
+            last.State,
+            true,
+            last.OtherState,
+            true,
+            2.0,
+            true,
+            ProtocolSamples.Capture("ignored"));
+        FakeUpdateObservation afterReplacement = last.NewObservation(
+            last.OtherState,
+            true,
+            last.OtherState,
+            true,
+            3.0,
+            true,
+            ProtocolSamples.Capture("new"));
+        afterReplacement.PathFailure =
+            new InvalidOperationException("path observer");
+        last.Boundary.Observe(afterReplacement);
+        AssertFaultCode(
+            last,
+            "observer_exception",
+            "fault after replacement");
+        Check.True(
+            last.Sink.ErrorRecords[0].LastCapture == null,
+            "replacement cleared old last_capture");
     }
 
     private static void ExactDeadlineAndPreOverrun()
     {
-        DriverFixture frame = DriverFixture.Active(4, 30.0);
-        frame.Observe(
-            frame.State, frame.State, 0.0, true,
+        AssertExactFrameSuccessAndFailure();
+        AssertExactTimeSuccessAndFailure();
+        AssertPreOverrunsAndFrameCap();
+        AssertCaptureRecordFailures();
+    }
+
+    private static void AssertBadSeconds(
+        double value,
+        ITraceSink sink,
+        IPassiveReporter reporter,
+        string label)
+    {
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveDriver(
+                    sink,
+                    reporter,
+                    OracleProtocol.ExpectedInputCount,
+                    600,
+                    value);
+            },
+            label);
+    }
+
+    private static DriverFixture CandidateFixture(string rawSave)
+    {
+        DriverFixture fixture = DriverFixture.Active();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            0.0,
+            true,
             ProtocolSamples.InitialCapture);
-        frame.Neutral();
-        frame.Observe(
-            frame.State, frame.State, 1.0, false,
+        fixture.Neutral();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture(rawSave));
+        return fixture;
+    }
+
+    private static void AssertPrepareFailureIsMarkerOnly()
+    {
+        DriverFixture fixture = DriverFixture.Unprepared();
+        fixture.Sink.RunFailure =
+            new TraceIoException("run write failed");
+        Check.False(
+            fixture.Driver.Prepare(ProtocolSamples.Run),
+            "failed prepare returns false");
+        Check.Equal(
+            PassivePhase.Faulted,
+            fixture.Driver.Phase,
+            "failed prepare is terminal");
+        Check.Equal(0, fixture.Sink.RunRecords.Count,
+            "failed Run is not durable");
+        Check.Equal(0, fixture.Sink.ErrorRecords.Count,
+            "failed Run cannot claim durable Error");
+        Check.Equal(default(DateTime), fixture.Driver.StartedAtUtc,
+            "failed Run does not publish start time");
+        Check.Equal(1, fixture.Sink.CloseCalls,
+            "prepare failure closes once");
+        Check.Sequence(
+            new string[] { "trace_io_failed" },
+            fixture.Reporter.FailedCodes.ToArray(),
+            "prepare failure marker");
+        Check.False(fixture.Driver.Activate(),
+            "failed prepare cannot activate");
+        Check.False(fixture.Driver.Prepare(ProtocolSamples.Run),
+            "failed prepare cannot retry");
+        Check.Equal(1, fixture.Sink.RunCalls,
+            "failed prepare writes Run at most once");
+    }
+
+    private static void AssertDisableDisposeAndLateCallbacks()
+    {
+        DriverFixture fixture = DriverFixture.Active();
+        HookToken pending = fixture.Driver.PlayerPollEntered();
+        fixture.Driver.Disable();
+        fixture.Driver.Disable();
+        FakeUpdateObservation late = fixture.NewObservation(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            1.0,
+            true,
             ProtocolSamples.InitialCapture);
-        frame.Observe(
-            frame.State, frame.State, 2.0, true,
+        fixture.Boundary.Observe(late);
+        Check.Equal(0, late.StateCalls,
+            "disabled boundary is inert before observer access");
+        fixture.Driver.PhysicalPollReturned(8);
+        fixture.Driver.PlayerPollReturned(pending);
+        fixture.Driver.PlayerPollThrew(pending);
+        Check.False(
+            fixture.Driver.TryFault("observer_exception"),
+            "disabled driver rejects faults");
+        fixture.Driver.Dispose();
+        fixture.Driver.Dispose();
+        Check.Equal(1, fixture.Sink.CloseCalls,
+            "Dispose closes at most once");
+        Check.Equal(0, fixture.Sink.ErrorCalls,
+            "late callbacks write no Error");
+        Check.Equal(0, fixture.Reporter.FailedCalls,
+            "late callbacks write no marker");
+
+        DriverFixture disposed = DriverFixture.Unprepared();
+        disposed.Driver.Dispose();
+        Check.False(
+            disposed.Driver.Prepare(ProtocolSamples.Run),
+            "disposed driver cannot prepare");
+        Check.False(disposed.Driver.Activate(),
+            "disposed driver cannot activate");
+        Check.Equal(1, disposed.Sink.CloseCalls,
+            "pre-prepare disposal closes once");
+        FakeUpdateObservation afterDispose = disposed.NewObservation(
+            disposed.State,
+            true,
+            disposed.State,
+            true,
+            1.0,
+            true,
             ProtocolSamples.InitialCapture);
-        frame.Observe(
-            frame.State, frame.State, 3.0, true,
+        disposed.Boundary.Observe(afterDispose);
+        Check.Equal(0, afterDispose.StateCalls,
+            "disposed boundary is inert before observer access");
+        Check.False(disposed.Driver.PlayerPollEntered().Active,
+            "disposed poll entry is inert");
+
+        DriverFixture closeFailure = DriverFixture.Active();
+        closeFailure.Sink.CloseFailure =
+            new TraceIoException("dispose close failed");
+        closeFailure.Driver.Dispose();
+        closeFailure.Driver.Dispose();
+        Check.Equal(1, closeFailure.Sink.CloseCalls,
+            "failed Dispose close is not retried");
+        Check.Equal(1, closeFailure.Reporter.DiagnosticCalls,
+            "Dispose close failure is diagnostic");
+        Check.Equal(0, closeFailure.Reporter.FailedCalls,
+            "Dispose close failure invents no terminal marker");
+    }
+
+    private static void AssertReadyFailureOccursAfterInitial()
+    {
+        DriverFixture fixture = DriverFixture.Active();
+        fixture.Reporter.ReadyFailure =
+            new InvalidOperationException("ready failed");
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            0.0,
+            true,
             ProtocolSamples.InitialCapture);
+        fixture.Neutral();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("ready-failure"));
+        fixture.Events.Clear();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("ready-failure"));
+        Check.Sequence(
+            new string[]
+            {
+                "observer:state:begin",
+                "observer:time",
+                "observer:path",
+                "observer:state:verified",
+                "observer:gate",
+                "observer:capture",
+                "observer:utc",
+                "sink:initial",
+                "report:ready:0/3",
+                "sink:error:observer_exception",
+                "sink:close",
+                "report:failed:observer_exception"
+            },
+            fixture.Events.ToArray(),
+            "Ready failure follows durable Initial");
+        AssertFaultCode(
+            fixture,
+            "observer_exception",
+            "Ready failure classification");
+        Check.True(
+            fixture.Sink.ErrorRecords[0].LastCapture == null,
+            "completed Initial is not error last_capture");
+    }
+
+    private static void AssertPathAndAuthorizationOrder()
+    {
+        DriverFixture path = DriverFixture.Active();
+        FakeUpdateObservation changed = path.NewObservation(
+            path.State,
+            true,
+            path.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        changed.SavePathMatches = false;
+        path.Boundary.Observe(changed);
+        Check.Equal(1, changed.StateCalls,
+            "false path skips verified identity");
+        Check.Equal(0, changed.GateCalls,
+            "false path skips gate");
+        Check.Equal(0, changed.CaptureCalls,
+            "false path skips capture");
+        Check.Sequence(
+            new string[]
+            {
+                "sink:run",
+                "observer:state:begin",
+                "observer:time",
+                "observer:path",
+                "sink:error:save_path_changed",
+                "sink:close",
+                "report:failed:save_path_changed"
+            },
+            path.Events.ToArray(),
+            "path authorization precedes identity and gate");
+        AssertFaultCode(path, "save_path_changed", "path mismatch code");
+    }
+
+    private static void AssertBoundaryExceptionFirewall()
+    {
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.FirstStateFailure =
+                    new InvalidOperationException("begin state");
+            },
+            "observer_exception",
+            "begin state exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.NowFailure =
+                    new InvalidOperationException("monotonic clock");
+            },
+            "observer_exception",
+            "monotonic clock exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.PathFailure =
+                    new InvalidOperationException("path");
+            },
+            "observer_exception",
+            "path exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.PathFailure =
+                    new CaptureException("typed path");
+            },
+            "capture_failed",
+            "typed path exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.SecondStateFailure =
+                    new InvalidOperationException("verified state");
+            },
+            "observer_exception",
+            "verified state exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.SecondStateFailure =
+                    new CaptureException("typed verified state");
+            },
+            "capture_failed",
+            "typed verified-state exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.UtcFailure =
+                    new InvalidOperationException("UTC");
+            },
+            "observer_exception",
+            "UTC exception");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.UtcFailure =
+                    new CaptureException("typed UTC capture");
+            },
+            "capture_failed",
+            "typed UTC capture exception");
+        DriverFixture nonUtc = DriverFixture.Active();
+        FakeUpdateObservation invalidUtc = nonUtc.NewObservation(
+            nonUtc.State,
+            true,
+            nonUtc.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        invalidUtc.Utc = DateTime.SpecifyKind(
+            DriverFixture.UtcFinish,
+            DateTimeKind.Local);
+        nonUtc.Boundary.Observe(invalidUtc);
+        AssertFaultCode(
+            nonUtc,
+            "observer_exception",
+            "non-UTC boundary value");
+        AssertEarlyBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.FirstStateFailure =
+                    new CaptureException("capture typed begin");
+            },
+            "capture_failed",
+            "typed capture exception is preserved");
+
+        AssertEligibleBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.GateFailure =
+                    new InvalidOperationException("gate");
+            },
+            "observer_exception",
+            "gate exception");
+        AssertEligibleBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.CaptureFailure =
+                    new CaptureException("capture");
+            },
+            "capture_failed",
+            "capture exception");
+        AssertEligibleBoundaryFailure(
+            delegate(FakeUpdateObservation observation)
+            {
+                observation.CaptureFailure =
+                    new InvalidOperationException("capture generic");
+            },
+            "observer_exception",
+            "generic capture exception");
+    }
+
+    private static void AssertEarlyBoundaryFailure(
+        Action<FakeUpdateObservation> configure,
+        string expectedCode,
+        string label)
+    {
+        DriverFixture fixture = DriverFixture.Active();
+        FakeUpdateObservation observation = fixture.NewObservation(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        configure(observation);
+        fixture.Boundary.Observe(observation);
+        AssertFaultCode(fixture, expectedCode, label);
+    }
+
+    private static void AssertEligibleBoundaryFailure(
+        Action<FakeUpdateObservation> configure,
+        string expectedCode,
+        string label)
+    {
+        DriverFixture fixture = DriverFixture.Active();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        fixture.Neutral();
+        FakeUpdateObservation observation = fixture.NewObservation(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        configure(observation);
+        fixture.Boundary.Observe(observation);
+        AssertFaultCode(fixture, expectedCode, label);
+    }
+
+    private static void AssertDirectiveOwnership()
+    {
+        DriverFixture owner = DriverFixture.Active();
+        DriverFixture foreignOwner = DriverFixture.Active();
+        UpdateDirective owned = owner.Driver.BeginUpdate(
+            owner.State, true, 0.0);
+        UpdateDirective foreign = foreignOwner.Driver.BeginUpdate(
+            foreignOwner.State, true, 0.0);
+        Check.Throws<InvalidOperationException>(
+            delegate
+            {
+                owner.Driver.AuthorizeUpdate(
+                    foreign,
+                    owner.State,
+                    true,
+                    true);
+            },
+            "foreign directive cannot authorize");
+        Check.True(
+            owner.Driver.AuthorizeUpdate(
+                owned,
+                owner.State,
+                true,
+                true),
+            "owned directive authorizes");
+        Check.Throws<InvalidOperationException>(
+            delegate
+            {
+                owner.Driver.AuthorizeUpdate(
+                    owned,
+                    owner.State,
+                    true,
+                    true);
+            },
+            "duplicate authorization rejected");
+        owner.Driver.CompleteUpdate(
+            owned,
+            GateSample.NotInspected(),
+            DriverFixture.UtcFinish);
+        Check.Throws<InvalidOperationException>(
+            delegate
+            {
+                owner.Driver.CompleteUpdate(
+                    owned,
+                    GateSample.NotInspected(),
+                    DriverFixture.UtcFinish);
+            },
+            "duplicate completion rejected");
+        foreignOwner.Driver.FailUpdate(
+            foreign,
+            "observer_exception");
+        Check.Throws<InvalidOperationException>(
+            delegate
+            {
+                foreignOwner.Driver.FailUpdate(
+                    foreign,
+                    "observer_exception");
+            },
+            "duplicate failure rejected");
+    }
+
+    private static void AssertPlayerPollScopeRules()
+    {
+        DriverFixture cleanup = DriverFixture.Active();
+        HookToken cleanupToken = cleanup.Driver.PlayerPollEntered();
+        Check.True(cleanupToken.Active, "cleanup poll token active");
+        cleanup.Driver.PlayerPollThrew(cleanupToken);
+        HookToken afterCleanup = cleanup.Driver.PlayerPollEntered();
+        Check.True(afterCleanup.Active, "throw cleanup releases poll scope");
+        cleanup.Driver.PlayerPollReturned(afterCleanup);
+
+        DriverFixture unscoped = DriverFixture.Active();
+        unscoped.Driver.PhysicalPollReturned(8);
+        AssertFaultCode(
+            unscoped,
+            "hook_order_mismatch",
+            "unscoped physical poll faults");
+
+        DriverFixture duplicate = DriverFixture.Active();
+        HookToken duplicateToken = duplicate.Driver.PlayerPollEntered();
+        duplicate.Driver.PhysicalPollReturned(8);
+        duplicate.Driver.PhysicalPollReturned(8);
+        duplicate.Driver.PlayerPollReturned(duplicateToken);
+        AssertFaultCode(
+            duplicate,
+            "hook_order_mismatch",
+            "duplicate physical poll faults");
+
+        DriverFixture nested = DriverFixture.Active();
+        HookToken outer = nested.Driver.PlayerPollEntered();
+        HookToken inner = nested.Driver.PlayerPollEntered();
+        Check.False(inner.Active, "nested poll receives inert token");
+        nested.Driver.PlayerPollReturned(outer);
+        AssertFaultCode(
+            nested,
+            "hook_order_mismatch",
+            "nested player poll faults");
+    }
+
+    private static void AssertTerminalOrderingAndFailureFallbacks()
+    {
+        DriverFixture observer = DriverFixture.Active();
+        observer.Driver.ObserverFailed();
+        AssertFaultCode(
+            observer,
+            "observer_exception",
+            "observer failure entrypoint");
+        observer.Driver.ObserverFailed();
+        Check.Equal(1, observer.Sink.ErrorCalls,
+            "repeated observer failure writes one Error");
+        Check.Equal(1, observer.Sink.CloseCalls,
+            "repeated observer failure closes once");
+        Check.Equal(1, observer.Reporter.FailedCalls,
+            "repeated observer failure reports once");
+
+        DriverFixture ordered = DriverFixture.Active();
+        ordered.Events.Clear();
+        Check.True(
+            ordered.Driver.TryFault("observer_exception"),
+            "first fault wins");
+        Check.False(
+            ordered.Driver.TryFault("capture_failed"),
+            "second fault loses");
+        ordered.Driver.Dispose();
+        Check.Sequence(
+            new string[]
+            {
+                "sink:error:observer_exception",
+                "sink:close",
+                "report:failed:observer_exception"
+            },
+            ordered.Events.ToArray(),
+            "Error then close then marker");
+        FakeUpdateObservation afterFault = ordered.NewObservation(
+            ordered.State,
+            true,
+            ordered.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        ordered.Boundary.Observe(afterFault);
+        Check.Equal(0, afterFault.StateCalls,
+            "faulted boundary is inert before observer access");
+        Check.False(ordered.Driver.PlayerPollEntered().Active,
+            "faulted poll entry is inert");
+        Check.Equal(1, ordered.Sink.ErrorCalls,
+            "terminal writes one Error");
+        Check.Equal(1, ordered.Sink.CloseCalls,
+            "terminal closes once");
+        Check.Equal(1, ordered.Reporter.FailedCalls,
+            "terminal reports once");
+
+        DriverFixture errorWrite = DriverFixture.Active();
+        errorWrite.Sink.ErrorFailure =
+            new TraceIoException("error write failed");
+        errorWrite.Events.Clear();
+        errorWrite.Driver.TryFault("observer_exception");
+        Check.Equal(0, errorWrite.Sink.ErrorRecords.Count,
+            "failed Error write is not durable");
+        Check.Equal(1, errorWrite.Sink.ErrorCalls,
+            "failed Error write attempted once");
+        Check.Equal(1, errorWrite.Sink.CloseCalls,
+            "failed Error write still closes");
+        Check.Equal(1, errorWrite.Reporter.FailedCalls,
+            "failed Error write reports once");
+        Check.Equal(1, errorWrite.Reporter.DiagnosticCalls,
+            "failed Error write diagnoses once");
+        Check.Sequence(
+            new string[] { "trace_io_failed" },
+            errorWrite.Reporter.FailedCodes.ToArray(),
+            "Error write failure uses trace marker");
+
+        DriverFixture close = DriverFixture.Active();
+        close.Sink.CloseFailure =
+            new TraceIoException("terminal close failed");
+        close.Events.Clear();
+        close.Driver.TryFault("capture_failed");
+        Check.Equal(1, close.Sink.ErrorRecords.Count,
+            "Error may remain after close failure");
+        Check.Equal(1, close.Sink.ErrorCalls,
+            "close failure writes Error once");
+        Check.Equal("capture_failed",
+            close.Sink.ErrorRecords[0].Code,
+            "durable bytes retain original code");
+        Check.Equal(1, close.Sink.CloseCalls,
+            "failed close is not retried");
+        Check.Equal(1, close.Reporter.FailedCalls,
+            "close failure reports once");
+        Check.Equal(1, close.Reporter.DiagnosticCalls,
+            "close failure diagnoses once");
+        Check.Sequence(
+            new string[] { "trace_io_failed" },
+            close.Reporter.FailedCodes.ToArray(),
+            "close failure marker is authoritative trace failure");
+
+        DriverFixture reporter = DriverFixture.Active();
+        reporter.Reporter.FailedFailure =
+            new InvalidOperationException("failed marker");
+        reporter.Reporter.DiagnosticFailure =
+            new InvalidOperationException("diagnostic marker");
+        reporter.Driver.TryFault("observer_exception");
+        Check.Equal(1, reporter.Reporter.FailedCalls,
+            "failure marker attempted once");
+        Check.Equal(1, reporter.Sink.ErrorCalls,
+            "reporter failure leaves one Error attempt");
+        Check.Equal(1, reporter.Sink.ErrorRecords.Count,
+            "reporter failure leaves one durable Error");
+        Check.Equal(1, reporter.Reporter.DiagnosticCalls,
+            "failure-marker exception gets one diagnostic attempt");
+        Check.Equal(1, reporter.Sink.CloseCalls,
+            "reporter failures do not disturb close ownership");
+    }
+
+    private static void AssertExactFrameSuccessAndFailure()
+    {
+        DriverFixture success = DriverFixture.Active(4, 30.0);
+        success.Observe(
+            success.State,
+            success.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        success.Neutral();
+        FakeUpdateObservation blocked = success.Observe(
+            success.State,
+            success.State,
+            1.0,
+            false,
+            ProtocolSamples.InitialCapture);
+        Check.Equal(0, blocked.CaptureCalls,
+            "frame two nonquiescent does not capture");
+        success.Observe(
+            success.State,
+            success.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("frame-limit"));
+        success.Observe(
+            success.State,
+            success.State,
+            3.0,
+            true,
+            ProtocolSamples.Capture("frame-limit"));
         Check.Equal(
             PassivePhase.Ready,
-            frame.Driver.Phase,
-            "pair wins on frame four");
+            success.Driver.Phase,
+            "matching pair wins at exact frame limit");
 
+        DriverFixture failure = DriverFixture.Active(3, 30.0);
+        failure.Observe(
+            failure.State,
+            failure.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        failure.Neutral();
+        failure.Observe(
+            failure.State,
+            failure.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("frame-a"));
+        FakeUpdateObservation exact = failure.Observe(
+            failure.State,
+            failure.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("frame-b"));
+        Check.Equal(1, exact.CaptureCalls,
+            "exact frame limit samples before timeout");
+        AssertFaultCode(
+            failure,
+            "initial_settle_timeout",
+            "unsuccessful exact frame times out");
+        Check.Equal(3,
+            failure.Sink.ErrorRecords[0].SettleFrames,
+            "exact frame error count");
+        Check.Equal(
+            "frame-b",
+            failure.Sink.ErrorRecords[0].LastCapture.RawSave,
+            "exact frame timeout retains newest complete capture");
+    }
+
+    private static void AssertExactTimeSuccessAndFailure()
+    {
+        DriverFixture success = DriverFixture.Active();
+        success.Observe(
+            success.State,
+            success.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        success.Neutral();
+        success.Observe(
+            success.State,
+            success.State,
+            29.0,
+            true,
+            ProtocolSamples.Capture("time-limit"));
+        success.Observe(
+            success.State,
+            success.State,
+            30.0,
+            true,
+            ProtocolSamples.Capture("time-limit"));
+        Check.Equal(
+            PassivePhase.Ready,
+            success.Driver.Phase,
+            "matching pair wins at exact time limit");
+
+        DriverFixture failure = DriverFixture.Active();
+        failure.Observe(
+            failure.State,
+            failure.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        failure.Neutral();
+        failure.Observe(
+            failure.State,
+            failure.State,
+            29.0,
+            true,
+            ProtocolSamples.Capture("time-a"));
+        FakeUpdateObservation exact = failure.Observe(
+            failure.State,
+            failure.State,
+            30.0,
+            true,
+            ProtocolSamples.Capture("time-b"));
+        Check.Equal(1, exact.CaptureCalls,
+            "exact time limit samples before timeout");
+        AssertFaultCode(
+            failure,
+            "initial_settle_timeout",
+            "unsuccessful exact time times out");
+        Check.Equal(
+            "time-b",
+            failure.Sink.ErrorRecords[0].LastCapture.RawSave,
+            "exact time timeout retains newest complete capture");
+    }
+
+    private static void AssertPreOverrunsAndFrameCap()
+    {
         DriverFixture time = DriverFixture.Active();
         time.Observe(
-            time.State, time.State, 0.0, true,
+            time.State,
+            time.State,
+            0.0,
+            true,
             ProtocolSamples.InitialCapture);
-        time.Neutral();
-        time.Observe(
-            time.State, time.State, 29.0, true,
+        FakeUpdateObservation late = time.NewObservation(
+            time.State,
+            true,
+            time.State,
+            true,
+            30.000001,
+            true,
             ProtocolSamples.InitialCapture);
-        time.Observe(
-            time.State, time.State, 30.0, true,
-            ProtocolSamples.InitialCapture);
-        Check.Equal(
-            PassivePhase.Ready,
-            time.Driver.Phase,
-            "pair wins at exactly thirty seconds");
-
-        DriverFixture over = DriverFixture.Active();
-        over.Observe(
-            over.State, over.State, 0.0, true,
-            ProtocolSamples.InitialCapture);
-        FakeUpdateObservation late =
-            new FakeUpdateObservation
-            {
-                FirstState = over.State,
-                SecondState = over.State,
-                Now = 30.000001,
-                CaptureValue = ProtocolSamples.InitialCapture
-            };
-        over.Boundary.Observe(late);
-        Check.Equal(0, late.PathCalls, "overrun before path");
-        Check.Equal(0, late.GateCalls, "overrun before gate");
-        Check.Equal(0, late.CaptureCalls, "overrun before capture");
-        Check.Equal(
+        time.Boundary.Observe(late);
+        Check.Equal(0, late.PathCalls,
+            "time pre-overrun precedes path");
+        Check.Equal(0, late.GateCalls,
+            "time pre-overrun precedes gate");
+        Check.Equal(0, late.CaptureCalls,
+            "time pre-overrun precedes capture");
+        AssertFaultCode(
+            time,
             "initial_settle_timeout",
-            over.Sink.ErrorRecords[0].Code,
-            "pre-capture timeout code");
+            "time pre-overrun code");
+
+        DriverFixture frame = DriverFixture.Active(4, 30.0);
+        frame.Observe(
+            frame.State,
+            frame.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        frame.SetCurrentFramesForDefensiveTest(4);
+        FakeUpdateObservation over = frame.NewObservation(
+            frame.State,
+            true,
+            frame.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        frame.Boundary.Observe(over);
+        Check.Equal(0, over.PathCalls,
+            "frame pre-overrun precedes path");
+        Check.Equal(0, over.GateCalls,
+            "frame pre-overrun precedes gate");
+        Check.Equal(0, over.CaptureCalls,
+            "frame pre-overrun precedes capture");
+        AssertFaultCode(
+            frame,
+            "initial_settle_timeout",
+            "frame pre-overrun code");
+        Check.Equal(4,
+            frame.Sink.ErrorRecords[0].SettleFrames,
+            "frame pre-overrun is capped");
+    }
+
+    private static void AssertCaptureRecordFailures()
+    {
+        DriverFixture typed = DriverFixture.Active();
+        typed.Observe(
+            typed.State,
+            typed.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        typed.Neutral();
+        typed.Observe(
+            typed.State,
+            typed.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("valid-last"));
+        CaptureRecord invalidScalar =
+            ProtocolSamples.Capture("\ud800");
+        typed.Observe(
+            typed.State,
+            typed.State,
+            2.0,
+            true,
+            invalidScalar);
+        AssertFaultCode(
+            typed,
+            "capture_failed",
+            "canonical capture failure classification");
+        Check.Equal(
+            "valid-last",
+            typed.Sink.ErrorRecords[0].LastCapture.RawSave,
+            "canonical failure retains most recent complete capture");
+
+        DriverFixture large = DriverFixture.Active();
+        large.Observe(
+            large.State,
+            large.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        large.Neutral();
+        large.Observe(
+            large.State,
+            large.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("bounded-last"));
+        CaptureRecord tooLarge = ProtocolSamples.Capture(
+            new string('x', 17 * 1024 * 1024));
+        large.Observe(
+            large.State,
+            large.State,
+            2.0,
+            true,
+            tooLarge);
+        AssertFaultCode(
+            large,
+            "record_too_large",
+            "record size classification");
+        Check.Equal(
+            "bounded-last",
+            large.Sink.ErrorRecords[0].LastCapture.RawSave,
+            "oversize capture does not replace last_capture");
+
+        AssertInitialWriteFailure();
+    }
+
+    private static void AssertInitialWriteFailure()
+    {
+        DriverFixture fixture = DriverFixture.Active();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            0.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        fixture.Neutral();
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            1.0,
+            true,
+            ProtocolSamples.Capture("initial-io"));
+        fixture.Sink.InitialFailure =
+            new TraceIoException("initial write failed");
+        fixture.Observe(
+            fixture.State,
+            fixture.State,
+            2.0,
+            true,
+            ProtocolSamples.Capture("initial-io"));
+        Check.Equal(0, fixture.Sink.InitialRecords.Count,
+            "failed Initial is not durable");
+        Check.Equal(PassivePhase.Faulted, fixture.Driver.Phase,
+            "Initial write failure is terminal");
+        Check.Equal(1, fixture.Sink.InitialCalls,
+            "Initial write attempted once");
+        Check.Equal(0, fixture.Sink.ErrorRecords.Count,
+            "Initial trace failure writes no speculative Error");
+        Check.Equal(0, fixture.Sink.ErrorCalls,
+            "Initial trace failure attempts no Error");
+        Check.Equal(1, fixture.Sink.CloseCalls,
+            "Initial write failure closes once");
+        fixture.Driver.Dispose();
+        Check.Equal(1, fixture.Sink.CloseCalls,
+            "Initial trace failure retains close ownership after Dispose");
+        Check.Sequence(
+            new string[] { "trace_io_failed" },
+            fixture.Reporter.FailedCodes.ToArray(),
+            "Initial write failure marker");
+        Check.Equal(1, fixture.Reporter.FailedCalls,
+            "Initial write failure marker attempted once");
+        Check.Equal(0, fixture.Reporter.ReadyValues.Count,
+            "Initial write failure reports no Ready");
+        FakeUpdateObservation late = fixture.NewObservation(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            3.0,
+            true,
+            ProtocolSamples.InitialCapture);
+        fixture.Boundary.Observe(late);
+        Check.Equal(0, late.StateCalls,
+            "Initial failure makes boundary inert");
+        Check.False(fixture.Driver.PlayerPollEntered().Active,
+            "Initial failure makes poll inert");
+    }
+
+    private static void AssertFaultCode(
+        DriverFixture fixture,
+        string expectedCode,
+        string label)
+    {
+        Check.Equal(
+            PassivePhase.Faulted,
+            fixture.Driver.Phase,
+            label + " phase");
+        Check.Equal(1, fixture.Sink.ErrorRecords.Count,
+            label + " Error count");
+        Check.Equal(expectedCode,
+            fixture.Sink.ErrorRecords[0].Code,
+            label + " Error code");
+        Check.Equal(
+            ProtocolSamples.Run.RunId,
+            fixture.Sink.ErrorRecords[0].RunId,
+            label + " run_id");
+        Check.False(
+            fixture.Sink.ErrorRecords[0].InputIndex.HasValue,
+            label + " input_index null");
+        Check.False(
+            fixture.Sink.ErrorRecords[0].Input.HasValue,
+            label + " input null");
+        Check.Equal(
+            OracleErrors.ForCode(expectedCode).Message,
+            fixture.Sink.ErrorRecords[0].Message,
+            label + " message");
+        Check.Equal(1, fixture.Sink.CloseCalls,
+            label + " close count");
+        Check.Sequence(
+            new string[] { expectedCode },
+            fixture.Reporter.FailedCodes.ToArray(),
+            label + " marker code");
+    }
+
+    private static void AssertNoStepOrEnd(
+        DriverFixture fixture,
+        string label)
+    {
+        Check.Equal(0, fixture.Sink.StepCalls,
+            label + " Step calls");
+        Check.Equal(0, fixture.Sink.StepRecords.Count,
+            label + " Step records");
+        Check.Equal(0, fixture.Sink.EndCalls,
+            label + " End calls");
+        Check.Equal(0, fixture.Sink.EndRecords.Count,
+            label + " End records");
+        Check.Equal(0, fixture.Reporter.CompleteCalls,
+            label + " Complete reports");
     }
 }
-~~~
+```
 
-Add PassiveDriverInitialTests.Register(tests) after
-PassiveDriverBoundaryTests.Register(tests). The cumulative manifest is:
+Replace `oracle/plugin/tests/Program.cs` with exactly:
 
-~~~csharp
-tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+```csharp
+using System;
+using System.Collections.Generic;
+
+internal static class Program
 {
-    { "protocol", 4 },
-    { "encoding", 5 },
-    { "sink", 6 },
-    { "driver-boundary", 2 },
-    { "driver-initial", 8 }
-});
-~~~
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        PassiveDriverBoundaryTests.Register(tests);
+        PassiveDriverInitialTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 },
+            { "driver-boundary", 2 },
+            { "driver-initial", 8 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
+}
+```
 
-- [ ] **Step 2: Run RED**
+Before RED, require this exact test-only state:
 
-~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
-  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-initial
-~~~
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test ! -e oracle/plugin/Core/PassiveDriver.cs
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+```
 
-Require a compiler diagnostic naming PassiveDriver. Do not accept a fixture,
-SDK, or assets failure.
+- [ ] **Step 3: Run the forced compiler RED and pin its exact diagnostic multiset**
 
-- [ ] **Step 3: Implement the ordered update boundary and complete initial driver**
+```bash
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+red_output_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-red-output.txt'
+red_status_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-red-status.txt'
+test ! -e "$red_output_path"
+test ! -L "$red_output_path"
+test ! -e "$red_status_path"
+test ! -L "$red_status_path"
+set +e
+set -o noclobber
+red_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild -m:1 \
+  -p:UseSharedCompilation=false 2>&1)"
+red_status=$?
+printf '%s\n' "$red_output" > "$red_output_path"
+printf '%s\n' "$red_status" > "$red_status_path"
+set +o noclobber
+set -e
+test "$red_status" = "1"
+diagnostics="$(printf '%s\n' "$red_output" | sed -E -n \
+  "s#^.*PassiveDriverTestSupport[.]cs\\(([0-9]+,[0-9]+)\\): error (CS[0-9]+): The type or namespace name '([^']+)'.*#\\1 \\2 \\3#p" | LC_ALL=C sort)"
+test "$diagnostics" = "$(printf '%s\n' \
+  '148,5 CS0246 IPassiveUpdateObservation' \
+  '148,5 CS0246 IPassiveUpdateObservation' \
+  '265,23 CS0246 PassiveDriver' \
+  '265,23 CS0246 PassiveDriver' \
+  '266,23 CS0246 PassiveUpdateBoundary' \
+  '266,23 CS0246 PassiveUpdateBoundary')"
+all_error_codes="$(printf '%s\n' "$red_output" | sed -E -n \
+  's#^.*: error ([A-Z]+[0-9]+):.*#\1#p' | LC_ALL=C sort)"
+test "$all_error_codes" = "$(printf '%s\n' \
+  CS0246 CS0246 CS0246 CS0246 CS0246 CS0246)"
+case "$red_output" in
+  *": warning "*|*"warning CS"*|*"SDK"*|*"assets file"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|\
+  *"restore"*) exit 1 ;;
+esac
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "0b51374587a4860fb531c323e9db0446547ad0797d18580afdccac4010f6ee09"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test ! -e oracle/plugin/Core/PassiveDriver.cs
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "oracle/plugin/tests/Program.cs"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+```
 
-Append this code to PassiveDriverBoundaries.cs. CaptureException comes from
-the dedicated Task 4.1 file; generic observer failures remain distinct. Most
-importantly, VerifySavePath and the identity reread both finish before
-AuthorizeUpdate, and IsQuiescent/Capture are unreachable until authorization
-succeeds:
+Do not accept a runtime failure, an arbitrary compiler error, or an
+incremental build result as RED. Record the exact output/status file hashes in
+the Task 4.2 report and progress ledger before creating production files.
 
-~~~csharp
+- [ ] **Step 4: Implement the ordered update boundary and scope-pure driver**
+
+Append this exact block to `oracle/plugin/Core/PassiveDriverBoundaries.cs`:
+
+```csharp
 internal interface IPassiveUpdateObservation
 {
     bool TryGetState(out object stateReference);
@@ -12970,10 +14939,15 @@ internal sealed class PassiveUpdateBoundary
             ?? throw new ArgumentNullException("driver");
     }
 
+    internal UpdateDirective LastDirective { get; private set; }
+
     internal void Observe(IPassiveUpdateObservation observation)
     {
         if (observation == null)
             throw new ArgumentNullException("observation");
+        LastDirective = null;
+        if (!driver.UpdateObservationActive)
+            return;
 
         object beginState;
         bool beginUsable;
@@ -12999,6 +14973,12 @@ internal sealed class PassiveUpdateBoundary
         {
             directive = driver.BeginUpdate(
                 beginState, beginUsable, nowSeconds);
+            LastDirective = directive;
+        }
+        catch (CaptureException)
+        {
+            driver.TryFault("capture_failed");
+            return;
         }
         catch (Exception)
         {
@@ -13056,6 +15036,11 @@ internal sealed class PassiveUpdateBoundary
                 verifiedUsable,
                 savePathMatches);
         }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+            return;
+        }
         catch (Exception)
         {
             SafeFail(directive, "observer_exception");
@@ -13097,6 +15082,10 @@ internal sealed class PassiveUpdateBoundary
             driver.CompleteUpdate(
                 directive, sample, observation.UtcNow());
         }
+        catch (CaptureException)
+        {
+            SafeFail(directive, "capture_failed");
+        }
         catch (Exception)
         {
             SafeFail(directive, "observer_exception");
@@ -13115,16 +15104,15 @@ internal sealed class PassiveUpdateBoundary
         }
     }
 }
-~~~
+```
 
-Create PassiveDriver.cs exactly:
+Create `oracle/plugin/Core/PassiveDriver.cs` exactly:
 
-~~~csharp
+```csharp
 using System;
-using System.Collections.Generic;
 using System.Threading;
 
-internal sealed partial class PassiveDriver : IDisposable
+internal sealed class PassiveDriver : IDisposable
 {
     private static readonly string[] RecordErrorCodes =
         new string[]
@@ -13149,16 +15137,10 @@ internal sealed partial class PassiveDriver : IDisposable
     {
         internal long Id;
         internal bool SawPhysicalPoll;
-        internal int RawDirection { get; set; }
-        internal bool SawManualProcessInput { get; set; }
     }
 
     private struct FaultRequest
     {
-        internal bool ForceNullInputs;
-        internal bool HasOffendingInput;
-        internal int? OffendingIndex;
-        internal OracleInput? OffendingInput;
         internal int? FrameOverride;
 
         internal static FaultRequest Derived()
@@ -13172,29 +15154,10 @@ internal sealed partial class PassiveDriver : IDisposable
             value.FrameOverride = frames;
             return value;
         }
-
-        internal static FaultRequest Offending(
-            int index,
-            OracleInput? input)
-        {
-            FaultRequest value = new FaultRequest();
-            value.HasOffendingInput = true;
-            value.OffendingIndex = index;
-            value.OffendingInput = input;
-            return value;
-        }
-
-        internal static FaultRequest Restart()
-        {
-            FaultRequest value = new FaultRequest();
-            value.ForceNullInputs = true;
-            return value;
-        }
     }
 
     private readonly ITraceSink sink;
     private readonly IPassiveReporter reporter;
-    private readonly int expectedInputCount;
     private readonly int maxSettleFrames;
     private readonly double maxSettleSeconds;
 
@@ -13209,37 +15172,18 @@ internal sealed partial class PassiveDriver : IDisposable
 
     private string runId;
     private DateTime startedAtUtc;
-    private int completedInputs;
     private long nextHookId;
     private long nextUpdateId;
     private long epoch;
     private UpdateDirective outstandingUpdate;
 
     private object epochState;
-    private object stableState;
     private double epochStartedAt;
     private int currentFrames;
     private bool neutralSeen;
     private byte[] candidateSignature;
     private CaptureRecord lastCapture;
-
-    private bool attemptPending;
-    private bool attemptOutcomeKnown;
-    private OracleInput attemptInput;
-    private bool attemptAccepted;
-    private bool attemptMovementScheduled;
-    private object attemptState;
-
     private PlayerPollContext playerPoll;
-    partial void EmitSettledAttempt(
-        CaptureRecord capture,
-        int settleFrames,
-        DateTime utcNow,
-        ref bool handled);
-
-    partial void FinishExpectedInputCount(
-        DateTime finishedAtUtc,
-        ref bool handled);
 
     internal PassiveDriver(
         ITraceSink sink,
@@ -13267,7 +15211,6 @@ internal sealed partial class PassiveDriver : IDisposable
         }
         this.sink = sink;
         this.reporter = reporter;
-        this.expectedInputCount = expectedInputCount;
         this.maxSettleFrames = maxSettleFrames;
         this.maxSettleSeconds = maxSettleSeconds;
         phase = PassivePhase.Disabled;
@@ -13283,46 +15226,14 @@ internal sealed partial class PassiveDriver : IDisposable
         get { return currentFrames; }
     }
 
-    internal int ExpectedInputCount
-    {
-        get { return expectedInputCount; }
-    }
-
     internal DateTime StartedAtUtc
     {
         get { return startedAtUtc; }
     }
 
-    internal OracleInput PendingInput
+    internal bool UpdateObservationActive
     {
-        get
-        {
-            if (!attemptPending)
-                throw new InvalidOperationException("no pending attempt");
-            return attemptInput;
-        }
-    }
-
-    internal bool PendingAccepted
-    {
-        get
-        {
-            if (!attemptOutcomeKnown)
-                throw new InvalidOperationException(
-                    "attempt outcome is unavailable");
-            return attemptAccepted;
-        }
-    }
-
-    internal bool PendingMovementScheduled
-    {
-        get
-        {
-            if (!attemptOutcomeKnown)
-                throw new InvalidOperationException(
-                    "attempt outcome is unavailable");
-            return attemptMovementScheduled;
-        }
+        get { return IsInitialObservationActive(); }
     }
 
     internal bool Prepare(RunRecord run)
@@ -13334,7 +15245,7 @@ internal sealed partial class PassiveDriver : IDisposable
         {
             return false;
         }
-        if (Read(ref disposed) != 0)
+        if (Read(ref disposed) != 0 || Read(ref disabled) != 0)
             return false;
         try
         {
@@ -13376,7 +15287,7 @@ internal sealed partial class PassiveDriver : IDisposable
         bool usableGame,
         double nowSeconds)
     {
-        if (!IsObservationActive())
+        if (!IsInitialObservationActive())
             return UpdateDirective.Inactive(this);
         if (!IsValidMonotonic(nowSeconds))
         {
@@ -13404,8 +15315,7 @@ internal sealed partial class PassiveDriver : IDisposable
         int settleFrames = 0;
         bool inspectGate = false;
         bool timeoutAfterSample = false;
-        if (phase == PassivePhase.AwaitInitialNeutral
-            || phase == PassivePhase.Settling)
+        if (phase == PassivePhase.AwaitInitialNeutral)
         {
             if (nowSeconds < epochStartedAt)
             {
@@ -13418,12 +15328,8 @@ internal sealed partial class PassiveDriver : IDisposable
             if (nextFrames > maxSettleFrames
                 || elapsed > maxSettleSeconds)
             {
-                string code =
-                    phase == PassivePhase.AwaitInitialNeutral
-                    ? "initial_settle_timeout"
-                    : "settle_timeout";
                 TryFaultInternal(
-                    code,
+                    "initial_settle_timeout",
                     FaultRequest.DerivedWithFrames(
                         Math.Min(nextFrames, maxSettleFrames)));
                 return UpdateDirective.Inactive(this);
@@ -13466,7 +15372,7 @@ internal sealed partial class PassiveDriver : IDisposable
                 "hook_order_mismatch", FaultRequest.Derived());
             return false;
         }
-        if (!IsObservationActive())
+        if (!IsInitialObservationActive())
         {
             ConsumeAuthorizedDirective(directive);
             return false;
@@ -13521,20 +15427,8 @@ internal sealed partial class PassiveDriver : IDisposable
             return true;
         }
 
-        object expectedState =
-            phase == PassivePhase.Settling
-            ? attemptState
-            : stableState;
-        if (!usableGame
-            || stateReference == null
-            || !Object.ReferenceEquals(expectedState, stateReference))
-        {
-            ConsumeAuthorizedDirective(directive);
-            TryFaultInternal(
-                "state_replaced", FaultRequest.Derived());
-            return false;
-        }
-        return true;
+        ConsumeAuthorizedDirective(directive);
+        return false;
     }
 
     internal void CompleteUpdate(
@@ -13554,7 +15448,7 @@ internal sealed partial class PassiveDriver : IDisposable
                 "update directive is not outstanding");
         }
         outstandingUpdate = null;
-        if (!IsObservationActive())
+        if (!IsInitialObservationActive())
             return;
         if (directive.Epoch != epoch)
         {
@@ -13564,7 +15458,8 @@ internal sealed partial class PassiveDriver : IDisposable
         }
         try
         {
-            CompleteUpdateCore(directive, sample, utcNow);
+            OracleValidation.Utc(utcNow, "utcNow");
+            CompleteUpdateCore(directive, sample);
         }
         catch (RecordTooLargeException)
         {
@@ -13616,7 +15511,7 @@ internal sealed partial class PassiveDriver : IDisposable
 
     internal HookToken PlayerPollEntered()
     {
-        if (!IsObservationActive())
+        if (!IsInitialObservationActive())
             return HookToken.Inert(HookKind.PlayerPoll);
         if (playerPoll != null)
         {
@@ -13631,7 +15526,7 @@ internal sealed partial class PassiveDriver : IDisposable
 
     internal void PhysicalPollReturned(int rawDirection)
     {
-        if (!IsObservationActive())
+        if (!IsInitialObservationActive())
             return;
         if (playerPoll == null || playerPoll.SawPhysicalPoll)
         {
@@ -13640,33 +15535,26 @@ internal sealed partial class PassiveDriver : IDisposable
             return;
         }
         playerPoll.SawPhysicalPoll = true;
-        playerPoll.RawDirection = rawDirection;
         if (rawDirection == 8)
         {
-            if (phase == PassivePhase.AwaitInitialNeutral
-                || phase == PassivePhase.Settling)
-            {
+            if (phase == PassivePhase.AwaitInitialNeutral)
                 neutralSeen = true;
-            }
             return;
         }
-        if (phase == PassivePhase.AwaitInitialNeutral
-            || phase == PassivePhase.Settling)
+        if (phase == PassivePhase.AwaitInitialNeutral)
         {
             neutralSeen = false;
             candidateSignature = null;
-        }
-        OracleInput ignored;
-        if (!TryMapCardinal(rawDirection, out ignored))
-        {
-            TryFaultInternal(
-                "unexpected_input",
-                FaultRequest.Offending(completedInputs, null));
         }
     }
 
     internal void PlayerPollReturned(HookToken token)
     {
+        if (!IsInitialObservationActive())
+        {
+            ConsumeLateToken(token, HookKind.PlayerPoll);
+            return;
+        }
         if (!ConsumeOrdinaryToken(token, HookKind.PlayerPoll))
             return;
         if (playerPoll == null || playerPoll.Id != token.Id)
@@ -13680,6 +15568,11 @@ internal sealed partial class PassiveDriver : IDisposable
 
     internal void PlayerPollThrew(HookToken token)
     {
+        if (!IsInitialObservationActive())
+        {
+            ConsumeLateToken(token, HookKind.PlayerPoll);
+            return;
+        }
         if (!ConsumeCleanupToken(token, HookKind.PlayerPoll))
             return;
         if (playerPoll == null || playerPoll.Id != token.Id)
@@ -13715,19 +15608,19 @@ internal sealed partial class PassiveDriver : IDisposable
 
     private void CompleteUpdateCore(
         UpdateDirective directive,
-        GateSample sample,
-        DateTime utcNow)
+        GateSample sample)
     {
         if (sample == null)
             throw new ArgumentNullException("sample");
-        if (phase == PassivePhase.AwaitGame
-            || phase == PassivePhase.Ready)
+        if (phase == PassivePhase.AwaitGame)
         {
             if (sample.Kind != GateSampleKind.NotInspected)
                 throw new InvalidOperationException(
                     "gate inspected without an active epoch");
             return;
         }
+        if (phase != PassivePhase.AwaitInitialNeutral)
+            return;
 
         if (sample.Kind == GateSampleKind.NotInspected)
         {
@@ -13753,22 +15646,7 @@ internal sealed partial class PassiveDriver : IDisposable
             if (candidateSignature != null
                 && SameBytes(candidateSignature, signature))
             {
-                if (phase == PassivePhase.AwaitInitialNeutral)
-                {
-                    EmitInitial(sample.Capture);
-                }
-                else
-                {
-                    bool handled = false;
-                    EmitSettledAttempt(
-                        sample.Capture,
-                        directive.SettleFrames,
-                        utcNow,
-                        ref handled);
-                    if (!handled)
-                        throw new InvalidOperationException(
-                            "settled-attempt extension is unavailable");
-                }
+                EmitInitial(sample.Capture);
                 return;
             }
             candidateSignature = signature;
@@ -13781,9 +15659,7 @@ internal sealed partial class PassiveDriver : IDisposable
         if (directive.TimeoutAfterSample)
         {
             TryFaultInternal(
-                phase == PassivePhase.AwaitInitialNeutral
-                    ? "initial_settle_timeout"
-                    : "settle_timeout",
+                "initial_settle_timeout",
                 FaultRequest.Derived());
         }
     }
@@ -13795,8 +15671,8 @@ internal sealed partial class PassiveDriver : IDisposable
             CanonicalJson.EncodeError(
                 new ErrorRecord(
                     runId,
-                    Int32.MaxValue,
-                    OracleInput.North,
+                    null,
+                    null,
                     RecordErrorCodes[index],
                     OracleProtocol.MaxSettleFrames,
                     capture));
@@ -13809,7 +15685,6 @@ internal sealed partial class PassiveDriver : IDisposable
     private void EmitInitial(CaptureRecord capture)
     {
         sink.WriteInitial(new InitialRecord(runId, capture));
-        stableState = epochState;
         phase = PassivePhase.Ready;
         currentFrames = 0;
         neutralSeen = false;
@@ -13826,51 +15701,6 @@ internal sealed partial class PassiveDriver : IDisposable
         }
     }
 
-    private bool HandleManualAttempt(
-        OracleInput input,
-        object stateReference,
-        double nowSeconds)
-    {
-        if (phase == PassivePhase.AwaitGame
-            || phase == PassivePhase.AwaitInitialNeutral)
-        {
-            TryFaultInternal(
-                "input_before_initial",
-                FaultRequest.Offending(completedInputs, input));
-            return false;
-        }
-        if (phase == PassivePhase.Settling)
-        {
-            TryFaultInternal(
-                "overlapping_input", FaultRequest.Derived());
-            return false;
-        }
-        if (phase != PassivePhase.Ready)
-            return false;
-        if (stateReference == null
-            || !Object.ReferenceEquals(stableState, stateReference))
-        {
-            TryFaultInternal(
-                "state_replaced", FaultRequest.Derived());
-            return false;
-        }
-        epoch++;
-        phase = PassivePhase.Settling;
-        epochState = stateReference;
-        epochStartedAt = nowSeconds;
-        currentFrames = 0;
-        neutralSeen = false;
-        candidateSignature = null;
-        lastCapture = null;
-        attemptPending = true;
-        attemptOutcomeKnown = false;
-        attemptInput = input;
-        attemptAccepted = false;
-        attemptMovementScheduled = false;
-        attemptState = stateReference;
-        return true;
-    }
-
     private void StartInitialEpoch(
         object stateReference,
         double nowSeconds,
@@ -13884,7 +15714,6 @@ internal sealed partial class PassiveDriver : IDisposable
         neutralSeen = false;
         candidateSignature = null;
         lastCapture = null;
-        ClearAttemptFields();
     }
 
     private void ResetToAwaitGame()
@@ -13896,26 +15725,6 @@ internal sealed partial class PassiveDriver : IDisposable
         neutralSeen = false;
         candidateSignature = null;
         lastCapture = null;
-        ClearAttemptFields();
-    }
-
-    private void ClearAttemptAfterStep()
-    {
-        phase = PassivePhase.Ready;
-        currentFrames = 0;
-        neutralSeen = false;
-        candidateSignature = null;
-        epochState = stableState;
-        ClearAttemptFields();
-    }
-
-    private void ClearAttemptFields()
-    {
-        attemptPending = false;
-        attemptOutcomeKnown = false;
-        attemptAccepted = false;
-        attemptMovementScheduled = false;
-        attemptState = null;
     }
 
     private void ConsumeAuthorizedDirective(UpdateDirective directive)
@@ -13990,6 +15799,16 @@ internal sealed partial class PassiveDriver : IDisposable
         return token.TryConsume();
     }
 
+    private void ConsumeLateToken(
+        HookToken token,
+        HookKind expectedKind)
+    {
+        if (token == null || !token.Active)
+            return;
+        if (token.BelongsTo(this) && token.Kind == expectedKind)
+            token.TryConsume();
+    }
+
     private bool TryFaultInternal(
         string code,
         FaultRequest request)
@@ -14032,36 +15851,9 @@ internal sealed partial class PassiveDriver : IDisposable
         FaultRequest request,
         PassivePhase faultPhase)
     {
-        int? inputIndex;
-        OracleInput? input;
-        if (request.ForceNullInputs)
-        {
-            inputIndex = null;
-            input = null;
-        }
-        else if (attemptPending)
-        {
-            inputIndex = completedInputs;
-            input = attemptInput;
-        }
-        else if (request.HasOffendingInput)
-        {
-            inputIndex = request.OffendingIndex;
-            input = request.OffendingInput;
-        }
-        else
-        {
-            inputIndex = null;
-            input = null;
-        }
-
         int frames;
         if (request.FrameOverride.HasValue)
             frames = request.FrameOverride.Value;
-        else if (attemptPending)
-            frames = currentFrames;
-        else if (request.HasOffendingInput)
-            frames = 0;
         else if (faultPhase == PassivePhase.AwaitInitialNeutral)
             frames = currentFrames;
         else
@@ -14069,8 +15861,8 @@ internal sealed partial class PassiveDriver : IDisposable
 
         return new ErrorRecord(
             runId,
-            inputIndex,
-            input,
+            null,
+            null,
             code,
             frames,
             lastCapture);
@@ -14139,15 +15931,14 @@ internal sealed partial class PassiveDriver : IDisposable
         }
     }
 
-    private bool IsObservationActive()
+    private bool IsInitialObservationActive()
     {
         return Read(ref prepared) != 0
             && Read(ref disabled) == 0
+            && Read(ref disposed) == 0
             && !TerminalSelected()
             && (phase == PassivePhase.AwaitGame
-                || phase == PassivePhase.AwaitInitialNeutral
-                || phase == PassivePhase.Ready
-                || phase == PassivePhase.Settling);
+                || phase == PassivePhase.AwaitInitialNeutral);
     }
 
     private bool TerminalSelected()
@@ -14167,30 +15958,6 @@ internal sealed partial class PassiveDriver : IDisposable
             && !Double.IsInfinity(value);
     }
 
-    private static bool TryMapCardinal(
-        int rawDirection,
-        out OracleInput input)
-    {
-        switch (rawDirection)
-        {
-            case 0:
-                input = OracleInput.North;
-                return true;
-            case 1:
-                input = OracleInput.South;
-                return true;
-            case 2:
-                input = OracleInput.West;
-                return true;
-            case 3:
-                input = OracleInput.East;
-                return true;
-            default:
-                input = OracleInput.North;
-                return false;
-        }
-    }
-
     private static bool SameBytes(byte[] left, byte[] right)
     {
         if (left == null
@@ -14207,121 +15974,1454 @@ internal sealed partial class PassiveDriver : IDisposable
         return true;
     }
 }
-~~~
+```
 
-- [ ] **Step 4: Run GREEN and the net35 gate**
+Require exact product/test scope and hashes before building:
 
-~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
-  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
-  -c Release --no-restore -- --cohort driver-initial
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
-  oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
-  -c Release --no-restore -warnaserror
+```bash
+set -euo pipefail
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/PassiveDriver.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
 git diff --check
-git diff -- oracle/plugin/Core/PassiveDriverBoundaries.cs \
-  oracle/plugin/Core/PassiveDriver.cs \
-  oracle/plugin/tests/PassiveDriverTestSupport.cs \
-  oracle/plugin/tests/PassiveDriverInitialTests.cs \
-  oracle/plugin/tests/Program.cs
-~~~
+```
 
-- [ ] **Step 5: Commit only the Task 4.2 initial-driver slice**
+- [ ] **Step 5: Run forced provisional GREEN across both frameworks and the full repository**
 
-~~~bash
-git add oracle/plugin/Core/PassiveDriverBoundaries.cs \
+This is a fresh compilation after RED. It must not reuse the DLL emitted by
+the failed RED build.
+
+```bash
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+unit_project='oracle/plugin/tests/SsrOracle.UnitTests.csproj'
+net35_project='oracle/plugin/tests/SsrOracle.Core.Net35.csproj'
+test -x "$dotnet_bin"
+capture_success() {
+  capture_label="$1"
+  shift
+  set +e
+  CAPTURED_OUTPUT="$("$@" 2>&1)"
+  CAPTURED_STATUS="$?"
+  set -e
+  printf '[%s]\n%s\n' "$capture_label" "$CAPTURED_OUTPUT"
+  test "$CAPTURED_STATUS" = "0"
+}
+require_clean_build() {
+  build_text="$1"
+  test "$(printf '%s\n' "$build_text" | awk '$0 == "Build succeeded." { count++ } END { print count + 0 }')" = "1"
+  test "$(printf '%s\n' "$build_text" | awk '/^[[:space:]]*0 Warning[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+  test "$(printf '%s\n' "$build_text" | awk '/^[[:space:]]*0 Error[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+  case "$build_text" in
+    *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|\
+    *"Build FAILED."*|*"NETSDK"*|*"assets file"*|*"SDK"*|\
+    *"fixture"*|*"permission denied"*|*"Permission denied"*|\
+    *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+    *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|\
+    *"restore"*) exit 1 ;;
+  esac
+}
+capture_success 'unit Rebuild' \
+  "$dotnet_bin" build "$unit_project" \
+  --configuration Release --no-restore --nologo \
+  -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false
+require_clean_build "$CAPTURED_OUTPUT"
+capture_success 'net35 Core Rebuild' \
+  "$dotnet_bin" build "$net35_project" \
+  --configuration Release --no-restore --nologo \
+  -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false
+require_clean_build "$CAPTURED_OUTPUT"
+capture_success 'focused driver-initial' \
+  "$dotnet_bin" run --project "$unit_project" \
+  --configuration Release --no-restore --no-build -- \
+  --cohort driver-initial
+test "$CAPTURED_OUTPUT" = "SSR oracle unit harness ready"
+capture_success 'complete C# harness' \
+  "$dotnet_bin" run --project "$unit_project" \
+  --configuration Release --no-restore --no-build -- \
+  --cohort all
+test "$CAPTURED_OUTPUT" = "SSR oracle unit harness ready"
+python_output="$(UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache \
+  /opt/homebrew/bin/uv run pytest -q -rX 2>&1)"
+printf '%s\n' "$python_output"
+case "$python_output" in
+  *"1822 passed, 120 xfailed, 6 xpassed in "*) ;;
+  *) exit 1 ;;
+esac
+case "$python_output" in
+  *" failed"*|*" error"*|*" skipped"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|\
+  *"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test "$(grep -F -c '        PassiveDriverInitialTests.Register(tests);' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '            { "driver-initial", 8 }' oracle/plugin/tests/Program.cs)" = "1"
+test "$(grep -F -c '        tests.Add("driver-initial",' oracle/plugin/tests/PassiveDriverInitialTests.cs)" = "8"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/PassiveDriver.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+```
+
+- [ ] **Step 6: Kill twenty-five controlled mutants and restore exact GREEN after each**
+
+Each mutant is a single-purpose change to one final source. Create the exact
+patch files listed below under
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/`; they are ignored evidence,
+not implementation scope. For each ID, execute this exact transaction:
+
+1. require the five final source hashes, empty index, and exact five-path
+   working state from Step 5;
+2. require the ID's output/status paths to be absent and non-symlinks;
+3. run `git apply --check` and `git apply` on the ID's patch;
+4. capture a forced unit rebuild followed by the focused `--no-build` cohort
+   under `set +e` and `set -o noclobber`;
+5. apply the same patch in reverse with `git apply -R --check` and
+   `git apply -R` before reading the evidence;
+6. require all five final hashes and exact working state again;
+7. require status `1`, exactly one clean successful build, the literal cohort
+   and registration, and the literal first-failure fragment in the table;
+8. reject compiler, warning, SDK, assets, permission, timeout, package, or
+   restore failures; and
+9. force-rebuild the restored source and require exact focused stdout before
+   proceeding to the next mutant.
+
+Use this exact capture block for each ID, substituting only the literal ID:
+
+```bash
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+mutation_id='M01'
+evidence_dir='.superpowers/sdd/2026-07-31-oracle-passive-plugin'
+patch_path="$evidence_dir/task-4.2-$mutation_id.patch"
+output_path="$evidence_dir/task-4.2-$mutation_id-output.txt"
+status_path="$evidence_dir/task-4.2-$mutation_id-status.txt"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/PassiveDriver.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+test -f "$patch_path"
+test ! -L "$patch_path"
+test ! -e "$output_path"
+test ! -L "$output_path"
+test ! -e "$status_path"
+test ! -L "$status_path"
+git apply --check "$patch_path"
+git apply "$patch_path"
+set +e
+set -o noclobber
+(
+  set -euo pipefail
+  export LC_ALL=C
+  export DOTNET_CLI_UI_LANGUAGE=en
+  /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+    oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+    --configuration Release --no-restore --nologo \
+    -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false
+  /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+    --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+    --configuration Release --no-restore --no-build -- \
+    --cohort driver-initial
+) > "$output_path" 2>&1
+mutation_status="$?"
+printf '%s\n' "$mutation_status" > "$status_path"
+set +o noclobber
+set -e
+git apply -R --check "$patch_path"
+git apply -R "$patch_path"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/PassiveDriver.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+test "$(sed -n '1p' "$status_path")" = "1"
+test "$(wc -l < "$status_path" | tr -d ' ')" = "1"
+mutation_output="$(cat "$output_path")"
+test "$(printf '%s\n' "$mutation_output" | awk '$0 == "Build succeeded." { count++ } END { print count + 0 }')" = "1"
+test "$(printf '%s\n' "$mutation_output" | awk '/^[[:space:]]*0 Warning[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+test "$(printf '%s\n' "$mutation_output" | awk '/^[[:space:]]*0 Error[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+case "$mutation_output" in
+  *"cohort 'driver-initial', test 'matching pair writes initial':"*"any two captures do not settle"*) ;;
+  *) exit 1 ;;
+esac
+case "$mutation_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|*"Build FAILED."*|\
+  *"NETSDK"*|*"assets file"*|*"SDK"*|\
+  *"permission denied"*|*"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|*"NU1"*|\
+  *"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+restored_build="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  --configuration Release --no-restore --nologo \
+  -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false 2>&1)"
+case "$restored_build" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+restored_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  --configuration Release --no-restore --no-build -- \
+  --cohort driver-initial 2>&1)"
+test "$restored_output" = "SSR oracle unit harness ready"
+```
+
+For M02--M25, replace the three literals in that block with the following
+exact row; every other command remains byte-for-byte identical:
+
+| ID | Registration | Required first-failure fragment |
+|---|---|---|
+| M01 | `matching pair writes initial` | `any two captures do not settle` |
+| M02 | `pre epoch neutral does not leak` | `new epoch neutral enables pair` |
+| M03 | `not inspected breaks pair` | `NotInspected cleared candidate` |
+| M04 | `nonquiescent breaks pair` | `nonquiescent sample cleared candidate` |
+| M05 | `cardinal clears candidate` | `cardinal input cleared candidate` |
+| M06 | `replacement rebases same callback` | `replacement neutral does not leak to next callback` |
+| M07 | `replacement rebases same callback` | `replacement clears a value-equal old candidate` |
+| M08 | `replacement rebases same callback` | `new epoch pair settles inside reset deadline` |
+| M09 | `replacement rebases same callback` | `replacement cleared old last_capture` |
+| M10 | `replacement rebases same callback` | `replacement directive uses new epoch` |
+| M11 | `nonquiescent breaks pair` | `nonquiescent callback cannot capture` |
+| M12 | `nonquiescent breaks pair` | `false path skips gate` |
+| M13 | `exact deadline and pre overrun` | `unsuccessful exact frame times out phase` |
+| M14 | `exact deadline and pre overrun` | `frame pre-overrun precedes path` |
+| M15 | `exact deadline and pre overrun` | `frame pre-overrun is capped` |
+| M16 | `nonquiescent breaks pair` | `capture exception Error code` |
+| M17 | `matching pair writes initial` | `Initial flush precedes Ready` |
+| M18 | `matching pair writes initial` | `Ready failure follows durable Initial at index 9` |
+| M19 | `cardinal clears candidate` | `repeated observer failure writes one Error` |
+| M20 | `prepare activate separation` | `disabled boundary is inert before observer access` |
+| M21 | `cardinal clears candidate` | `Error write failure uses trace marker` |
+| M22 | `cardinal clears candidate` | `cardinal input cleared neutral eligibility` |
+| M23 | `matching pair writes initial` | `same raw save with unequal complete signature does not settle` |
+| M24 | `matching pair writes initial` | `authorization precedes gate inspection` |
+| M25 | `exact deadline and pre overrun` | `Initial trace failure retains close ownership after Dispose` |
+
+The twenty-five exact patch bodies follow. Preserve each filename and body;
+`git apply -R` is the required inverse.
+
+##### M01 — accept any two captures
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -532,8 +532,7 @@
+                     "capture was not authorized");
+             byte[] signature =
+                 ValidateAndRememberCapture(sample.Capture);
+-            if (candidateSignature != null
+-                && SameBytes(candidateSignature, signature))
++            if (candidateSignature != null)
+             {
+                 EmitInitial(sample.Capture);
+                 return;
+```
+
+##### M02 — compare capture object identity instead of signature bytes
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -530,10 +530,12 @@
+             if (!directive.InspectGate || sample.Capture == null)
+                 throw new InvalidOperationException(
+                     "capture was not authorized");
++            CaptureRecord previousCapture = lastCapture;
+             byte[] signature =
+                 ValidateAndRememberCapture(sample.Capture);
+             if (candidateSignature != null
+-                && SameBytes(candidateSignature, signature))
++                && Object.ReferenceEquals(
++                    previousCapture, sample.Capture))
+             {
+                 EmitInitial(sample.Capture);
+                 return;
+```
+
+##### M03 — retain a candidate across `NotInspected`
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -516,7 +516,6 @@
+             if (directive.InspectGate)
+                 throw new InvalidOperationException(
+                     "eligible update was not inspected");
+-            candidateSignature = null;
+         }
+         else if (sample.Kind == GateSampleKind.NonQuiescent)
+         {
+```
+
+##### M04 — retain a candidate across `NonQuiescent`
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -523,7 +523,6 @@
+             if (!directive.InspectGate)
+                 throw new InvalidOperationException(
+                     "ineligible update inspected gate");
+-            candidateSignature = null;
+         }
+         else if (sample.Kind == GateSampleKind.Captured)
+         {
+```
+
+##### M05 — retain a candidate across physical cardinal input
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -433,7 +433,6 @@
+         if (phase == PassivePhase.AwaitInitialNeutral)
+         {
+             neutralSeen = false;
+-            candidateSignature = null;
+         }
+     }
+
+```
+
+##### M06 — retain neutral eligibility across replacement
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -600,7 +600,6 @@
+         epochState = stateReference;
+         epochStartedAt = nowSeconds;
+         currentFrames = countCurrentUpdate ? 1 : 0;
+-        neutralSeen = false;
+         candidateSignature = null;
+         lastCapture = null;
+     }
+```
+
+##### M07 — retain the old candidate across replacement
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -601,7 +601,6 @@
+         epochStartedAt = nowSeconds;
+         currentFrames = countCurrentUpdate ? 1 : 0;
+         neutralSeen = false;
+-        candidateSignature = null;
+         lastCapture = null;
+     }
+
+```
+
+##### M08 — retain the old deadline origin across replacement
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -595,10 +595,13 @@
+         double nowSeconds,
+         bool countCurrentUpdate)
+     {
++        bool replacingEpoch =
++            phase == PassivePhase.AwaitInitialNeutral;
+         epoch++;
+         phase = PassivePhase.AwaitInitialNeutral;
+         epochState = stateReference;
+-        epochStartedAt = nowSeconds;
++        if (!replacingEpoch)
++            epochStartedAt = nowSeconds;
+         currentFrames = countCurrentUpdate ? 1 : 0;
+         neutralSeen = false;
+         candidateSignature = null;
+```
+
+##### M09 — retain `last_capture` across replacement
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -602,7 +602,6 @@
+         currentFrames = countCurrentUpdate ? 1 : 0;
+         neutralSeen = false;
+         candidateSignature = null;
+-        lastCapture = null;
+     }
+
+     private void ResetToAwaitGame()
+```
+
+##### M10 — rebase replacement to the old epoch and frame zero
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -311,7 +311,7 @@
+             {
+                 StartInitialEpoch(
+                     stateReference, directive.NowSeconds, true);
+-                directive.RebaseInitialEpoch(epoch, currentFrames);
++                directive.RebaseInitialEpoch(directive.Epoch, 0);
+             }
+             return true;
+         }
+```
+
+##### M11 — capture even when the gate reports nonquiescent
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriverBoundaries.cs b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+--- a/oracle/plugin/Core/PassiveDriverBoundaries.cs
++++ b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@ -386,7 +386,8 @@
+             }
+             else if (!observation.IsQuiescent(verifiedState))
+             {
+-                sample = GateSample.NonQuiescent();
++                sample = GateSample.Captured(
++                    observation.Capture(verifiedState));
+             }
+             else
+             {
+```
+
+##### M12 — inspect the gate after a false path but before authorization
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriverBoundaries.cs b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+--- a/oracle/plugin/Core/PassiveDriverBoundaries.cs
++++ b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@ -333,6 +333,7 @@
+         }
+         if (!savePathMatches)
+         {
++            observation.IsQuiescent(beginState);
+             SafeFail(directive, "save_path_changed");
+             return;
+         }
+```
+
+##### M13 — remove exact-boundary post-sample timeout
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -547,9 +547,7 @@
+
+         if (directive.TimeoutAfterSample)
+         {
+-            TryFaultInternal(
+-                "initial_settle_timeout",
+-                FaultRequest.Derived());
++            return;
+         }
+     }
+
+```
+
+##### M14 — remove frame pre-overrun
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -214,8 +214,7 @@
+             }
+             int nextFrames = currentFrames + 1;
+             double elapsed = nowSeconds - epochStartedAt;
+-            if (nextFrames > maxSettleFrames
+-                || elapsed > maxSettleSeconds)
++            if (elapsed > maxSettleSeconds)
+             {
+                 TryFaultInternal(
+                     "initial_settle_timeout",
+```
+
+##### M15 — remove frame-count capping on pre-overrun
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -219,8 +219,7 @@
+             {
+                 TryFaultInternal(
+                     "initial_settle_timeout",
+-                    FaultRequest.DerivedWithFrames(
+-                        Math.Min(nextFrames, maxSettleFrames)));
++                    FaultRequest.DerivedWithFrames(nextFrames));
+                 return UpdateDirective.Inactive(this);
+             }
+             currentFrames = nextFrames;
+```
+
+##### M16 — collapse typed capture failure into generic observer failure
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriverBoundaries.cs b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+--- a/oracle/plugin/Core/PassiveDriverBoundaries.cs
++++ b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@ -396,7 +396,7 @@
+         }
+         catch (CaptureException)
+         {
+-            SafeFail(directive, "capture_failed");
++            SafeFail(directive, "observer_exception");
+             return;
+         }
+         catch (Exception)
+```
+
+##### M17 — report Ready before flushing Initial
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -573,12 +573,6 @@
+
+     private void EmitInitial(CaptureRecord capture)
+     {
+-        sink.WriteInitial(new InitialRecord(runId, capture));
+-        phase = PassivePhase.Ready;
+-        currentFrames = 0;
+-        neutralSeen = false;
+-        candidateSignature = null;
+-        lastCapture = null;
+         try
+         {
+             reporter.Ready(0);
+@@ -587,7 +581,14 @@
+         {
+             TryFaultInternal(
+                 "observer_exception", FaultRequest.Derived());
++            return;
+         }
++        sink.WriteInitial(new InitialRecord(runId, capture));
++        phase = PassivePhase.Ready;
++        currentFrames = 0;
++        neutralSeen = false;
++        candidateSignature = null;
++        lastCapture = null;
+     }
+
+     private void StartInitialEpoch(
+```
+
+##### M18 — close before writing Error
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -721,9 +721,9 @@
+         bool durable = false;
+         try
+         {
++            CloseSink();
+             sink.WriteError(
+                 BuildErrorRecord(code, request, faultPhase));
+-            CloseSink();
+             durable = true;
+         }
+         catch (Exception error)
+```
+
+##### M19 — permit a second terminal owner
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -704,7 +704,7 @@
+     {
+         OracleErrors.ForCode(code);
+         if (Interlocked.CompareExchange(
+-            ref terminalOwner, 1, 0) != 0)
++            ref terminalOwner, 1, 0) == Int32.MinValue)
+         {
+             return false;
+         }
+```
+
+##### M20 — access the observation after disable/dispose
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriverBoundaries.cs b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+--- a/oracle/plugin/Core/PassiveDriverBoundaries.cs
++++ b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@ -274,8 +274,6 @@
+         if (observation == null)
+             throw new ArgumentNullException("observation");
+         LastDirective = null;
+-        if (!driver.UpdateObservationActive)
+-            return;
+
+         object beginState;
+         bool beginUsable;
+```
+
+##### M21 — claim the original code after Error write or close failure
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -731,7 +731,7 @@
+             SafeDiagnostic(error);
+             BestEffortClose();
+         }
+-        SafeFailed(durable ? code : "trace_io_failed");
++        SafeFailed(durable ? code : code);
+         return true;
+     }
+
+```
+
+##### M22 — retain neutral eligibility across physical cardinal input
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -432,7 +432,6 @@
+         }
+         if (phase == PassivePhase.AwaitInitialNeutral)
+         {
+-            neutralSeen = false;
+             candidateSignature = null;
+         }
+     }
+```
+
+##### M23 — compare only the raw-save portion of the stability signature
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -530,10 +530,12 @@
+             if (!directive.InspectGate || sample.Capture == null)
+                 throw new InvalidOperationException(
+                     "capture was not authorized");
++            CaptureRecord previousCapture = lastCapture;
+             byte[] signature =
+                 ValidateAndRememberCapture(sample.Capture);
+             if (candidateSignature != null
+-                && SameBytes(candidateSignature, signature))
++                && previousCapture != null
++                && previousCapture.RawSave == sample.Capture.RawSave)
+             {
+                 EmitInitial(sample.Capture);
+                 return;
+```
+
+##### M24 — sample stable state before directive authorization
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriverBoundaries.cs b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+--- a/oracle/plugin/Core/PassiveDriverBoundaries.cs
++++ b/oracle/plugin/Core/PassiveDriverBoundaries.cs
+@@ -353,6 +353,36 @@
+         {
+             SafeFail(directive, "observer_exception");
+             return;
++        }
++
++        GateSample sample = null;
++        bool sampledBeforeAuthorization = false;
++        if (directive.InspectGate
++            && Object.ReferenceEquals(beginState, verifiedState))
++        {
++            try
++            {
++                if (!observation.IsQuiescent(verifiedState))
++                {
++                    sample = GateSample.NonQuiescent();
++                }
++                else
++                {
++                    sample = GateSample.Captured(
++                        observation.Capture(verifiedState));
++                }
++                sampledBeforeAuthorization = true;
++            }
++            catch (CaptureException)
++            {
++                SafeFail(directive, "capture_failed");
++                return;
++            }
++            catch (Exception)
++            {
++                SafeFail(directive, "observer_exception");
++                return;
++            }
+         }
+
+         bool authorized;
+@@ -377,33 +407,35 @@
+         if (!authorized)
+             return;
+
+-        GateSample sample;
+-        try
++        if (!sampledBeforeAuthorization)
+         {
+-            if (!directive.InspectGate)
++            try
+             {
+-                sample = GateSample.NotInspected();
++                if (!directive.InspectGate)
++                {
++                    sample = GateSample.NotInspected();
++                }
++                else if (!observation.IsQuiescent(verifiedState))
++                {
++                    sample = GateSample.NonQuiescent();
++                }
++                else
++                {
++                    sample = GateSample.Captured(
++                        observation.Capture(verifiedState));
++                }
+             }
+-            else if (!observation.IsQuiescent(verifiedState))
++            catch (CaptureException)
+             {
+-                sample = GateSample.NonQuiescent();
++                SafeFail(directive, "capture_failed");
++                return;
+             }
+-            else
++            catch (Exception)
+             {
+-                sample = GateSample.Captured(
+-                    observation.Capture(verifiedState));
++                SafeFail(directive, "observer_exception");
++                return;
+             }
+         }
+-        catch (CaptureException)
+-        {
+-            SafeFail(directive, "capture_failed");
+-            return;
+-        }
+-        catch (Exception)
+-        {
+-            SafeFail(directive, "observer_exception");
+-            return;
+-        }
+
+         try
+         {
+```
+
+##### M25 — bypass close ownership after a trace-I/O failure
+
+```diff
+diff --git a/oracle/plugin/Core/PassiveDriver.cs b/oracle/plugin/Core/PassiveDriver.cs
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -765,6 +765,13 @@
+             return;
+         }
+         phase = PassivePhase.Faulted;
+-        BestEffortClose();
++        try
++        {
++            sink.Close();
++        }
++        catch (Exception error)
++        {
++            SafeDiagnostic(error);
++        }
+         SafeFailed("trace_io_failed");
+     }
+```
+
+Append every output/status hash and the exact registration/oracle result to
+the Task 4.2 report and progress ledger. A mutant is not accepted if its
+inverse, final hashes, clean index, exact five-path working state, or restored
+focused GREEN is missing.
+
+- [ ] **Step 7: Run a fresh post-mutation precommit suite**
+
+Create the controller/implementer-owned ignored helper
+`.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-forced-suite.sh`
+with exactly this body. This is the one reusable gate; later steps invoke the
+same file rather than paraphrasing or relying on an earlier result.
+
+```bash
+#!/bin/bash
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+unit_project='oracle/plugin/tests/SsrOracle.UnitTests.csproj'
+net35_project='oracle/plugin/tests/SsrOracle.Core.Net35.csproj'
+test -x "$dotnet_bin"
+run_capture() {
+  gate_label="$1"
+  shift
+  set +e
+  gate_output="$("$@" 2>&1)"
+  gate_status="$?"
+  set -e
+  printf '[%s]\n%s\n' "$gate_label" "$gate_output"
+  test "$gate_status" = "0"
+}
+require_build() {
+  text="$1"
+  test "$(printf '%s\n' "$text" | awk '$0 == "Build succeeded." { count++ } END { print count + 0 }')" = "1"
+  test "$(printf '%s\n' "$text" | awk '/^[[:space:]]*0 Warning[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+  test "$(printf '%s\n' "$text" | awk '/^[[:space:]]*0 Error[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+  case "$text" in
+    *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|\
+    *"Build FAILED."*|*"NETSDK"*|*"assets file"*|*"SDK"*|\
+    *"fixture"*|*"permission denied"*|*"Permission denied"*|\
+    *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+    *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|\
+    *"restore"*) exit 1 ;;
+  esac
+}
+run_capture 'unit Rebuild' \
+  "$dotnet_bin" build "$unit_project" \
+  --configuration Release --no-restore --nologo \
+  -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false
+require_build "$gate_output"
+run_capture 'net35 Core Rebuild' \
+  "$dotnet_bin" build "$net35_project" \
+  --configuration Release --no-restore --nologo \
+  -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false
+require_build "$gate_output"
+run_capture 'focused driver-initial' \
+  "$dotnet_bin" run --project "$unit_project" \
+  --configuration Release --no-restore --no-build -- \
+  --cohort driver-initial
+test "$gate_output" = "SSR oracle unit harness ready"
+run_capture 'complete C# harness' \
+  "$dotnet_bin" run --project "$unit_project" \
+  --configuration Release --no-restore --no-build -- \
+  --cohort all
+test "$gate_output" = "SSR oracle unit harness ready"
+set +e
+python_output="$(UV_OFFLINE=1 UV_CACHE_DIR=/tmp/ssr-uv-cache \
+  /opt/homebrew/bin/uv run pytest -q -rX 2>&1)"
+python_status="$?"
+set -e
+printf '[complete Python suite]\n%s\n' "$python_output"
+test "$python_status" = "0"
+case "$python_output" in
+  *"1822 passed, 120 xfailed, 6 xpassed in "*) ;;
+  *) exit 1 ;;
+esac
+case "$python_output" in
+  *" failed"*|*" error"*|*" skipped"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|\
+  *"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+```
+
+Run the helper now and reassert the complete uncommitted transaction:
+
+```bash
+set -euo pipefail
+suite_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-forced-suite.sh'
+test -f "$suite_path"
+test ! -L "$suite_path"
+/bin/bash "$suite_path"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+for mutation_number in \
+  01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+  output_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-M${mutation_number}-output.txt"
+  status_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-M${mutation_number}-status.txt"
+  test -f "$output_path"
+  test ! -L "$output_path"
+  test -f "$status_path"
+  test ! -L "$status_path"
+  test "$(sed -n '1p' "$status_path")" = "1"
+done
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  ' M oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  ' M oracle/plugin/tests/Program.cs' \
+  '?? oracle/plugin/Core/PassiveDriver.cs' \
+  '?? oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  '?? oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+```
+
+- [ ] **Step 8: Repin, stage exactly five paths, and create the implementation commit**
+
+Immediately before staging, rerun the forced suite and validate the dispatch
+record from both ledgers. The helper below is defined and invoked twice in the
+same shell transaction: once before `git add`, and once immediately before
+`git commit`.
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+plan_path='docs/superpowers/plans/2026-07-31-oracle-passive-plugin.md'
+brief_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-brief.md'
+design_path='docs/superpowers/specs/2026-08-04-task-4.2-scope-pure-hardening-design.md'
+suite_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-forced-suite.sh'
+verify_dispatch_pins() {
+  for evidence_path in "$report_path" "$progress_path"; do
+    test -f "$evidence_path"
+    for key in \
+      'execution base' 'execution parent' 'execution subject' \
+      'amended plan SHA-256' 'regenerated brief SHA-256' \
+      'approved design SHA-256'; do
+      test "$(grep -F -c "Task 4.2 $key:" "$evidence_path")" = "1"
+    done
+  done
+  report_base="$(sed -n 's/^Task 4[.]2 execution base: //p' "$report_path")"
+  progress_base="$(sed -n 's/^Task 4[.]2 execution base: //p' "$progress_path")"
+  report_parent="$(sed -n 's/^Task 4[.]2 execution parent: //p' "$report_path")"
+  progress_parent="$(sed -n 's/^Task 4[.]2 execution parent: //p' "$progress_path")"
+  report_subject="$(sed -n 's/^Task 4[.]2 execution subject: //p' "$report_path")"
+  progress_subject="$(sed -n 's/^Task 4[.]2 execution subject: //p' "$progress_path")"
+  report_plan="$(sed -n 's/^Task 4[.]2 amended plan SHA-256: //p' "$report_path")"
+  progress_plan="$(sed -n 's/^Task 4[.]2 amended plan SHA-256: //p' "$progress_path")"
+  report_brief="$(sed -n 's/^Task 4[.]2 regenerated brief SHA-256: //p' "$report_path")"
+  progress_brief="$(sed -n 's/^Task 4[.]2 regenerated brief SHA-256: //p' "$progress_path")"
+  report_design="$(sed -n 's/^Task 4[.]2 approved design SHA-256: //p' "$report_path")"
+  progress_design="$(sed -n 's/^Task 4[.]2 approved design SHA-256: //p' "$progress_path")"
+  test "$report_base" = "$progress_base"
+  test "$report_parent" = "$progress_parent"
+  test "$report_subject" = "$progress_subject"
+  test "$report_plan" = "$progress_plan"
+  test "$report_brief" = "$progress_brief"
+  test "$report_design" = "$progress_design"
+  test "$(printf '%s\n' "$report_base" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+  test "$(printf '%s\n' "$report_parent" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+  test "$(printf '%s\n' "$report_plan" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+  test "$(printf '%s\n' "$report_brief" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+  test "$(printf '%s\n' "$report_design" | awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+  test "$(git rev-parse HEAD)" = "$report_base"
+  test "$(git rev-parse HEAD^)" = "$report_parent"
+  test "$(git show -s --format=%s HEAD)" = "$report_subject"
+  test "$(shasum -a 256 "$plan_path" | awk '{print $1}')" = "$report_plan"
+  test "$(shasum -a 256 "$brief_path" | awk '{print $1}')" = "$report_brief"
+  test "$(shasum -a 256 "$design_path" | awk '{print $1}')" = "$report_design"
+  test "$report_design" = "1c97f6feeab11f50d16cbc0ebcbfe0e5dce764566537e1999273a49c4a6b9c2a"
+}
+verify_dispatch_pins
+/bin/bash "$suite_path"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs')"
+git diff --check
+git add -- \
+  oracle/plugin/Core/PassiveDriverBoundaries.cs \
   oracle/plugin/Core/PassiveDriver.cs \
-  oracle/plugin/tests/PassiveDriverTestSupport.cs \
   oracle/plugin/tests/PassiveDriverInitialTests.cs \
+  oracle/plugin/tests/PassiveDriverTestSupport.cs \
   oracle/plugin/tests/Program.cs
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'A  oracle/plugin/Core/PassiveDriver.cs' \
+  'A  oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'A  oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'M  oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'M  oracle/plugin/tests/Program.cs')"
+git diff --cached --check
+verify_dispatch_pins
 git commit -m "feat: settle passive initial state"
-~~~
+```
 
-### Track 5: Attribute native inputs and own terminal outcomes
+If Git cannot create its index lock because of workspace permissions, report
+the literal error and hand only that already-verified Git write to the
+controller. Do not retry via a broader or destructive mechanism.
 
+- [ ] **Step 9: Run a fresh postcommit suite and bind implementation evidence**
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+suite_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-forced-suite.sh'
+dispatch_base="$(sed -n 's/^Task 4[.]2 execution base: //p' "$report_path")"
+test "$(git rev-parse HEAD^)" = "$dispatch_base"
+test "$(git rev-list --count "$dispatch_base..HEAD")" = "1"
+test "$(git show -s --format=%s HEAD)" = "feat: settle passive initial state"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/Program.cs')"
+/bin/bash "$suite_path"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+git diff --check HEAD^ HEAD
+```
+
+The controller now appends exactly one line
+`Task 4.2 implementation commit: <40-character lowercase HEAD>` to both
+report and progress, plus the parent, subject, five path hashes, RED evidence,
+GREEN output, and M01--M25 evidence hashes. Verify the key occurs once in each
+file, both values are identical lowercase SHA-1s, and both equal `git rev-parse
+HEAD` before dispatching review.
+
+- [ ] **Step 10: Obtain four independent approvals bound to the implementation commit**
+
+Dispatch four fresh read-only reviewers with the approved design, amended
+plan, regenerated brief, exact implementation commit/diff, report/progress
+pins, RED output, all GREEN output, and M01--M25 evidence:
+
+1. a specification/scope reviewer checks every design clause and the exact
+   transfer into Tasks 5.1--5.3;
+2. a test/mutation reviewer checks discriminating oracles, exact first
+   failures, and inverse freshness;
+3. a shell/gate reviewer checks fail-fast behavior, stderr capture, forced
+   rebuilds, offline commands, evidence uniqueness, and exact repository
+   transactions; and
+4. a C# 7.3/CLR-v2/net35 reviewer checks the exact source and rebuild output on
+   macOS Tahoe 26.6 without restoring anything.
+
+Each reviewer must report no Critical or Important finding. A finding is
+fixed under a new RED/GREEN cycle and the affected reviews are rerun; review
+approval never substitutes for a failing gate.
+
+- [ ] **Step 11: Independently replay M01--M25 from the exact committed state**
+
+The controller, not the implementer or any reviewer, performs every replay.
+Before and after each ID it requires the unique implementation-commit value in
+both ledgers, binds it to `HEAD`, requires a clean index/worktree and all five
+final hashes, applies the exact Step 6 patch, captures a forced rebuild plus
+focused run to unique
+`task-4.2-controller-MNN-{output,status}.txt` paths under noclobber, reverses
+the patch before inspecting evidence, and then applies the same literal
+registration/fragment row. Compiler/warning/infrastructure failures are
+rejected. After every inverse, force-rebuild and require exact focused stdout.
+
+Use this exact committed-state wrapper for each ID around the Step 6 capture
+body (replace only `M01` and its table literals):
+
+```bash
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+mutation_id='M01'
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+report_commit="$(sed -n 's/^Task 4[.]2 implementation commit: //p' "$report_path")"
+progress_commit="$(sed -n 's/^Task 4[.]2 implementation commit: //p' "$progress_path")"
+test "$(grep -c '^Task 4[.]2 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]2 implementation commit:' "$progress_path")" = "1"
+test "$report_commit" = "$progress_commit"
+test "$(printf '%s\n' "$report_commit" | awk 'length($0) == 40 && $0 ~ /^[0-9a-f]+$/ { print "ok" }')" = "ok"
+test "$(git rev-parse HEAD)" = "$report_commit"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+patch_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-$mutation_id.patch"
+output_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-controller-$mutation_id-output.txt"
+status_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-controller-$mutation_id-status.txt"
+test -f "$patch_path"
+test ! -L "$patch_path"
+test ! -e "$output_path"
+test ! -L "$output_path"
+test ! -e "$status_path"
+test ! -L "$status_path"
+git apply --check "$patch_path"
+git apply "$patch_path"
+set +e
+set -o noclobber
+(
+  set -euo pipefail
+  /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+    oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+    --configuration Release --no-restore --nologo \
+    -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false
+  /opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+    --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+    --configuration Release --no-restore --no-build -- \
+    --cohort driver-initial
+) > "$output_path" 2>&1
+controller_status="$?"
+printf '%s\n' "$controller_status" > "$status_path"
+set +o noclobber
+set -e
+git apply -R --check "$patch_path"
+git apply -R "$patch_path"
+test "$(git rev-parse HEAD)" = "$report_commit"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test "$(sed -n '1p' "$status_path")" = "1"
+controller_output="$(cat "$output_path")"
+case "$controller_output" in
+  *"cohort 'driver-initial', test 'matching pair writes initial':"*"any two captures do not settle"*) ;;
+  *) exit 1 ;;
+esac
+case "$controller_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|*"Build FAILED."*|\
+  *"NETSDK"*|*"assets file"*|*"SDK"*|\
+  *"permission denied"*|*"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|*"NU1"*|\
+  *"package"*|*"Package"*|*"restore"*) exit 1 ;;
+esac
+restored_build="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  --configuration Release --no-restore --nologo \
+  -warnaserror -t:Rebuild -m:1 -p:UseSharedCompilation=false 2>&1)"
+case "$restored_build" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+restored_output="$(/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  --configuration Release --no-restore --no-build -- \
+  --cohort driver-initial 2>&1)"
+test "$restored_output" = "SSR oracle unit harness ready"
+```
+
+Record each controller evidence hash and table match separately. Do not reuse
+implementer output or let a reviewer perform this replay.
+
+- [ ] **Step 12: Run the final post-review/post-replay acceptance gate**
+
+```bash
+set -euo pipefail
+report_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-report.md'
+progress_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/progress.md'
+suite_path='.superpowers/sdd/2026-07-31-oracle-passive-plugin/task-4.2-forced-suite.sh'
+dispatch_base="$(sed -n 's/^Task 4[.]2 execution base: //p' "$report_path")"
+report_commit="$(sed -n 's/^Task 4[.]2 implementation commit: //p' "$report_path")"
+progress_commit="$(sed -n 's/^Task 4[.]2 implementation commit: //p' "$progress_path")"
+test "$(grep -c '^Task 4[.]2 implementation commit:' "$report_path")" = "1"
+test "$(grep -c '^Task 4[.]2 implementation commit:' "$progress_path")" = "1"
+test "$report_commit" = "$progress_commit"
+test "$(git rev-parse HEAD)" = "$report_commit"
+test "$(git rev-parse HEAD^)" = "$dispatch_base"
+test "$(git show -s --format=%s HEAD)" = "feat: settle passive initial state"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverBoundaries.cs' \
+  'oracle/plugin/tests/PassiveDriverInitialTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/Program.cs')"
+for mutation_number in \
+  01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+  for prefix in task-4.2 task-4.2-controller; do
+    output_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/${prefix}-M${mutation_number}-output.txt"
+    status_path=".superpowers/sdd/2026-07-31-oracle-passive-plugin/${prefix}-M${mutation_number}-status.txt"
+    test -f "$output_path"
+    test ! -L "$output_path"
+    test -f "$status_path"
+    test ! -L "$status_path"
+    test "$(sed -n '1p' "$status_path")" = "1"
+  done
+done
+/bin/bash "$suite_path"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriverBoundaries.cs | awk '{print $1}')" = "1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133"
+test "$(shasum -a 256 oracle/plugin/Core/PassiveDriver.cs | awk '{print $1}')" = "0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverTestSupport.cs | awk '{print $1}')" = "96ee44c3e9b6c1b756b05266a016c574023f61d71a960ac76b8c9f7460fd4e33"
+test "$(shasum -a 256 oracle/plugin/tests/PassiveDriverInitialTests.cs | awk '{print $1}')" = "a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b"
+test "$(shasum -a 256 oracle/plugin/tests/Program.cs | awk '{print $1}')" = "9372ea72e23ca9d8a95f2cce1f7146713b603ce7ea733fe2e0756a33c6b25004"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --check
+git diff --check "$dispatch_base" HEAD
+```
+
+Task 4.2 is complete only after all four reviews contain no Critical or
+Important finding, all twenty-five implementer mutants and twenty-five
+controller replays fail at their named behavioral oracle after a clean forced
+build, every inverse restores the exact five hashes, and Step 12 passes from
+the literal implementation commit.
 #### Task 5.1: Attribute cardinal directions and Undo
 
-- [ ] **Step 1: Add the complete fixture extensions and six RED tests**
+**Goal:** Add manual input attribution and nonterminal Step emission on top of
+the exact Task 4.2 driver. This task owns completed-input accounting,
+attempt/outcome state, stable-state identity, settling debounce and deadlines,
+ProcessInput and Undo/Restore hook balancing, durable Step writes, and
+intermediate Ready reporting.
 
 **Files:**
+- Modify: oracle/plugin/Core/PassiveDriver.cs
 - Create: oracle/plugin/Core/PassiveDriverInput.cs
 - Modify: oracle/plugin/tests/PassiveDriverTestSupport.cs
 - Create: oracle/plugin/tests/PassiveDriverInputTests.cs
 - Modify: oracle/plugin/tests/Program.cs
 
-**Interfaces:**
+**Interfaces and ownership:**
 - Produces ProcessInputEntered(object, int, double),
   ProcessInputReturned(HookToken, bool, bool), ProcessInputThrew(HookToken),
-  UndoEntered(object, double), RestoreObserved(),
-  UndoReturned(HookToken, bool), and UndoThrew(HookToken).
+  UndoEntered(object, double), RestoreObserved(), UndoReturned(HookToken,
+  bool), and UndoThrew(HookToken).
 - A direction becomes an attempt only for the first ProcessInput nested in one
-  PlayerPoll context after exactly one physical cardinal result, with an
-  identical raw direction. A zero-poll scope and a cardinal scope filtered by
-  the game are both valid no-attempt scopes.
-- An unscoped ProcessInput is ignored while AwaitGame,
-  AwaitInitialNeutral, or Settling and faults with unscoped_process_input only
-  while stably Ready. Undo is accepted only when RestoreObserved occurs inside
-  its matching top-level context.
-- All state observation remains on the Unity main thread. No monitor surrounds
-  a sink or reporter call.
+  PlayerPoll after exactly one physical cardinal result with the identical raw
+  value. Zero-poll and game-filtered cardinal scopes produce no attempt.
+- A scoped cardinal before Initial faults with input_before_initial and exact
+  next-index/input fields. An unscoped ProcessInput is ignored before Initial
+  and while Settling, but faults with unscoped_process_input while stably
+  Ready. Undo is accepted only when RestoreObserved occurs inside the matching
+  top-level Undo context.
+- Step is written before the attempt is cleared and before Ready is reported.
+  Step I/O failure owns trace_io_failed, attempts Close exactly once, and never
+  claims a durable Step or Error.
+- Complete capture equality is by CaptureSignature bytes, not CaptureRecord
+  reference or RawSave alone. Settling requires two consecutive quiescent,
+  neutral, value-equal samples and restarts the pair after NotInspected,
+  nonquiescent, cardinal, or unequal complete signature.
+- All state observation remains on Unity's main thread. No monitor surrounds
+  sink or reporter calls.
 
-Append this partial fixture body to PassiveDriverTestSupport.cs:
+**Strict scope exclusions:** The constructor still validates its
+expectedInputCount parameter, but Task 5.1 does not store it in a field.
+CompleteUpdateCore and EmitSettledAttempt have no UTC argument. Every settled
+Step returns to Ready and reports the new completedInputs count; there is no
+third-step branch. This task adds no restart depth/state-set behavior and no
+completion seam. Task 5.2 first owns restart/state replacement. Task 5.3 first
+stores expectedInputCount, threads UTC, branches after the third Step, and
+owns End/Close/Complete.
 
-~~~csharp
-internal sealed partial class DriverFixture
-{
-    internal void OpenDirection(
-        int rawDirection,
-        bool accepted,
-        bool movementScheduled,
-        double nowSeconds)
-    {
-        HookToken poll = Driver.PlayerPollEntered();
-        Driver.PhysicalPollReturned(rawDirection);
-        HookToken process = Driver.ProcessInputEntered(
-            State, rawDirection, nowSeconds);
-        Driver.ProcessInputReturned(
-            process, accepted, movementScheduled);
-        Driver.PlayerPollReturned(poll);
-    }
+**Canonical Task 5.1 checkpoint SHA-256:**
+- oracle/plugin/Core/PassiveDriver.cs:
+  e522a83a0fee68bc44803d2df3b8a9c93b1a679224bc401566dae4f48f4582f9
+- oracle/plugin/Core/PassiveDriverInput.cs:
+  f3922ff8db27112f314084a22aa08feff560fa7305b683e33cb36db17ab50eda
+- oracle/plugin/tests/PassiveDriverTestSupport.cs:
+  8b04688d264e5e3aebd36f635e07c120395c9b545790c8eb02a594c0059952f5
+- oracle/plugin/tests/PassiveDriverInputTests.cs:
+  2d3ead30d16c0e42c10c2b3b2a74d7957024a3f5bb962221ca0cf2ef17b7d970
+- cumulative oracle/plugin/tests/Program.cs:
+  40a4801b6ce166c67d9cd098525a68ec910e237c22c02f554491f61c089dab8c
 
-    internal void OpenUndo(
-        bool restored,
-        bool movementScheduled,
-        double nowSeconds)
-    {
-        HookToken undo = Driver.UndoEntered(State, nowSeconds);
-        if (restored)
-            Driver.RestoreObserved();
-        Driver.UndoReturned(undo, movementScheduled);
-    }
+- [ ] **Step 1: Apply the exact fixture extensions and six-registration RED suite**
 
-    internal void SettleCurrent(
-        CaptureRecord capture,
-        double firstUpdateSeconds)
-    {
-        Neutral();
-        Observe(
-            State,
-            State,
-            firstUpdateSeconds,
-            true,
-            capture);
-        Observe(
-            State,
-            State,
-            firstUpdateSeconds + 1.0,
-            true,
-            capture);
-    }
-}
+Start only from the five exact Task 4.2 hashes recorded in Task 4.2. Apply
+this complete fixture patch; it adds StepFailure, records indexed
+sink:step:N events, and adds the input-driving helpers without removing the
+Task 4.2 authorization probe:
+
+~~~diff
+--- a/oracle/plugin/tests/PassiveDriverTestSupport.cs
++++ b/oracle/plugin/tests/PassiveDriverTestSupport.cs
+@@ -23,6 +23,7 @@
+         new List<ErrorRecord>();
+     internal Exception RunFailure { get; set; }
+     internal Exception InitialFailure { get; set; }
++    internal Exception StepFailure { get; set; }
+     internal Exception ErrorFailure { get; set; }
+     internal Exception CloseFailure { get; set; }
+     internal int RunCalls;
+@@ -53,7 +54,9 @@
+     public void WriteStep(StepRecord record)
+     {
+         StepCalls++;
+-        Add("sink:step");
++        Add("sink:step:" + record.InputIndex.ToString());
++        if (StepFailure != null)
++            throw StepFailure;
+         StepRecords.Add(record);
+     }
+
+@@ -485,3 +488,51 @@
+         return field;
+     }
+ }
++
++internal sealed partial class DriverFixture
++{
++    internal void OpenDirection(
++        int rawDirection,
++        bool accepted,
++        bool movementScheduled,
++        double nowSeconds)
++    {
++        HookToken poll = Driver.PlayerPollEntered();
++        Driver.PhysicalPollReturned(rawDirection);
++        HookToken process = Driver.ProcessInputEntered(
++            State, rawDirection, nowSeconds);
++        Driver.ProcessInputReturned(
++            process, accepted, movementScheduled);
++        Driver.PlayerPollReturned(poll);
++    }
++
++    internal void OpenUndo(
++        bool restored,
++        bool movementScheduled,
++        double nowSeconds)
++    {
++        HookToken undo = Driver.UndoEntered(State, nowSeconds);
++        if (restored)
++            Driver.RestoreObserved();
++        Driver.UndoReturned(undo, movementScheduled);
++    }
++
++    internal void SettleCurrent(
++        CaptureRecord capture,
++        double firstUpdateSeconds)
++    {
++        Neutral();
++        Observe(
++            State,
++            State,
++            firstUpdateSeconds,
++            true,
++            capture);
++        Observe(
++            State,
++            State,
++            firstUpdateSeconds + 1.0,
++            true,
++            capture);
++    }
++}
 ~~~
 
-Create PassiveDriverInputTests.cs with exactly these six registrations and six
-method bodies:
+Create PassiveDriverInputTests.cs with this exact six-registration body. The
+nine scope/debounce/deadline/I/O/cleanup helper suites are deliberately called from
+the existing six registered methods, so the public manifest remains six while
+the full matrix runs:
 
 ~~~csharp
 using System;
+using System.Reflection;
 
 internal static class PassiveDriverInputTests
 {
@@ -14448,6 +17548,9 @@ internal static class PassiveDriverInputTests
             1,
             settling.SettleFrames,
             "unknown retains active attempt frame count");
+
+        ScopedInputBeforeInitialFaults();
+        OverlappingInputRetainsAttempt();
     }
 
     private static void UnscopedPolicyFollowsPhase()
@@ -14488,6 +17591,8 @@ internal static class PassiveDriverInputTests
             0,
             settling.Sink.ErrorRecords.Count,
             "settling unscoped no fault");
+
+        StateIdentityFollowsPhase();
     }
 
     private static void AcceptedAndRefusedDirectionOutcomes()
@@ -14520,6 +17625,12 @@ internal static class PassiveDriverInputTests
         Check.Equal(OracleInput.North, second.Input, "north step");
         Check.False(second.Accepted, "refused step");
         Check.False(second.MovementScheduled, "no scheduled movement");
+
+        ValueEqualCapturesSettle();
+        SettlingCandidateBreaksRestartPair();
+        SettlingDeadlineOrderIsExact();
+        StepFailureIsTerminal();
+        StepPrecedesIntermediateReady();
     }
 
     private static void UndoAcceptanceAndRestoreRules()
@@ -14545,37 +17656,1208 @@ internal static class PassiveDriverInputTests
             "hook_order_mismatch",
             outside.Sink.ErrorRecords[0].Code,
             "restore outside Undo");
+
+        ThrownInputHooksBalance();
     }
+
+    private static void ThrownInputHooksBalance()
+    {
+        DriverFixture process = DriverFixture.Ready();
+        HookToken poll = process.Driver.PlayerPollEntered();
+        process.Driver.PhysicalPollReturned(2);
+        HookToken processToken = process.Driver.ProcessInputEntered(
+            process.State, 2, 10.0);
+        Check.True(processToken.Active, "ProcessInput throw token active");
+        process.Driver.ProcessInputThrew(processToken);
+        process.Driver.ProcessInputThrew(processToken);
+        Check.True(
+            ReadPrivateField(process.Driver, "processInput") == null,
+            "ProcessInput throw clears context once");
+        Check.Equal(0, process.Sink.ErrorRecords.Count,
+            "ProcessInput cleanup emits no fault");
+        process.Driver.PlayerPollReturned(poll);
+
+        DriverFixture undo = DriverFixture.Ready();
+        HookToken undoToken = undo.Driver.UndoEntered(
+            undo.State, 10.0);
+        Check.True(undoToken.Active, "Undo throw token active");
+        undo.Driver.UndoThrew(undoToken);
+        undo.Driver.UndoThrew(undoToken);
+        Check.True(
+            ReadPrivateField(undo.Driver, "undoContext") == null,
+            "Undo throw clears context once");
+        Check.Equal(0, undo.Sink.ErrorRecords.Count,
+            "Undo cleanup emits no fault");
+    }
+
+    private static void ScopedInputBeforeInitialFaults()
+    {
+        DriverFixture awaitingGame = DriverFixture.Active();
+        HookToken firstPoll = awaitingGame.Driver.PlayerPollEntered();
+        awaitingGame.Driver.PhysicalPollReturned(0);
+        HookToken firstProcess = awaitingGame.Driver.ProcessInputEntered(
+            awaitingGame.State, 0, 1.0);
+        awaitingGame.Driver.ProcessInputReturned(
+            firstProcess, true, true);
+        awaitingGame.Driver.PlayerPollReturned(firstPoll);
+        ErrorRecord first = awaitingGame.Sink.ErrorRecords[0];
+        Check.Equal("input_before_initial", first.Code,
+            "AwaitGame scoped input code");
+        Check.Equal((int?)0, first.InputIndex,
+            "AwaitGame next input index");
+        Check.Equal((OracleInput?)OracleInput.North, first.Input,
+            "AwaitGame mapped input");
+        Check.Equal(0, first.SettleFrames,
+            "AwaitGame has no settle budget");
+
+        DriverFixture awaitingInitial = DriverFixture.Active();
+        awaitingInitial.Observe(
+            awaitingInitial.State,
+            awaitingInitial.State,
+            1.0,
+            false,
+            ProtocolSamples.InitialCapture);
+        HookToken secondPoll =
+            awaitingInitial.Driver.PlayerPollEntered();
+        awaitingInitial.Driver.PhysicalPollReturned(3);
+        HookToken secondProcess =
+            awaitingInitial.Driver.ProcessInputEntered(
+                awaitingInitial.State, 3, 2.0);
+        awaitingInitial.Driver.ProcessInputReturned(
+            secondProcess, true, true);
+        awaitingInitial.Driver.PlayerPollReturned(secondPoll);
+        ErrorRecord second = awaitingInitial.Sink.ErrorRecords[0];
+        Check.Equal("input_before_initial", second.Code,
+            "AwaitInitialNeutral scoped input code");
+        Check.Equal((OracleInput?)OracleInput.East, second.Input,
+            "AwaitInitialNeutral mapped input");
+        Check.Equal(0, second.SettleFrames,
+            "offending input has no attempt frame override");
+    }
+
+    private static void OverlappingInputRetainsAttempt()
+    {
+        DriverFixture direction = DriverFixture.Ready();
+        direction.OpenDirection(2, true, true, 10.0);
+        HookToken poll = direction.Driver.PlayerPollEntered();
+        direction.Driver.PhysicalPollReturned(0);
+        HookToken process = direction.Driver.ProcessInputEntered(
+            direction.State, 0, 11.0);
+        direction.Driver.ProcessInputReturned(process, true, true);
+        direction.Driver.PlayerPollReturned(poll);
+        ErrorRecord first = direction.Sink.ErrorRecords[0];
+        Check.Equal("overlapping_input", first.Code,
+            "second direction code");
+        Check.Equal((int?)0, first.InputIndex,
+            "pending attempt index wins");
+        Check.Equal((OracleInput?)OracleInput.West, first.Input,
+            "pending attempt input wins");
+        Check.Equal(0, first.SettleFrames,
+            "no update committed yet");
+
+        DriverFixture undo = DriverFixture.Ready();
+        undo.OpenDirection(2, true, true, 10.0);
+        HookToken undoToken = undo.Driver.UndoEntered(
+            undo.State, 11.0);
+        undo.Driver.UndoReturned(undoToken, false);
+        Check.Equal("overlapping_input",
+            undo.Sink.ErrorRecords[0].Code,
+            "overlapping Undo code");
+        Check.Equal((OracleInput?)OracleInput.West,
+            undo.Sink.ErrorRecords[0].Input,
+            "Undo cannot replace pending direction");
+    }
+
+    private static void StateIdentityFollowsPhase()
+    {
+        DriverFixture manual = DriverFixture.Ready();
+        HookToken poll = manual.Driver.PlayerPollEntered();
+        manual.Driver.PhysicalPollReturned(2);
+        HookToken process = manual.Driver.ProcessInputEntered(
+            manual.OtherState, 2, 10.0);
+        manual.Driver.ProcessInputReturned(process, true, true);
+        manual.Driver.PlayerPollReturned(poll);
+        ErrorRecord manualError = manual.Sink.ErrorRecords[0];
+        Check.Equal("state_replaced", manualError.Code,
+            "attempt must open on stable reference");
+        Check.False(manualError.InputIndex.HasValue,
+            "rejected attempt never becomes pending");
+
+        DriverFixture ready = DriverFixture.Ready();
+        FakeUpdateObservation readyObservation = ready.Observe(
+            ready.State,
+            true,
+            ready.OtherState,
+            true,
+            10.0,
+            true,
+            ProtocolSamples.MovedCapture);
+        Check.Equal("state_replaced", ready.Sink.ErrorRecords[0].Code,
+            "Ready re-read identity");
+        Check.Equal(0, readyObservation.GateCalls,
+            "Ready replacement faults before gate");
+
+        DriverFixture settling = DriverFixture.Ready();
+        settling.OpenDirection(2, true, true, 10.0);
+        FakeUpdateObservation settlingObservation = settling.Observe(
+            settling.State,
+            true,
+            settling.OtherState,
+            true,
+            11.0,
+            true,
+            ProtocolSamples.MovedCapture);
+        ErrorRecord settlingError = settling.Sink.ErrorRecords[0];
+        Check.Equal("state_replaced", settlingError.Code,
+            "Settling re-read identity");
+        Check.Equal((OracleInput?)OracleInput.West,
+            settlingError.Input,
+            "Settling replacement retains pending input");
+        Check.Equal(1, settlingError.SettleFrames,
+            "Settling replacement retains committed frame");
+        Check.Equal(0, settlingObservation.GateCalls,
+            "Settling replacement faults before gate");
+    }
+
+    private static void ValueEqualCapturesSettle()
+    {
+        DriverFixture fixture = DriverFixture.Ready();
+        fixture.OpenDirection(2, true, true, 10.0);
+        fixture.Neutral();
+        CaptureRecord first = ProtocolSamples.Capture("equal-attempt");
+        CaptureRecord equal = ProtocolSamples.Capture("equal-attempt");
+        Check.False(Object.ReferenceEquals(first, equal),
+            "fixture captures are distinct objects");
+        fixture.Observe(fixture.State, fixture.State, 11.0, true, first);
+        Check.Equal(0, fixture.Sink.StepRecords.Count,
+            "first value is only a candidate");
+        fixture.Observe(fixture.State, fixture.State, 12.0, true, equal);
+        Check.Equal(1, fixture.Sink.StepRecords.Count,
+            "equal complete value settles");
+        Check.Same(equal, fixture.Sink.StepRecords[0].Capture,
+            "newest matching capture is written");
+        Check.Equal(2, fixture.Sink.StepRecords[0].SettleFrames,
+            "two distinct update samples");
+    }
+
+    private static void SettlingCandidateBreaksRestartPair()
+    {
+        CaptureRecord first = ProtocolSamples.Capture("pair-a");
+        CaptureRecord second = ProtocolSamples.Capture("pair-b");
+
+        DriverFixture notInspectedControl = DriverFixture.Ready();
+        notInspectedControl.OpenDirection(2, true, true, 10.0);
+        notInspectedControl.Neutral();
+        notInspectedControl.Observe(
+            notInspectedControl.State,
+            notInspectedControl.State,
+            11.0,
+            true,
+            ProtocolSamples.Capture("not-inspected-control"));
+        notInspectedControl.Observe(
+            notInspectedControl.State,
+            notInspectedControl.State,
+            12.0,
+            true,
+            ProtocolSamples.Capture("not-inspected-control"));
+        Check.Equal(1, notInspectedControl.Sink.StepRecords.Count,
+            "control settles without defensive neutral change");
+
+        DriverFixture notInspected = DriverFixture.Ready();
+        notInspected.OpenDirection(2, true, true, 10.0);
+        notInspected.Neutral();
+        notInspected.Observe(
+            notInspected.State,
+            notInspected.State,
+            11.0,
+            true,
+            ProtocolSamples.Capture("not-inspected-value"));
+        notInspected.SetNeutralSeenForDefensiveTest(false);
+        FakeUpdateObservation skipped = notInspected.Observe(
+            notInspected.State,
+            notInspected.State,
+            12.0,
+            true,
+            ProtocolSamples.Capture("not-inspected-value"));
+        Check.Equal(0, skipped.GateCalls,
+            "settling NotInspected skips gate");
+        Check.Equal(0, skipped.CaptureCalls,
+            "settling NotInspected skips capture");
+        notInspected.Neutral();
+        notInspected.Observe(
+            notInspected.State,
+            notInspected.State,
+            13.0,
+            true,
+            ProtocolSamples.Capture("not-inspected-value"));
+        Check.Equal(0, notInspected.Sink.StepRecords.Count,
+            "settling NotInspected clears candidate");
+        notInspected.Observe(
+            notInspected.State,
+            notInspected.State,
+            14.0,
+            true,
+            ProtocolSamples.Capture("not-inspected-value"));
+        Check.Equal(1, notInspected.Sink.StepRecords.Count,
+            "fresh pair settles after NotInspected");
+
+        DriverFixture unequal = DriverFixture.Ready();
+        unequal.OpenDirection(2, true, true, 10.0);
+        unequal.Neutral();
+        unequal.Observe(unequal.State, unequal.State, 11.0, true, first);
+        unequal.Observe(unequal.State, unequal.State, 12.0, true, second);
+        Check.Equal(0, unequal.Sink.StepRecords.Count,
+            "unequal capture replaces candidate");
+        unequal.Observe(unequal.State, unequal.State, 13.0, true,
+            ProtocolSamples.Capture("pair-b"));
+        Check.Equal(1, unequal.Sink.StepRecords.Count,
+            "replacement candidate needs its own match");
+        Check.Equal(3, unequal.Sink.StepRecords[0].SettleFrames,
+            "unequal sample remains a committed frame");
+
+        DriverFixture nonquiescent = DriverFixture.Ready();
+        nonquiescent.OpenDirection(2, true, true, 10.0);
+        nonquiescent.Neutral();
+        nonquiescent.Observe(
+            nonquiescent.State, nonquiescent.State, 11.0, true, first);
+        nonquiescent.Observe(
+            nonquiescent.State, nonquiescent.State, 12.0, false, first);
+        nonquiescent.Observe(
+            nonquiescent.State, nonquiescent.State, 13.0, true, first);
+        Check.Equal(0, nonquiescent.Sink.StepRecords.Count,
+            "nonquiescent sample clears candidate");
+        nonquiescent.Observe(
+            nonquiescent.State, nonquiescent.State, 14.0, true, first);
+        Check.Equal(1, nonquiescent.Sink.StepRecords.Count,
+            "post-break pair settles");
+
+        DriverFixture cardinal = DriverFixture.Ready();
+        cardinal.OpenDirection(2, true, true, 10.0);
+        cardinal.Neutral();
+        cardinal.Observe(cardinal.State, cardinal.State, 11.0, true, first);
+        cardinal.CardinalOnly(0);
+        cardinal.Neutral();
+        cardinal.Observe(cardinal.State, cardinal.State, 12.0, true, first);
+        Check.Equal(0, cardinal.Sink.StepRecords.Count,
+            "cardinal poll clears candidate");
+        cardinal.Observe(cardinal.State, cardinal.State, 13.0, true, first);
+        Check.Equal(1, cardinal.Sink.StepRecords.Count,
+            "new neutral pair settles");
+    }
+
+    private static void SettlingDeadlineOrderIsExact()
+    {
+        CaptureRecord capture = ProtocolSamples.Capture("deadline");
+
+        DriverFixture exactFrame = DriverFixture.Active(3, 30.0);
+        ReadyForCustomBudget(exactFrame);
+        exactFrame.OpenDirection(2, true, true, 10.0);
+        exactFrame.Observe(
+            exactFrame.State, exactFrame.State, 10.5, true, capture);
+        exactFrame.Neutral();
+        exactFrame.Observe(
+            exactFrame.State, exactFrame.State, 11.0, true, capture);
+        exactFrame.Observe(
+            exactFrame.State, exactFrame.State, 12.0, true,
+            ProtocolSamples.Capture("deadline"));
+        Check.Equal(1, exactFrame.Sink.StepRecords.Count,
+            "matching pair wins on frame cap");
+        Check.Equal(3, exactFrame.Sink.StepRecords[0].SettleFrames,
+            "frame cap is included");
+
+        DriverFixture exactTime = DriverFixture.Ready();
+        exactTime.OpenDirection(2, true, true, 10.0);
+        exactTime.Neutral();
+        exactTime.Observe(
+            exactTime.State, exactTime.State, 39.0, true, capture);
+        exactTime.Observe(
+            exactTime.State, exactTime.State, 40.0, true,
+            ProtocolSamples.Capture("deadline"));
+        Check.Equal(1, exactTime.Sink.StepRecords.Count,
+            "matching pair wins at exact time deadline");
+
+        DriverFixture exactTimeFailure = DriverFixture.Ready();
+        exactTimeFailure.OpenDirection(2, true, true, 10.0);
+        exactTimeFailure.Neutral();
+        exactTimeFailure.Observe(
+            exactTimeFailure.State,
+            exactTimeFailure.State,
+            39.0,
+            true,
+            ProtocolSamples.Capture("time-deadline-a"));
+        CaptureRecord timeDeadlineLast =
+            ProtocolSamples.Capture("time-deadline-b");
+        FakeUpdateObservation exactTimeFailureObservation =
+            exactTimeFailure.Observe(
+                exactTimeFailure.State,
+                exactTimeFailure.State,
+                40.0,
+                true,
+                timeDeadlineLast);
+        Check.Equal(1, exactTimeFailure.Sink.ErrorRecords.Count,
+            "unmatched exact time deadline emits one Error");
+        ErrorRecord exactTimeError =
+            exactTimeFailure.Sink.ErrorRecords[0];
+        Check.Equal("settle_timeout", exactTimeError.Code,
+            "unmatched exact time deadline faults after sample");
+        Check.Equal(2, exactTimeError.SettleFrames,
+            "exact time deadline keeps committed frame count");
+        Check.Same(timeDeadlineLast, exactTimeError.LastCapture,
+            "exact time deadline retains sampled capture");
+        Check.Equal(1, exactTimeFailureObservation.CaptureCalls,
+            "exact time deadline is sampled before failure");
+
+        DriverFixture postSample = DriverFixture.Active(3, 30.0);
+        ReadyForCustomBudget(postSample);
+        postSample.OpenDirection(2, true, true, 10.0);
+        postSample.Neutral();
+        postSample.Observe(
+            postSample.State, postSample.State, 11.0, true, capture);
+        CaptureRecord middle = ProtocolSamples.Capture("deadline-middle");
+        postSample.Observe(
+            postSample.State, postSample.State, 12.0, true, middle);
+        CaptureRecord last = ProtocolSamples.Capture("deadline-final");
+        FakeUpdateObservation lastObservation = postSample.Observe(
+            postSample.State, postSample.State, 13.0, true, last);
+        Check.Equal(1, postSample.Sink.ErrorRecords.Count,
+            "unmatched frame cap emits one Error");
+        ErrorRecord postSampleError = postSample.Sink.ErrorRecords[0];
+        Check.Equal("settle_timeout", postSampleError.Code,
+            "unmatched cap faults after sample");
+        Check.Equal(3, postSampleError.SettleFrames,
+            "post-sample cap frame count");
+        Check.Same(last, postSampleError.LastCapture,
+            "cap sample becomes last_capture");
+        Check.Equal(1, lastObservation.CaptureCalls,
+            "cap update was sampled");
+
+        DriverFixture preOverrun = DriverFixture.Ready();
+        preOverrun.OpenDirection(2, true, true, 10.0);
+        preOverrun.Neutral();
+        FakeUpdateObservation overrunObservation = preOverrun.Observe(
+            preOverrun.State,
+            preOverrun.State,
+            40.0001,
+            true,
+            capture);
+        Check.Equal(1, preOverrun.Sink.ErrorRecords.Count,
+            "time overrun emits one Error");
+        ErrorRecord overrun = preOverrun.Sink.ErrorRecords[0];
+        Check.Equal("settle_timeout", overrun.Code,
+            "time overrun faults before sample");
+        Check.Equal(1, overrun.SettleFrames,
+            "pre-overrun reports bounded next frame");
+        Check.Equal(0, overrunObservation.PathCalls,
+            "pre-overrun precedes save-path verification");
+        Check.Equal(0, overrunObservation.CaptureCalls,
+            "pre-overrun precedes capture");
+
+        DriverFixture capped = DriverFixture.Ready();
+        capped.OpenDirection(2, true, true, 10.0);
+        capped.SetCurrentFramesForDefensiveTest(600);
+        FakeUpdateObservation cappedObservation = capped.Observe(
+            capped.State, capped.State, 11.0, true, capture);
+        Check.Equal(1, capped.Sink.ErrorRecords.Count,
+            "frame overrun emits one Error");
+        Check.Equal("settle_timeout",
+            capped.Sink.ErrorRecords[0].Code,
+            "frame overrun code");
+        Check.Equal(600, capped.Sink.ErrorRecords[0].SettleFrames,
+            "frame overrun is capped at protocol maximum");
+        Check.Equal(0, cappedObservation.PathCalls,
+            "capped overrun is pre-sample");
+        Check.Equal(0, cappedObservation.CaptureCalls,
+            "capped overrun never captures");
+    }
+
+    private static void StepFailureIsTerminal()
+    {
+        DriverFixture fixture = DriverFixture.Ready();
+        fixture.Sink.StepFailure = new TraceIoException("step");
+        fixture.OpenDirection(2, true, true, 10.0);
+        fixture.SettleCurrent(ProtocolSamples.MovedCapture, 11.0);
+        Check.Equal(PassivePhase.Faulted, fixture.Driver.Phase,
+            "Step I/O failure faults");
+        Check.Equal(1, fixture.Sink.StepCalls, "one Step attempt");
+        Check.Equal(0, fixture.Sink.StepRecords.Count,
+            "failed Step is not claimed durable");
+        Check.Equal(0, fixture.Sink.ErrorRecords.Count,
+            "Step I/O failure cannot claim Error durability");
+        Check.Equal(1, fixture.Sink.CloseCalls, "sink closed once");
+        Check.Equal(1, fixture.Reporter.FailedCodes.Count,
+            "one trace I/O marker");
+        Check.Equal("trace_io_failed",
+            fixture.Reporter.FailedCodes[0],
+            "trace I/O marker");
+        int tail = fixture.Events.Count - 3;
+        Check.Sequence(
+            new string[]
+            {
+                "sink:step:0",
+                "sink:close",
+                "report:failed:trace_io_failed"
+            },
+            fixture.Events.GetRange(tail, 3).ToArray(),
+            "Step failure order");
+    }
+
+    private static void StepPrecedesIntermediateReady()
+    {
+        DriverFixture fixture = DriverFixture.Ready();
+        fixture.OpenDirection(2, true, true, 10.0);
+        fixture.SettleCurrent(ProtocolSamples.MovedCapture, 11.0);
+        Check.Equal(PassivePhase.Ready, fixture.Driver.Phase,
+            "step returns to Ready");
+        Check.Equal(2, fixture.Reporter.ReadyValues.Count,
+            "initial and progress markers");
+        Check.Equal(1, fixture.Reporter.ReadyValues[1],
+            "first completed input count");
+        int tail = fixture.Events.Count - 2;
+        Check.Sequence(
+            new string[] { "sink:step:0", "report:ready:1/3" },
+            fixture.Events.GetRange(tail, 2).ToArray(),
+            "durable Step precedes progress marker");
+
+        DriverFixture failure = DriverFixture.Ready();
+        failure.Reporter.ReadyFailure =
+            new InvalidOperationException("ready marker");
+        failure.OpenDirection(2, true, true, 10.0);
+        failure.SettleCurrent(ProtocolSamples.MovedCapture, 11.0);
+        Check.Equal(1, failure.Sink.StepRecords.Count,
+            "Step remains durable when Ready fails");
+        Check.Equal("observer_exception",
+            failure.Sink.ErrorRecords[0].Code,
+            "Ready exception is observed");
+        Check.True(failure.Sink.ErrorRecords[0].LastCapture == null,
+            "completed epoch capture is cleared before marker");
+        Check.Sequence(
+            new string[]
+            {
+                "sink:step:0",
+                "report:ready:1/3",
+                "sink:error:observer_exception",
+                "sink:close",
+                "report:failed:observer_exception"
+            },
+            failure.Events.GetRange(
+                failure.Events.Count - 5, 5).ToArray(),
+            "progress failure ordering");
+    }
+
+    private static void ReadyForCustomBudget(DriverFixture fixture)
+    {
+        fixture.Observe(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            1.0,
+            true,
+            ProtocolSamples.Capture("custom-ready-a"));
+        fixture.Neutral();
+        fixture.Observe(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            2.0,
+            true,
+            ProtocolSamples.Capture("custom-ready-pair"));
+        fixture.Observe(
+            fixture.State,
+            true,
+            fixture.State,
+            true,
+            3.0,
+            true,
+            ProtocolSamples.Capture("custom-ready-pair"));
+        Check.Equal(PassivePhase.Ready, fixture.Driver.Phase,
+            "custom-budget ready fixture");
+    }
+
+    private static object ReadPrivateField(
+        PassiveDriver driver,
+        string name)
+    {
+        FieldInfo field = typeof(PassiveDriver).GetField(
+            name,
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Check.True(field != null, name + " reflection seam");
+        Check.Same(typeof(PassiveDriver), field.DeclaringType,
+            name + " declaring type");
+        Check.True(field.IsPrivate, name + " is private");
+        return field.GetValue(driver);
+    }
+
 }
 ~~~
 
-Register PassiveDriverInputTests after PassiveDriverInitialTests. The
-cumulative manifest is exactly:
+Replace Program.cs with this exact cumulative body:
 
 ~~~csharp
-tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+using System;
+using System.Collections.Generic;
+
+internal static class Program
 {
-    { "protocol", 4 },
-    { "encoding", 5 },
-    { "sink", 6 },
-    { "driver-boundary", 2 },
-    { "driver-initial", 8 },
-    { "driver-input", 6 }
-});
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        PassiveDriverBoundaryTests.Register(tests);
+        PassiveDriverInitialTests.Register(tests);
+        PassiveDriverInputTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 },
+            { "driver-boundary", 2 },
+            { "driver-initial", 8 },
+            { "driver-input", 6 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
+}
 ~~~
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run the intended RED**
 
 ~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run --project oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore -- --cohort driver-input
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+check_hash() {
+  test "$(shasum -a 256 "$1" | awk '{print $1}')" = "$2"
+}
+verify_red_tree() {
+  check_hash oracle/plugin/Core/PassiveDriverBoundaries.cs 1a130383302b315f43f8643fab5c13ec8d643727c2095ca21929aac306cdf133
+  check_hash oracle/plugin/Core/PassiveDriver.cs 0ab8b9dfb537577fb052e6e5dab2ca744bc08cfb92206e44fd00e4552cee56a6
+  check_hash oracle/plugin/tests/PassiveDriverInitialTests.cs a05040c236bf467aabcbb65e3b7d2d1f205bcb97f354243651a60dcf229f082b
+  check_hash oracle/plugin/tests/PassiveDriverTestSupport.cs 8b04688d264e5e3aebd36f635e07c120395c9b545790c8eb02a594c0059952f5
+  check_hash oracle/plugin/tests/PassiveDriverInputTests.cs 2d3ead30d16c0e42c10c2b3b2a74d7957024a3f5bb962221ca0cf2ef17b7d970
+  check_hash oracle/plugin/tests/Program.cs 40a4801b6ce166c67d9cd098525a68ec910e237c22c02f554491f61c089dab8c
+  test ! -e oracle/plugin/Core/PassiveDriverInput.cs
+  test -z "$(git diff --cached --name-only)"
+  test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+    'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+    'oracle/plugin/tests/Program.cs')"
+  test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = \
+    "oracle/plugin/tests/PassiveDriverInputTests.cs"
+  test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = \
+    "$(printf '%s\n' \
+      ' M oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+      ' M oracle/plugin/tests/Program.cs' \
+      '?? oracle/plugin/tests/PassiveDriverInputTests.cs')"
+  git diff --check
+}
+count_error_symbol() {
+  printf '%s\n' "$error_lines" | awk -v needle="'$1'" \
+    'index($0, needle) != 0 { count++ } END { print count + 0 }'
+}
+
+verify_red_tree
+set +e
+red_output="$("$dotnet_bin" build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --nologo -warnaserror -t:Rebuild -m:1 \
+  -p:UseSharedCompilation=false 2>&1)"
+red_status=$?
+set -e
+printf '%s\n' "$red_output"
+test "$red_status" = "1"
+case "$red_output" in
+  *"Build FAILED."*) ;;
+  *) exit 1 ;;
+esac
+test "$(printf '%s\n' "$red_output" | awk \
+  '/^[[:space:]]*0 Warning[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+test "$(printf '%s\n' "$red_output" | awk \
+  '/^[[:space:]]*37 Error[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+error_lines="$(printf '%s\n' "$red_output" | awk \
+  'index($0, ": error ") != 0 { print }')"
+test "$(printf '%s\n' "$error_lines" | awk \
+  'NF != 0 { count++ } END { print count + 0 }')" = "74"
+error_codes="$(printf '%s\n' "$error_lines" | sed -E -n \
+  's#^.*: error ([A-Z]+[0-9]+):.*#\1#p')"
+test "$(printf '%s\n' "$error_codes" | awk \
+  'NF != 0 { count++ } END { print count + 0 }')" = "74"
+test "$(printf '%s\n' "$error_codes" | LC_ALL=C sort -u)" = "CS1061"
+test "$(count_error_symbol PendingAccepted)" = "8"
+test "$(count_error_symbol PendingInput)" = "4"
+test "$(count_error_symbol PendingMovementScheduled)" = "6"
+test "$(count_error_symbol ProcessInputEntered)" = "20"
+test "$(count_error_symbol ProcessInputReturned)" = "14"
+test "$(count_error_symbol ProcessInputThrew)" = "4"
+test "$(count_error_symbol RestoreObserved)" = "4"
+test "$(count_error_symbol UndoEntered)" = "6"
+test "$(count_error_symbol UndoReturned)" = "4"
+test "$(count_error_symbol UndoThrew)" = "4"
+case "$red_output" in
+  *": warning "*|*"warning CS"*|*"error MSB"*|*"NETSDK"*|\
+  *"assets file"*|*"SDK"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|\
+  *"NU1"*|*"package"*|*"Package"*|*"restore"*|\
+  *"No such file or directory"*|*"Segmentation fault"*|*"Killed"*) exit 1 ;;
+esac
+verify_red_tree
 ~~~
 
-Require a compiler diagnostic naming ProcessInputEntered. Fixture, SDK, and
-assets failures are not the intended RED.
+Require compiler diagnostics that name the missing ProcessInputEntered,
+ProcessInputReturned, and Undo hooks. Fixture, SDK, restore/assets, or
+unrelated compiler failures are not the intended RED.
 
-- [ ] **Step 3: Implement the complete direction and Undo partial**
+- [ ] **Step 3: Apply the complete scope-pure production change**
 
-Create PassiveDriverInput.cs exactly:
+Apply this complete patch to the exact Task 4.2 PassiveDriver.cs. It is the
+entire Task 5.1 delta, including completedInputs, attempt/Step machinery,
+stable-state identity, settling gates/deadlines, Error field precedence, and
+the partial-class conversion. It intentionally does not store
+expectedInputCount and does not add UTC or terminal plumbing:
+
+~~~diff
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -1,7 +1,7 @@
+ using System;
+ using System.Threading;
+
+-internal sealed class PassiveDriver : IDisposable
++internal sealed partial class PassiveDriver : IDisposable
+ {
+     private static readonly string[] RecordErrorCodes =
+         new string[]
+@@ -26,10 +26,15 @@
+     {
+         internal long Id;
+         internal bool SawPhysicalPoll;
++        internal int RawDirection;
++        internal bool SawManualProcessInput;
+     }
+
+     private struct FaultRequest
+     {
++        internal bool HasOffendingInput;
++        internal int? OffendingIndex;
++        internal OracleInput? OffendingInput;
+         internal int? FrameOverride;
+
+         internal static FaultRequest Derived()
+@@ -43,6 +48,17 @@
+             value.FrameOverride = frames;
+             return value;
+         }
++
++        internal static FaultRequest Offending(
++            int index,
++            OracleInput? input)
++        {
++            FaultRequest value = new FaultRequest();
++            value.HasOffendingInput = true;
++            value.OffendingIndex = index;
++            value.OffendingInput = input;
++            return value;
++        }
+     }
+
+     private readonly ITraceSink sink;
+@@ -61,17 +77,27 @@
+
+     private string runId;
+     private DateTime startedAtUtc;
++    private int completedInputs;
+     private long nextHookId;
+     private long nextUpdateId;
+     private long epoch;
+     private UpdateDirective outstandingUpdate;
+
+     private object epochState;
++    private object stableState;
+     private double epochStartedAt;
+     private int currentFrames;
+     private bool neutralSeen;
+     private byte[] candidateSignature;
+     private CaptureRecord lastCapture;
++
++    private bool attemptPending;
++    private bool attemptOutcomeKnown;
++    private OracleInput attemptInput;
++    private bool attemptAccepted;
++    private bool attemptMovementScheduled;
++    private object attemptState;
++
+     private PlayerPollContext playerPoll;
+
+     internal PassiveDriver(
+@@ -120,9 +146,45 @@
+         get { return startedAtUtc; }
+     }
+
++    internal OracleInput PendingInput
++    {
++        get
++        {
++            if (!attemptPending)
++                throw new InvalidOperationException("no pending attempt");
++            return attemptInput;
++        }
++    }
++
++    internal bool PendingAccepted
++    {
++        get
++        {
++            if (!attemptOutcomeKnown)
++            {
++                throw new InvalidOperationException(
++                    "attempt outcome is unavailable");
++            }
++            return attemptAccepted;
++        }
++    }
++
++    internal bool PendingMovementScheduled
++    {
++        get
++        {
++            if (!attemptOutcomeKnown)
++            {
++                throw new InvalidOperationException(
++                    "attempt outcome is unavailable");
++            }
++            return attemptMovementScheduled;
++        }
++    }
++
+     internal bool UpdateObservationActive
+     {
+-        get { return IsInitialObservationActive(); }
++        get { return IsObservationActive(); }
+     }
+
+     internal bool Prepare(RunRecord run)
+@@ -176,7 +238,7 @@
+         bool usableGame,
+         double nowSeconds)
+     {
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+             return UpdateDirective.Inactive(this);
+         if (!IsValidMonotonic(nowSeconds))
+         {
+@@ -204,7 +266,8 @@
+         int settleFrames = 0;
+         bool inspectGate = false;
+         bool timeoutAfterSample = false;
+-        if (phase == PassivePhase.AwaitInitialNeutral)
++        if (phase == PassivePhase.AwaitInitialNeutral
++            || phase == PassivePhase.Settling)
+         {
+             if (nowSeconds < epochStartedAt)
+             {
+@@ -217,8 +280,12 @@
+             if (nextFrames > maxSettleFrames
+                 || elapsed > maxSettleSeconds)
+             {
++                string code =
++                    phase == PassivePhase.AwaitInitialNeutral
++                    ? "initial_settle_timeout"
++                    : "settle_timeout";
+                 TryFaultInternal(
+-                    "initial_settle_timeout",
++                    code,
+                     FaultRequest.DerivedWithFrames(
+                         Math.Min(nextFrames, maxSettleFrames)));
+                 return UpdateDirective.Inactive(this);
+@@ -261,7 +328,7 @@
+                 "hook_order_mismatch", FaultRequest.Derived());
+             return false;
+         }
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+         {
+             ConsumeAuthorizedDirective(directive);
+             return false;
+@@ -316,8 +383,20 @@
+             return true;
+         }
+
+-        ConsumeAuthorizedDirective(directive);
+-        return false;
++        object expectedState =
++            phase == PassivePhase.Settling
++            ? attemptState
++            : stableState;
++        if (!usableGame
++            || stateReference == null
++            || !Object.ReferenceEquals(expectedState, stateReference))
++        {
++            ConsumeAuthorizedDirective(directive);
++            TryFaultInternal(
++                "state_replaced", FaultRequest.Derived());
++            return false;
++        }
++        return true;
+     }
+
+     internal void CompleteUpdate(
+@@ -337,7 +416,7 @@
+                 "update directive is not outstanding");
+         }
+         outstandingUpdate = null;
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+             return;
+         if (directive.Epoch != epoch)
+         {
+@@ -400,7 +479,7 @@
+
+     internal HookToken PlayerPollEntered()
+     {
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+             return HookToken.Inert(HookKind.PlayerPoll);
+         if (playerPoll != null)
+         {
+@@ -415,7 +494,7 @@
+
+     internal void PhysicalPollReturned(int rawDirection)
+     {
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+             return;
+         if (playerPoll == null || playerPoll.SawPhysicalPoll)
+         {
+@@ -424,22 +503,34 @@
+             return;
+         }
+         playerPoll.SawPhysicalPoll = true;
++        playerPoll.RawDirection = rawDirection;
+         if (rawDirection == 8)
+         {
+-            if (phase == PassivePhase.AwaitInitialNeutral)
++            if (phase == PassivePhase.AwaitInitialNeutral
++                || phase == PassivePhase.Settling)
++            {
+                 neutralSeen = true;
++            }
+             return;
+         }
+-        if (phase == PassivePhase.AwaitInitialNeutral)
++        if (phase == PassivePhase.AwaitInitialNeutral
++            || phase == PassivePhase.Settling)
+         {
+             neutralSeen = false;
+             candidateSignature = null;
+         }
++        OracleInput ignored;
++        if (!TryMapCardinal(rawDirection, out ignored))
++        {
++            TryFaultInternal(
++                "unexpected_input",
++                FaultRequest.Offending(completedInputs, null));
++        }
+     }
+
+     internal void PlayerPollReturned(HookToken token)
+     {
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+         {
+             ConsumeLateToken(token, HookKind.PlayerPoll);
+             return;
+@@ -457,7 +548,7 @@
+
+     internal void PlayerPollThrew(HookToken token)
+     {
+-        if (!IsInitialObservationActive())
++        if (!IsObservationActive())
+         {
+             ConsumeLateToken(token, HookKind.PlayerPoll);
+             return;
+@@ -501,14 +592,16 @@
+     {
+         if (sample == null)
+             throw new ArgumentNullException("sample");
+-        if (phase == PassivePhase.AwaitGame)
++        if (phase == PassivePhase.AwaitGame
++            || phase == PassivePhase.Ready)
+         {
+             if (sample.Kind != GateSampleKind.NotInspected)
+                 throw new InvalidOperationException(
+                     "gate inspected without an active epoch");
+             return;
+         }
+-        if (phase != PassivePhase.AwaitInitialNeutral)
++        if (phase != PassivePhase.AwaitInitialNeutral
++            && phase != PassivePhase.Settling)
+             return;
+
+         if (sample.Kind == GateSampleKind.NotInspected)
+@@ -535,7 +628,16 @@
+             if (candidateSignature != null
+                 && SameBytes(candidateSignature, signature))
+             {
+-                EmitInitial(sample.Capture);
++                if (phase == PassivePhase.AwaitInitialNeutral)
++                {
++                    EmitInitial(sample.Capture);
++                }
++                else
++                {
++                    EmitSettledAttempt(
++                        sample.Capture,
++                        directive.SettleFrames);
++                }
+                 return;
+             }
+             candidateSignature = signature;
+@@ -548,7 +650,9 @@
+         if (directive.TimeoutAfterSample)
+         {
+             TryFaultInternal(
+-                "initial_settle_timeout",
++                phase == PassivePhase.AwaitInitialNeutral
++                    ? "initial_settle_timeout"
++                    : "settle_timeout",
+                 FaultRequest.Derived());
+         }
+     }
+@@ -560,8 +664,8 @@
+             CanonicalJson.EncodeError(
+                 new ErrorRecord(
+                     runId,
+-                    null,
+-                    null,
++                    Int32.MaxValue,
++                    OracleInput.North,
+                     RecordErrorCodes[index],
+                     OracleProtocol.MaxSettleFrames,
+                     capture));
+@@ -574,6 +678,7 @@
+     private void EmitInitial(CaptureRecord capture)
+     {
+         sink.WriteInitial(new InitialRecord(runId, capture));
++        stableState = epochState;
+         phase = PassivePhase.Ready;
+         currentFrames = 0;
+         neutralSeen = false;
+@@ -590,6 +695,58 @@
+         }
+     }
+
++    private bool HandleManualAttempt(
++        OracleInput input,
++        object stateReference,
++        double nowSeconds)
++    {
++        if (!IsValidMonotonic(nowSeconds))
++        {
++            TryFaultInternal(
++                "observer_exception", FaultRequest.Derived());
++            return false;
++        }
++        if (phase == PassivePhase.AwaitGame
++            || phase == PassivePhase.AwaitInitialNeutral)
++        {
++            TryFaultInternal(
++                "input_before_initial",
++                FaultRequest.Offending(completedInputs, input));
++            return false;
++        }
++        if (phase == PassivePhase.Settling)
++        {
++            TryFaultInternal(
++                "overlapping_input", FaultRequest.Derived());
++            return false;
++        }
++        if (phase != PassivePhase.Ready)
++            return false;
++        if (stateReference == null
++            || !Object.ReferenceEquals(stableState, stateReference))
++        {
++            TryFaultInternal(
++                "state_replaced", FaultRequest.Derived());
++            return false;
++        }
++
++        epoch++;
++        phase = PassivePhase.Settling;
++        epochState = stateReference;
++        epochStartedAt = nowSeconds;
++        currentFrames = 0;
++        neutralSeen = false;
++        candidateSignature = null;
++        lastCapture = null;
++        attemptPending = true;
++        attemptOutcomeKnown = false;
++        attemptInput = input;
++        attemptAccepted = false;
++        attemptMovementScheduled = false;
++        attemptState = stateReference;
++        return true;
++    }
++
+     private void StartInitialEpoch(
+         object stateReference,
+         double nowSeconds,
+@@ -603,6 +760,7 @@
+         neutralSeen = false;
+         candidateSignature = null;
+         lastCapture = null;
++        ClearAttemptFields();
+     }
+
+     private void ResetToAwaitGame()
+@@ -614,8 +772,29 @@
+         neutralSeen = false;
+         candidateSignature = null;
+         lastCapture = null;
++        ClearAttemptFields();
++    }
++
++    private void ClearAttemptAfterStep()
++    {
++        phase = PassivePhase.Ready;
++        currentFrames = 0;
++        neutralSeen = false;
++        candidateSignature = null;
++        epochState = stableState;
++        ClearAttemptFields();
+     }
+
++    private void ClearAttemptFields()
++    {
++        attemptPending = false;
++        attemptOutcomeKnown = false;
++        attemptInput = OracleInput.North;
++        attemptAccepted = false;
++        attemptMovementScheduled = false;
++        attemptState = null;
++    }
++
+     private void ConsumeAuthorizedDirective(UpdateDirective directive)
+     {
+         if (!directive.TryComplete())
+@@ -740,9 +919,31 @@
+         FaultRequest request,
+         PassivePhase faultPhase)
+     {
++        int? inputIndex;
++        OracleInput? input;
++        if (attemptPending)
++        {
++            inputIndex = completedInputs;
++            input = attemptInput;
++        }
++        else if (request.HasOffendingInput)
++        {
++            inputIndex = request.OffendingIndex;
++            input = request.OffendingInput;
++        }
++        else
++        {
++            inputIndex = null;
++            input = null;
++        }
++
+         int frames;
+         if (request.FrameOverride.HasValue)
+             frames = request.FrameOverride.Value;
++        else if (attemptPending)
++            frames = currentFrames;
++        else if (request.HasOffendingInput)
++            frames = 0;
+         else if (faultPhase == PassivePhase.AwaitInitialNeutral)
+             frames = currentFrames;
+         else
+@@ -750,8 +951,8 @@
+
+         return new ErrorRecord(
+             runId,
+-            null,
+-            null,
++            inputIndex,
++            input,
+             code,
+             frames,
+             lastCapture);
+@@ -820,14 +1021,16 @@
+         }
+     }
+
+-    private bool IsInitialObservationActive()
++    private bool IsObservationActive()
+     {
+         return Read(ref prepared) != 0
+             && Read(ref disabled) == 0
+             && Read(ref disposed) == 0
+             && !TerminalSelected()
+             && (phase == PassivePhase.AwaitGame
+-                || phase == PassivePhase.AwaitInitialNeutral);
++                || phase == PassivePhase.AwaitInitialNeutral
++                || phase == PassivePhase.Ready
++                || phase == PassivePhase.Settling);
+     }
+
+     private bool TerminalSelected()
+@@ -847,6 +1050,30 @@
+             && !Double.IsInfinity(value);
+     }
+
++    private static bool TryMapCardinal(
++        int rawDirection,
++        out OracleInput input)
++    {
++        switch (rawDirection)
++        {
++            case 0:
++                input = OracleInput.North;
++                return true;
++            case 1:
++                input = OracleInput.South;
++                return true;
++            case 2:
++                input = OracleInput.West;
++                return true;
++            case 3:
++                input = OracleInput.East;
++                return true;
++            default:
++                input = OracleInput.North;
++                return false;
++        }
++    }
++
+     private static bool SameBytes(byte[] left, byte[] right)
+     {
+         if (left == null
+~~~
+
+Create PassiveDriverInput.cs with this exact complete body:
 
 ~~~csharp
 using System;
@@ -14595,7 +18877,6 @@ internal sealed partial class PassiveDriver
 
     private ProcessInputContext processInput;
     private UndoContext undoContext;
-    private int restartDepth;
 
     internal HookToken ProcessInputEntered(
         object stateReference,
@@ -14696,8 +18977,6 @@ internal sealed partial class PassiveDriver
         object stateReference,
         double nowSeconds)
     {
-        if (restartDepth > 0)
-            return HookToken.Inert(HookKind.Undo);
         if (!IsObservationActive())
             return HookToken.Inert(HookKind.Undo);
         if (undoContext != null)
@@ -14720,7 +18999,7 @@ internal sealed partial class PassiveDriver
 
     internal void RestoreObserved()
     {
-        if (restartDepth > 0 || !IsObservationActive())
+        if (!IsObservationActive())
             return;
         if (undoContext == null || undoContext.RestoreSeen)
         {
@@ -14766,13 +19045,10 @@ internal sealed partial class PassiveDriver
         undoContext = null;
     }
 
-    partial void EmitSettledAttempt(
+    private void EmitSettledAttempt(
         CaptureRecord capture,
-        int settleFrames,
-        DateTime utcNow,
-        ref bool handled)
+        int settleFrames)
     {
-        handled = true;
         if (!attemptPending || !attemptOutcomeKnown)
         {
             throw new InvalidOperationException(
@@ -14794,19 +19070,6 @@ internal sealed partial class PassiveDriver
         ClearAttemptAfterStep();
         lastCapture = null;
 
-        if (completedInputs == expectedInputCount)
-        {
-            bool terminalHandled = false;
-            FinishExpectedInputCount(
-                utcNow, ref terminalHandled);
-            if (!terminalHandled)
-            {
-                throw new InvalidOperationException(
-                    "terminal extension is unavailable");
-            }
-            return;
-        }
-
         try
         {
             reporter.Ready(completedInputs);
@@ -14820,209 +19083,523 @@ internal sealed partial class PassiveDriver
 }
 ~~~
 
-- [ ] **Step 4: Run GREEN and the net35 gate**
+- [ ] **Step 4: Verify GREEN, all checkpoint hashes, and both target frameworks**
 
 ~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run --project oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore -- --cohort driver-input
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build oracle/plugin/tests/SsrOracle.Core.Net35.csproj -c Release --no-restore -warnaserror
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+check_hash() {
+  test "$(shasum -a 256 "$1" | awk '{print $1}')" = "$2"
+}
+check_hash oracle/plugin/Core/PassiveDriver.cs e522a83a0fee68bc44803d2df3b8a9c93b1a679224bc401566dae4f48f4582f9
+check_hash oracle/plugin/Core/PassiveDriverInput.cs f3922ff8db27112f314084a22aa08feff560fa7305b683e33cb36db17ab50eda
+check_hash oracle/plugin/tests/PassiveDriverTestSupport.cs 8b04688d264e5e3aebd36f635e07c120395c9b545790c8eb02a594c0059952f5
+check_hash oracle/plugin/tests/PassiveDriverInputTests.cs 2d3ead30d16c0e42c10c2b3b2a74d7957024a3f5bb962221ca0cf2ef17b7d970
+check_hash oracle/plugin/tests/Program.cs 40a4801b6ce166c67d9cd098525a68ec910e237c22c02f554491f61c089dab8c
+"$dotnet_bin" build oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild
+test "$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build -- \
+  --cohort driver-input)" = 'SSR oracle unit harness ready'
+test "$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build)" = 'SSR oracle unit harness ready'
+"$dotnet_bin" build oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild
 git diff --check
 ~~~
 
-- [ ] **Step 5: Inspect the task diff and commit**
-
-Inspect the full diff, retain it with the task report, and then run exactly:
+- [ ] **Step 5: Inspect exactly the task-owned diff and commit**
 
 ~~~bash
-git diff -- oracle/plugin/Core/PassiveDriverInput.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
-git add oracle/plugin/Core/PassiveDriverInput.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
+set -euo pipefail
+export LC_ALL=C
+task_paths="$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverInput.cs' \
+  'oracle/plugin/tests/PassiveDriverInputTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = \
+  "$(printf '%s\n' \
+    'oracle/plugin/Core/PassiveDriverInput.cs' \
+    'oracle/plugin/tests/PassiveDriverInputTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = \
+  "$(printf '%s\n' \
+    ' M oracle/plugin/Core/PassiveDriver.cs' \
+    ' M oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+    ' M oracle/plugin/tests/Program.cs' \
+    '?? oracle/plugin/Core/PassiveDriverInput.cs' \
+    '?? oracle/plugin/tests/PassiveDriverInputTests.cs')"
+git diff --check
+git add -- \
+  oracle/plugin/Core/PassiveDriver.cs \
+  oracle/plugin/Core/PassiveDriverInput.cs \
+  oracle/plugin/tests/PassiveDriverTestSupport.cs \
+  oracle/plugin/tests/PassiveDriverInputTests.cs \
+  oracle/plugin/tests/Program.cs
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$task_paths"
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+git diff --cached --check
+git diff --cached -- \
+  oracle/plugin/Core/PassiveDriver.cs \
+  oracle/plugin/Core/PassiveDriverInput.cs \
+  oracle/plugin/tests/PassiveDriverTestSupport.cs \
+  oracle/plugin/tests/PassiveDriverInputTests.cs \
+  oracle/plugin/tests/Program.cs
+task_parent="$(git rev-parse HEAD)"
 git commit -m "feat: attribute passive input attempts"
+test "$(git rev-parse HEAD^)" = "$task_parent"
+test "$(git show -s --format=%s HEAD)" = \
+  "feat: attribute passive input attempts"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = \
+  "$task_paths"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --cached --check
+git diff --check
+git diff --check HEAD^ HEAD
 ~~~
 
 #### Task 5.2: Balance restart, state replacement, and thrown hooks
 
-- [ ] **Step 1: Append the final two RED input tests**
+**Goal:** Add only restart suppression/stack balance, state replacement, and
+cross-hook cleanup on top of the exact Task 5.1 checkpoint.
 
 **Files:**
+- Modify: oracle/plugin/Core/PassiveDriver.cs
+- Modify: oracle/plugin/Core/PassiveDriverInput.cs
 - Create: oracle/plugin/Core/PassiveDriverLifecycleHooks.cs
 - Modify: oracle/plugin/tests/PassiveDriverInputTests.cs
 - Modify: oracle/plugin/tests/Program.cs
 
-**Interfaces:**
+**Interfaces and ownership:**
 - Produces RestartEntered(), RestartReturned(HookToken),
   RestartThrew(HookToken), StateSetEntered(object, object),
   StateSetReturned(HookToken, object, double), StateSetThrew(HookToken), and
   ClearThrew(HookToken).
-- An outer Restart establishes depth before atomically selecting
-  unexpected_input. Its ErrorRecord always has null input fields. Recursive
-  Restart and nested Undo/Restore callbacks balance bookkeeping without a
-  second terminal claim.
-- State replacement before Initial starts a fresh frame-zero initial epoch.
+- The outer Restart establishes depth before atomically selecting
+  unexpected_input. Restart error records force null input fields while
+  preserving active settle-frame derivation. Recursive Restart and nested
+  Undo/Restore balance without a second terminal claim.
+- State replacement before Initial starts a fresh frame-zero epoch.
   Replacement after Initial faults with state_replaced. ClearThrew dispatches
-  by HookKind, consumes at most once, and never changes a first-fault winner.
+  by HookKind, consumes once, and preserves the first-fault winner.
+- Task 5.2 does not store expectedInputCount, thread UTC through settling,
+  add a third-step branch, or add a completion seam.
 
-Add these two registrations after UndoAcceptanceAndRestoreRules, bringing the
-driver-input registration total to exactly eight:
+**Canonical Task 5.2 checkpoint SHA-256:**
+- oracle/plugin/Core/PassiveDriver.cs:
+  06afabfe94ee421b7de8e62df2fc5a5485a79fa315792c7e70ed0fa9571285b6
+- oracle/plugin/Core/PassiveDriverInput.cs:
+  916e95dd329713d9501a0ee32babb50c733c06fa00644e41f1828945224ee1be
+- oracle/plugin/Core/PassiveDriverLifecycleHooks.cs:
+  a4ddfcddfbeb52ef3622afda74aa053b5c818fd81bfa227f5706644c5b564317
+- unchanged oracle/plugin/tests/PassiveDriverTestSupport.cs:
+  8b04688d264e5e3aebd36f635e07c120395c9b545790c8eb02a594c0059952f5
+- oracle/plugin/tests/PassiveDriverInputTests.cs:
+  ea0db38ae9d360d146f96e1c6d838a52f10e1d19a0f6db6c54b276c9569af618
+- cumulative oracle/plugin/tests/Program.cs:
+  f668a65f46f2bb30678059ecc423a89019775b4340da2f63b491238cafb44a29
 
-~~~csharp
-tests.Add("driver-input", "restart depth and null fields",
-    RestartDepthAndNullFields);
-tests.Add("driver-input", "state replacement and ClearThrew",
-    StateReplacementAndClearThrew);
+- [ ] **Step 1: Apply exactly the two-registration RED delta**
+
+The following unified diff applies directly to the exact six-registration
+Task 5.1 file. It adds only the two permanent registration identities and
+their two method bodies, producing the exact cumulative eight-registration
+artifact:
+
+~~~diff
+--- a/oracle/plugin/tests/PassiveDriverInputTests.cs
++++ b/oracle/plugin/tests/PassiveDriverInputTests.cs
+@@ -17,6 +17,10 @@
+             AcceptedAndRefusedDirectionOutcomes);
+         tests.Add("driver-input", "Undo acceptance and restore rules",
+             UndoAcceptanceAndRestoreRules);
++        tests.Add("driver-input", "restart depth and null fields",
++            RestartDepthAndNullFields);
++        tests.Add("driver-input", "state replacement and ClearThrew",
++            StateReplacementAndClearThrew);
+     }
+
+     private static void AllCardinalsCorrelate()
+@@ -765,6 +769,159 @@
+             name + " declaring type");
+         Check.True(field.IsPrivate, name + " is private");
+         return field.GetValue(driver);
++    }
++
++    private static void RestartDepthAndNullFields()
++    {
++        DriverFixture beforeInitial = DriverFixture.Active();
++        beforeInitial.Observe(
++            beforeInitial.State,
++            beforeInitial.State,
++            1.0,
++            true,
++            ProtocolSamples.InitialCapture);
++        HookToken early = beforeInitial.Driver.RestartEntered();
++        Check.True(early.Active, "pre-initial restart token active");
++        ErrorRecord earlyError = beforeInitial.Sink.ErrorRecords[0];
++        Check.Equal("unexpected_input", earlyError.Code,
++            "pre-initial restart code");
++        Check.False(earlyError.InputIndex.HasValue,
++            "pre-initial restart index null");
++        Check.False(earlyError.Input.HasValue,
++            "pre-initial restart input null");
++        Check.Equal(1, earlyError.SettleFrames,
++            "pre-initial restart keeps initial frame count");
++        beforeInitial.Driver.RestartReturned(early);
++
++        DriverFixture fixture = DriverFixture.Ready();
++        fixture.OpenDirection(2, true, true, 10.0);
++        fixture.Observe(
++            fixture.State,
++            fixture.State,
++            11.0,
++            false,
++            ProtocolSamples.MovedCapture);
++
++        HookToken outer = fixture.Driver.RestartEntered();
++        Check.True(outer.Active, "outer restart token active");
++        ErrorRecord error = fixture.Sink.ErrorRecords[0];
++        Check.Equal("unexpected_input", error.Code, "restart code");
++        Check.False(error.InputIndex.HasValue, "restart index null");
++        Check.False(error.Input.HasValue, "restart input null");
++        Check.Equal(1, error.SettleFrames, "active attempt frames");
++
++        HookToken recursive = fixture.Driver.RestartEntered();
++        Check.True(recursive.Active, "recursive restart token active");
++        HookToken nestedUndo =
++            fixture.Driver.UndoEntered(fixture.State, 12.0);
++        Check.False(nestedUndo.Active,
++            "nested Undo suppressed by restart depth");
++        fixture.Driver.RestoreObserved();
++        fixture.Driver.UndoReturned(nestedUndo, false);
++        fixture.Driver.RestartReturned(recursive);
++        fixture.Driver.RestartReturned(outer);
++        Check.Equal(0,
++            (int)ReadPrivateField(fixture.Driver, "restartDepth"),
++            "restart depth balances to zero");
++        System.Collections.ICollection restartContexts =
++            (System.Collections.ICollection)ReadPrivateField(
++                fixture.Driver, "restartContexts");
++        Check.Equal(0, restartContexts.Count,
++            "restart context stack balances to empty");
++        Check.Equal(
++            1,
++            fixture.Sink.ErrorRecords.Count,
++            "nested path cannot emit a second Error");
+     }
+
++    private static void StateReplacementAndClearThrew()
++    {
++        DriverFixture preInitial = DriverFixture.Active();
++        preInitial.Observe(
++            preInitial.State,
++            preInitial.State,
++            1.0,
++            true,
++            ProtocolSamples.InitialCapture);
++        HookToken replace = preInitial.Driver.StateSetEntered(
++            preInitial.State, preInitial.OtherState);
++        preInitial.Driver.StateSetReturned(
++            replace, preInitial.OtherState, 2.0);
++        Check.Equal(
++            PassivePhase.AwaitInitialNeutral,
++            preInitial.Driver.Phase,
++            "replacement starts new initial epoch");
++        Check.Equal(
++            0,
++            preInitial.Driver.CurrentSettleFrames,
++            "SetGameState return is not an Update frame");
++
++        DriverFixture ready = DriverFixture.Ready();
++        HookToken late = ready.Driver.StateSetEntered(
++            ready.State, ready.OtherState);
++        ready.Driver.StateSetReturned(
++            late, ready.OtherState, 10.0);
++        Check.Equal(
++            "state_replaced",
++            ready.Sink.ErrorRecords[0].Code,
++            "post-initial replacement faults");
++
++        DriverFixture player = DriverFixture.Ready();
++        HookToken playerToken = player.Driver.PlayerPollEntered();
++        player.Driver.ClearThrew(playerToken);
++        player.Driver.ClearThrew(playerToken);
++        Check.True(
++            ReadPrivateField(player.Driver, "playerPoll") == null,
++            "ClearThrew clears PlayerPoll context once");
++        HookToken nextPlayer = player.Driver.PlayerPollEntered();
++        Check.True(nextPlayer.Active, "player scope cleared once");
++        player.Driver.PlayerPollReturned(nextPlayer);
++
++        DriverFixture process = DriverFixture.Ready();
++        HookToken processPoll = process.Driver.PlayerPollEntered();
++        process.Driver.PhysicalPollReturned(2);
++        HookToken processToken = process.Driver.ProcessInputEntered(
++            process.State, 2, 10.0);
++        process.Driver.ClearThrew(processToken);
++        process.Driver.ClearThrew(processToken);
++        Check.True(
++            ReadPrivateField(process.Driver, "processInput") == null,
++            "ClearThrew clears ProcessInput context once");
++        process.Driver.PlayerPollReturned(processPoll);
++
++        DriverFixture undo = DriverFixture.Ready();
++        HookToken undoToken =
++            undo.Driver.UndoEntered(undo.State, 10.0);
++        undo.Driver.ClearThrew(undoToken);
++        undo.Driver.ClearThrew(undoToken);
++        Check.True(
++            ReadPrivateField(undo.Driver, "undoContext") == null,
++            "ClearThrew clears Undo context once");
++
++        DriverFixture stateSet = DriverFixture.Ready();
++        HookToken stateToken = stateSet.Driver.StateSetEntered(
++            stateSet.State, stateSet.State);
++        stateSet.Driver.ClearThrew(stateToken);
++        stateSet.Driver.ClearThrew(stateToken);
++        Check.True(
++            ReadPrivateField(stateSet.Driver, "stateSetContext") == null,
++            "ClearThrew clears StateSet context once");
++
++        DriverFixture restart = DriverFixture.Ready();
++        HookToken restartToken = restart.Driver.RestartEntered();
++        restart.Driver.ClearThrew(restartToken);
++        restart.Driver.ClearThrew(restartToken);
++        Check.Equal(0,
++            (int)ReadPrivateField(restart.Driver, "restartDepth"),
++            "ClearThrew balances restart depth");
++        System.Collections.ICollection clearedRestartContexts =
++            (System.Collections.ICollection)ReadPrivateField(
++                restart.Driver, "restartContexts");
++        Check.Equal(0, clearedRestartContexts.Count,
++            "ClearThrew empties restart context stack");
++        Check.Equal(
++            1,
++            restart.Sink.ErrorRecords.Count,
++            "restart cleanup preserves first fault");
++    }
+ }
 ~~~
 
-Insert these two method bodies before the final brace of
-PassiveDriverInputTests:
+Replace Program.cs with this exact cumulative body:
 
 ~~~csharp
-private static void RestartDepthAndNullFields()
+using System;
+using System.Collections.Generic;
+
+internal static class Program
 {
-    DriverFixture beforeInitial = DriverFixture.Active();
-    beforeInitial.Observe(
-        beforeInitial.State,
-        beforeInitial.State,
-        1.0,
-        true,
-        ProtocolSamples.InitialCapture);
-    HookToken early = beforeInitial.Driver.RestartEntered();
-    ErrorRecord earlyError = beforeInitial.Sink.ErrorRecords[0];
-    Check.Equal("unexpected_input", earlyError.Code,
-        "pre-initial restart code");
-    Check.False(earlyError.InputIndex.HasValue,
-        "pre-initial restart index null");
-    Check.False(earlyError.Input.HasValue,
-        "pre-initial restart input null");
-    Check.Equal(1, earlyError.SettleFrames,
-        "pre-initial restart keeps initial frame count");
-    beforeInitial.Driver.RestartReturned(early);
-
-    DriverFixture fixture = DriverFixture.Ready();
-    fixture.OpenDirection(2, true, true, 10.0);
-    fixture.Observe(
-        fixture.State,
-        fixture.State,
-        11.0,
-        false,
-        ProtocolSamples.MovedCapture);
-
-    HookToken outer = fixture.Driver.RestartEntered();
-    ErrorRecord error = fixture.Sink.ErrorRecords[0];
-    Check.Equal("unexpected_input", error.Code, "restart code");
-    Check.False(error.InputIndex.HasValue, "restart index null");
-    Check.False(error.Input.HasValue, "restart input null");
-    Check.Equal(1, error.SettleFrames, "active attempt frames");
-
-    HookToken recursive = fixture.Driver.RestartEntered();
-    HookToken nestedUndo =
-        fixture.Driver.UndoEntered(fixture.State, 12.0);
-    fixture.Driver.RestoreObserved();
-    fixture.Driver.UndoReturned(nestedUndo, false);
-    fixture.Driver.RestartReturned(recursive);
-    fixture.Driver.RestartReturned(outer);
-    Check.Equal(
-        1,
-        fixture.Sink.ErrorRecords.Count,
-        "nested path cannot emit a second Error");
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        PassiveDriverBoundaryTests.Register(tests);
+        PassiveDriverInitialTests.Register(tests);
+        PassiveDriverInputTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 },
+            { "driver-boundary", 2 },
+            { "driver-initial", 8 },
+            { "driver-input", 8 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
 }
-
-private static void StateReplacementAndClearThrew()
-{
-    DriverFixture preInitial = DriverFixture.Active();
-    preInitial.Observe(
-        preInitial.State,
-        preInitial.State,
-        1.0,
-        true,
-        ProtocolSamples.InitialCapture);
-    HookToken replace = preInitial.Driver.StateSetEntered(
-        preInitial.State, preInitial.OtherState);
-    preInitial.Driver.StateSetReturned(
-        replace, preInitial.OtherState, 2.0);
-    Check.Equal(
-        PassivePhase.AwaitInitialNeutral,
-        preInitial.Driver.Phase,
-        "replacement starts new initial epoch");
-    Check.Equal(
-        0,
-        preInitial.Driver.CurrentSettleFrames,
-        "SetGameState return is not an Update frame");
-
-    DriverFixture ready = DriverFixture.Ready();
-    HookToken late = ready.Driver.StateSetEntered(
-        ready.State, ready.OtherState);
-    ready.Driver.StateSetReturned(
-        late, ready.OtherState, 10.0);
-    Check.Equal(
-        "state_replaced",
-        ready.Sink.ErrorRecords[0].Code,
-        "post-initial replacement faults");
-
-    DriverFixture player = DriverFixture.Ready();
-    HookToken playerToken = player.Driver.PlayerPollEntered();
-    player.Driver.ClearThrew(playerToken);
-    player.Driver.ClearThrew(playerToken);
-    HookToken nextPlayer = player.Driver.PlayerPollEntered();
-    Check.True(nextPlayer.Active, "player scope cleared once");
-    player.Driver.PlayerPollReturned(nextPlayer);
-
-    DriverFixture process = DriverFixture.Ready();
-    HookToken processPoll = process.Driver.PlayerPollEntered();
-    process.Driver.PhysicalPollReturned(2);
-    HookToken processToken = process.Driver.ProcessInputEntered(
-        process.State, 2, 10.0);
-    process.Driver.ClearThrew(processToken);
-    process.Driver.ClearThrew(processToken);
-    process.Driver.PlayerPollReturned(processPoll);
-
-    DriverFixture undo = DriverFixture.Ready();
-    HookToken undoToken =
-        undo.Driver.UndoEntered(undo.State, 10.0);
-    undo.Driver.ClearThrew(undoToken);
-    undo.Driver.ClearThrew(undoToken);
-
-    DriverFixture stateSet = DriverFixture.Ready();
-    HookToken stateToken = stateSet.Driver.StateSetEntered(
-        stateSet.State, stateSet.State);
-    stateSet.Driver.ClearThrew(stateToken);
-    stateSet.Driver.ClearThrew(stateToken);
-
-    DriverFixture restart = DriverFixture.Ready();
-    HookToken restartToken = restart.Driver.RestartEntered();
-    restart.Driver.ClearThrew(restartToken);
-    restart.Driver.ClearThrew(restartToken);
-    Check.Equal(
-        1,
-        restart.Sink.ErrorRecords.Count,
-        "restart cleanup preserves first fault");
 }
 ~~~
 
-Update only the manifest value from driver-input=6 to driver-input=8. The full
-cumulative manifest at this checkpoint is:
-
-~~~csharp
-tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
-{
-    { "protocol", 4 },
-    { "encoding", 5 },
-    { "sink", 6 },
-    { "driver-boundary", 2 },
-    { "driver-initial", 8 },
-    { "driver-input", 8 }
-});
-~~~
-
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run the intended RED**
 
 ~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run --project oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore -- --cohort driver-input
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+check_hash() {
+  test "$(shasum -a 256 "$1" | awk '{print $1}')" = "$2"
+}
+verify_red_tree() {
+  check_hash oracle/plugin/Core/PassiveDriver.cs e522a83a0fee68bc44803d2df3b8a9c93b1a679224bc401566dae4f48f4582f9
+  check_hash oracle/plugin/Core/PassiveDriverInput.cs f3922ff8db27112f314084a22aa08feff560fa7305b683e33cb36db17ab50eda
+  check_hash oracle/plugin/tests/PassiveDriverTestSupport.cs 8b04688d264e5e3aebd36f635e07c120395c9b545790c8eb02a594c0059952f5
+  check_hash oracle/plugin/tests/PassiveDriverInputTests.cs ea0db38ae9d360d146f96e1c6d838a52f10e1d19a0f6db6c54b276c9569af618
+  check_hash oracle/plugin/tests/Program.cs f668a65f46f2bb30678059ecc423a89019775b4340da2f63b491238cafb44a29
+  test ! -e oracle/plugin/Core/PassiveDriverLifecycleHooks.cs
+  test -z "$(git diff --cached --name-only)"
+  test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+    'oracle/plugin/tests/PassiveDriverInputTests.cs' \
+    'oracle/plugin/tests/Program.cs')"
+  test -z "$(git ls-files --others --exclude-standard)"
+  test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = \
+    "$(printf '%s\n' \
+      ' M oracle/plugin/tests/PassiveDriverInputTests.cs' \
+      ' M oracle/plugin/tests/Program.cs')"
+  git diff --check
+}
+count_error_symbol() {
+  printf '%s\n' "$error_lines" | awk -v needle="'$1'" \
+    'index($0, needle) != 0 { count++ } END { print count + 0 }'
+}
+
+verify_red_tree
+set +e
+red_output="$("$dotnet_bin" build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --nologo -warnaserror -t:Rebuild -m:1 \
+  -p:UseSharedCompilation=false 2>&1)"
+red_status=$?
+set -e
+printf '%s\n' "$red_output"
+test "$red_status" = "1"
+case "$red_output" in
+  *"Build FAILED."*) ;;
+  *) exit 1 ;;
+esac
+test "$(printf '%s\n' "$red_output" | awk \
+  '/^[[:space:]]*0 Warning[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+test "$(printf '%s\n' "$red_output" | awk \
+  '/^[[:space:]]*22 Error[(]s[)]$/ { count++ } END { print count + 0 }')" = "1"
+error_lines="$(printf '%s\n' "$red_output" | awk \
+  'index($0, ": error ") != 0 { print }')"
+test "$(printf '%s\n' "$error_lines" | awk \
+  'NF != 0 { count++ } END { print count + 0 }')" = "44"
+error_codes="$(printf '%s\n' "$error_lines" | sed -E -n \
+  's#^.*: error ([A-Z]+[0-9]+):.*#\1#p')"
+test "$(printf '%s\n' "$error_codes" | awk \
+  'NF != 0 { count++ } END { print count + 0 }')" = "44"
+test "$(printf '%s\n' "$error_codes" | LC_ALL=C sort -u)" = "CS1061"
+test "$(count_error_symbol ClearThrew)" = "20"
+test "$(count_error_symbol RestartEntered)" = "8"
+test "$(count_error_symbol RestartReturned)" = "6"
+test "$(count_error_symbol StateSetEntered)" = "6"
+test "$(count_error_symbol StateSetReturned)" = "4"
+case "$red_output" in
+  *": warning "*|*"warning CS"*|*"error MSB"*|*"NETSDK"*|\
+  *"assets file"*|*"SDK"*|*"fixture"*|*"permission denied"*|\
+  *"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|\
+  *"NU1"*|*"package"*|*"Package"*|*"restore"*|\
+  *"No such file or directory"*|*"Segmentation fault"*|*"Killed"*) exit 1 ;;
+esac
+verify_red_tree
 ~~~
 
 Require compiler diagnostics naming RestartEntered, StateSetEntered, or
-ClearThrew.
+ClearThrew. Do not accept fixture, SDK, restore/assets, or unrelated failures.
 
-- [ ] **Step 3: Implement the complete lifecycle-hook partial**
+- [ ] **Step 3: Apply only the lifecycle production delta**
 
-Create PassiveDriverLifecycleHooks.cs exactly:
+Apply these exact diffs to the pinned Task 5.1 files:
+
+~~~diff
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -32,6 +32,7 @@
+
+     private struct FaultRequest
+     {
++        internal bool ForceNullInputs;
+         internal bool HasOffendingInput;
+         internal int? OffendingIndex;
+         internal OracleInput? OffendingInput;
+@@ -59,6 +60,13 @@
+             value.OffendingInput = input;
+             return value;
+         }
++
++        internal static FaultRequest Restart()
++        {
++            FaultRequest value = new FaultRequest();
++            value.ForceNullInputs = true;
++            return value;
++        }
+     }
+
+     private readonly ITraceSink sink;
+@@ -921,8 +929,13 @@
+     {
+         int? inputIndex;
+         OracleInput? input;
+-        if (attemptPending)
++        if (request.ForceNullInputs)
+         {
++            inputIndex = null;
++            input = null;
++        }
++        else if (attemptPending)
++        {
+             inputIndex = completedInputs;
+             input = attemptInput;
+         }
+~~~
+
+~~~diff
+--- a/oracle/plugin/Core/PassiveDriverInput.cs
++++ b/oracle/plugin/Core/PassiveDriverInput.cs
+@@ -115,6 +115,8 @@
+         object stateReference,
+         double nowSeconds)
+     {
++        if (restartDepth > 0)
++            return HookToken.Inert(HookKind.Undo);
+         if (!IsObservationActive())
+             return HookToken.Inert(HookKind.Undo);
+         if (undoContext != null)
+@@ -137,7 +139,7 @@
+
+     internal void RestoreObserved()
+     {
+-        if (!IsObservationActive())
++        if (restartDepth > 0 || !IsObservationActive())
+             return;
+         if (undoContext == null || undoContext.RestoreSeen)
+         {
+~~~
+
+Create PassiveDriverLifecycleHooks.cs with this exact complete body:
 
 ~~~csharp
 using System;
@@ -15038,6 +19615,7 @@ internal sealed partial class PassiveDriver
 
     private readonly List<long> restartContexts =
         new List<long>();
+    private int restartDepth;
     private StateSetContext stateSetContext;
 
     internal HookToken RestartEntered()
@@ -15213,69 +19791,223 @@ internal sealed partial class PassiveDriver
 }
 ~~~
 
-The requestedState parameter is deliberately not trusted as proof of a
-replacement. The decision uses only the reread afterState identity; retaining
-the parameter in the method contract keeps the Core API aligned with the exact
-SetGameState patch without dereferencing game types.
+The requestedState argument remains intentionally unread; replacement is
+proved from the reread afterState identity. restartDepth,
+FaultRequest.Restart(), the two Undo/Restore suppression checks, lifecycle
+contexts, and ClearThrew first appear here.
 
-- [ ] **Step 4: Run GREEN and the net35 gate**
+- [ ] **Step 4: Verify GREEN, all checkpoint hashes, and both target frameworks**
 
 ~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run --project oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore -- --cohort driver-input
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build oracle/plugin/tests/SsrOracle.Core.Net35.csproj -c Release --no-restore -warnaserror
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+check_hash() {
+  test "$(shasum -a 256 "$1" | awk '{print $1}')" = "$2"
+}
+check_hash oracle/plugin/Core/PassiveDriver.cs 06afabfe94ee421b7de8e62df2fc5a5485a79fa315792c7e70ed0fa9571285b6
+check_hash oracle/plugin/Core/PassiveDriverInput.cs 916e95dd329713d9501a0ee32babb50c733c06fa00644e41f1828945224ee1be
+check_hash oracle/plugin/Core/PassiveDriverLifecycleHooks.cs a4ddfcddfbeb52ef3622afda74aa053b5c818fd81bfa227f5706644c5b564317
+check_hash oracle/plugin/tests/PassiveDriverTestSupport.cs 8b04688d264e5e3aebd36f635e07c120395c9b545790c8eb02a594c0059952f5
+check_hash oracle/plugin/tests/PassiveDriverInputTests.cs ea0db38ae9d360d146f96e1c6d838a52f10e1d19a0f6db6c54b276c9569af618
+check_hash oracle/plugin/tests/Program.cs f668a65f46f2bb30678059ecc423a89019775b4340da2f63b491238cafb44a29
+"$dotnet_bin" build oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild
+test "$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build -- \
+  --cohort driver-input)" = 'SSR oracle unit harness ready'
+test "$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build)" = 'SSR oracle unit harness ready'
+"$dotnet_bin" build oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild
 git diff --check
 ~~~
 
-- [ ] **Step 5: Inspect the task diff and commit**
-
-Retain the complete task diff and GREEN evidence, then run exactly:
+- [ ] **Step 5: Inspect exactly the task-owned diff and commit**
 
 ~~~bash
-git diff -- oracle/plugin/Core/PassiveDriverLifecycleHooks.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
-git add oracle/plugin/Core/PassiveDriverLifecycleHooks.cs oracle/plugin/tests/PassiveDriverInputTests.cs oracle/plugin/tests/Program.cs
+set -euo pipefail
+export LC_ALL=C
+task_paths="$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverInput.cs' \
+  'oracle/plugin/Core/PassiveDriverLifecycleHooks.cs' \
+  'oracle/plugin/tests/PassiveDriverInputTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverInput.cs' \
+  'oracle/plugin/tests/PassiveDriverInputTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = \
+  "oracle/plugin/Core/PassiveDriverLifecycleHooks.cs"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = \
+  "$(printf '%s\n' \
+    ' M oracle/plugin/Core/PassiveDriver.cs' \
+    ' M oracle/plugin/Core/PassiveDriverInput.cs' \
+    ' M oracle/plugin/tests/PassiveDriverInputTests.cs' \
+    ' M oracle/plugin/tests/Program.cs' \
+    '?? oracle/plugin/Core/PassiveDriverLifecycleHooks.cs')"
+git diff --check
+git add -- \
+  oracle/plugin/Core/PassiveDriver.cs \
+  oracle/plugin/Core/PassiveDriverInput.cs \
+  oracle/plugin/Core/PassiveDriverLifecycleHooks.cs \
+  oracle/plugin/tests/PassiveDriverInputTests.cs \
+  oracle/plugin/tests/Program.cs
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$task_paths"
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+git diff --cached --check
+git diff --cached -- \
+  oracle/plugin/Core/PassiveDriver.cs \
+  oracle/plugin/Core/PassiveDriverInput.cs \
+  oracle/plugin/Core/PassiveDriverLifecycleHooks.cs \
+  oracle/plugin/tests/PassiveDriverInputTests.cs \
+  oracle/plugin/tests/Program.cs
+task_parent="$(git rev-parse HEAD)"
 git commit -m "feat: balance passive lifecycle hooks"
+test "$(git rev-parse HEAD^)" = "$task_parent"
+test "$(git show -s --format=%s HEAD)" = \
+  "feat: balance passive lifecycle hooks"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = \
+  "$task_paths"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --cached --check
+git diff --check
+git diff --check HEAD^ HEAD
 ~~~
 
 #### Task 5.3: Finalize success and make terminal ownership immutable
 
-- [ ] **Step 1: Add the complete terminal fixture and exactly six RED tests**
+**Goal:** Add only expected-count storage, validated UTC handoff, the
+third-Step terminal branch, and ordinary terminal completion on top of the
+exact Task 5.2 checkpoint.
 
 **Files:**
+- Modify: oracle/plugin/Core/PassiveDriver.cs
+- Modify: oracle/plugin/Core/PassiveDriverInput.cs
 - Create: oracle/plugin/Core/PassiveDriverCompletion.cs
 - Modify: oracle/plugin/tests/PassiveDriverTestSupport.cs
 - Create: oracle/plugin/tests/PassiveDriverTerminalTests.cs
 - Create: oracle/plugin/tests/PassiveDriverTests.cs
 - Modify: oracle/plugin/tests/Program.cs
 
-**Interfaces:**
-- Implements FinishExpectedInputCount. The third flushed Step is followed by
-  End, Close, and Complete in exactly that order.
-- One Interlocked terminal claim owns success or the first fault. Sink failure
-  yields only trace_io_failed. A Complete reporter exception cannot rewrite
-  the closed trace; it sets the in-memory phase to Faulted and reports
-  observer_exception best-effort without Error or another Close.
+**Interfaces and ownership:**
+- First stores the constructor's already-validated expectedInputCount, threads
+  the validated update UTC through CompleteUpdateCore and EmitSettledAttempt,
+  and calls FinishExpectedInputCount only after the third durable Step.
+- The third Step is followed by End, Close, Complete in exactly that order.
+  End carries the final observation UTC.
+- One Interlocked terminal claim owns success or the first fault. End-write or
+  terminal-Close failure yields only trace_io_failed: no Complete, no Error,
+  one Close attempt. A Complete reporter exception cannot rewrite the closed
+  trace; it changes only in-memory phase and reports observer_exception
+  best-effort.
 - Dispose is idempotent, closes at most once, and makes later callbacks inert.
   No terminal path holds a monitor around sink or reporter code.
 
-Append this method in the DriverFixture partial body:
+**Canonical Task 5.3 checkpoint SHA-256:**
+- oracle/plugin/Core/PassiveDriver.cs:
+  0f9976431c46d4613084245a8b117339f66d88e15489c2fa1e8f4572866da91d
+- oracle/plugin/Core/PassiveDriverInput.cs:
+  9f593b22ac56122eaac7840c3f38ca3d8ebbe1832e93ddcd15ad8825fd022a81
+- unchanged oracle/plugin/Core/PassiveDriverLifecycleHooks.cs:
+  a4ddfcddfbeb52ef3622afda74aa053b5c818fd81bfa227f5706644c5b564317
+- oracle/plugin/Core/PassiveDriverCompletion.cs:
+  71d75b131edb7b786bed5864bcf0520c594a2e787b9477029f4032edad6682d9
+- oracle/plugin/tests/PassiveDriverTestSupport.cs:
+  6b5e13d4c4c26bf0e8be72e261ed2e642b8f503db54ea5b27614e5a149755398
+- unchanged oracle/plugin/tests/PassiveDriverInputTests.cs:
+  ea0db38ae9d360d146f96e1c6d838a52f10e1d19a0f6db6c54b276c9569af618
+- oracle/plugin/tests/PassiveDriverTerminalTests.cs:
+  b1ee2438cfde4468e2202da3fdc3c5d1247e7bf23c8e4664baaa8c15dc09fb3b
+- oracle/plugin/tests/PassiveDriverTests.cs:
+  be190c28526b9fc4a78ea2bafdc06d6e84457850301c59922f53e3d5149acc20
+- cumulative oracle/plugin/tests/Program.cs:
+  03c1f2ed72db209e9d3200e9486afa375d6935be42549896fa263f2cb31b09f0
 
-~~~csharp
-internal void CompleteThreeSteps()
-{
-    OpenDirection(2, true, true, 10.0);
-    SettleCurrent(ProtocolSamples.MovedCapture, 11.0);
-    OpenDirection(0, false, false, 20.0);
-    SettleCurrent(ProtocolSamples.MovedCapture, 21.0);
-    OpenUndo(true, false, 30.0);
-    SettleCurrent(ProtocolSamples.InitialCapture, 31.0);
-}
+- [ ] **Step 1: Add the complete corrected terminal fixture and six-test RED cohort**
+
+Apply this exact fixture diff to the pinned Task 5.2 support file. EndFailure,
+CompleteFailure, and CompleteThreeSteps first appear here:
+
+~~~diff
+--- a/oracle/plugin/tests/PassiveDriverTestSupport.cs
++++ b/oracle/plugin/tests/PassiveDriverTestSupport.cs
+@@ -24,6 +24,7 @@
+     internal Exception RunFailure { get; set; }
+     internal Exception InitialFailure { get; set; }
+     internal Exception StepFailure { get; set; }
++    internal Exception EndFailure { get; set; }
+     internal Exception ErrorFailure { get; set; }
+     internal Exception CloseFailure { get; set; }
+     internal int RunCalls;
+@@ -64,6 +65,8 @@
+     {
+         EndCalls++;
+         Add("sink:end");
++        if (EndFailure != null)
++            throw EndFailure;
+         EndRecords.Add(record);
+     }
+
+@@ -103,6 +106,7 @@
+     internal readonly List<string> FailedCodes = new List<string>();
+     internal readonly List<string> Diagnostics = new List<string>();
+     internal Exception ReadyFailure { get; set; }
++    internal Exception CompleteFailure { get; set; }
+     internal Exception FailedFailure { get; set; }
+     internal Exception DiagnosticFailure { get; set; }
+     internal int CompleteCalls;
+@@ -121,6 +125,8 @@
+     {
+         CompleteCalls++;
+         Add("report:complete");
++        if (CompleteFailure != null)
++            throw CompleteFailure;
+     }
+
+     public void Failed(string code)
+@@ -534,5 +540,15 @@
+             firstUpdateSeconds + 1.0,
+             true,
+             capture);
++    }
++
++    internal void CompleteThreeSteps()
++    {
++        OpenDirection(2, true, true, 10.0);
++        SettleCurrent(ProtocolSamples.MovedCapture, 11.0);
++        OpenDirection(0, false, false, 20.0);
++        SettleCurrent(ProtocolSamples.MovedCapture, 21.0);
++        OpenUndo(true, false, 30.0);
++        SettleCurrent(ProtocolSamples.InitialCapture, 31.0);
+     }
+ }
 ~~~
 
-Create PassiveDriverTerminalTests.cs exactly:
+Create PassiveDriverTerminalTests.cs with this exact corrected body. The
+success-order assertion filters the hardened observation log to sink/report
+events; the late observation uses FakeUpdateObservation(disposed.Events);
+End-write and terminal-Close failures are both asserted:
 
 ~~~csharp
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 
 internal static class PassiveDriverTerminalTests
@@ -15303,7 +20035,20 @@ internal static class PassiveDriverTerminalTests
         Check.Equal(PassivePhase.Done, fixture.Driver.Phase, "Done");
         Check.Equal(3, fixture.Sink.StepRecords.Count, "three steps");
         Check.Equal(1, fixture.Sink.EndRecords.Count, "one End");
+        Check.Equal(DriverFixture.UtcFinish,
+            fixture.Sink.EndRecords[0].FinishedAtUtc,
+            "final sample UTC is retained");
         Check.Equal(1, fixture.Sink.CloseCalls, "one Close");
+        List<string> traceEvents = new List<string>();
+        for (int index = 0; index < fixture.Events.Count; index++)
+        {
+            string value = fixture.Events[index];
+            if (value.StartsWith("sink:", StringComparison.Ordinal)
+                || value.StartsWith("report:", StringComparison.Ordinal))
+            {
+                traceEvents.Add(value);
+            }
+        }
         Check.Sequence(
             new string[]
             {
@@ -15319,7 +20064,7 @@ internal static class PassiveDriverTerminalTests
                 "sink:close",
                 "report:complete"
             },
-            fixture.Events.ToArray(),
+            traceEvents.ToArray(),
             "record and marker order");
     }
 
@@ -15350,18 +20095,6 @@ internal static class PassiveDriverTerminalTests
         Check.Equal(1, during.SettleFrames, "pending frames");
         Check.Same(ProtocolSamples.MovedCapture, during.LastCapture,
             "latest bounded capture");
-
-        DriverFixture failedProgress = DriverFixture.Ready();
-        failedProgress.Reporter.ReadyFailure =
-            new InvalidOperationException("ready marker");
-        failedProgress.OpenDirection(2, true, true, 10.0);
-        failedProgress.SettleCurrent(
-            ProtocolSamples.MovedCapture, 11.0);
-        ErrorRecord progressError = failedProgress.Sink.ErrorRecords[0];
-        Check.Equal("observer_exception", progressError.Code,
-            "intermediate Ready failure code");
-        Check.True(progressError.LastCapture == null,
-            "completed step epoch is not retained as last_capture");
 
         DriverFixture restart = DriverFixture.Ready();
         restart.OpenDirection(2, true, true, 10.0);
@@ -15414,6 +20147,64 @@ internal static class PassiveDriverTerminalTests
         Check.True(close.Events.Contains(
             "report:failed:trace_io_failed"),
             "close failure marker");
+
+        DriverFixture endWrite = DriverFixture.Ready();
+        endWrite.Sink.EndFailure = new TraceIoException("end");
+        endWrite.CompleteThreeSteps();
+        Check.Equal(PassivePhase.Faulted, endWrite.Driver.Phase,
+            "End failure phase");
+        Check.Equal(1, endWrite.Sink.EndCalls, "one End attempt");
+        Check.Equal(0, endWrite.Sink.EndRecords.Count,
+            "failed End is not claimed durable");
+        Check.Equal(1, endWrite.Sink.CloseCalls,
+            "End failure closes once");
+        Check.Equal(0, endWrite.Reporter.CompleteCalls,
+            "End failure emits no Complete");
+        Check.Equal(0, endWrite.Sink.ErrorRecords.Count,
+            "terminal write failure emits no Error");
+        Check.Equal("trace_io_failed",
+            endWrite.Reporter.FailedCodes[0],
+            "End failure marker");
+        Check.Sequence(
+            new string[]
+            {
+                "sink:step:2",
+                "sink:end",
+                "sink:close",
+                "report:failed:trace_io_failed"
+            },
+            endWrite.Events.GetRange(
+                endWrite.Events.Count - 4, 4).ToArray(),
+            "End failure order");
+
+        DriverFixture terminalClose = DriverFixture.Ready();
+        terminalClose.Sink.CloseFailure =
+            new TraceIoException("terminal close");
+        terminalClose.CompleteThreeSteps();
+        Check.Equal(PassivePhase.Faulted, terminalClose.Driver.Phase,
+            "terminal Close failure phase");
+        Check.Equal(1, terminalClose.Sink.EndRecords.Count,
+            "End remains durable before Close failure");
+        Check.Equal(1, terminalClose.Sink.CloseCalls,
+            "terminal Close attempted once");
+        Check.Equal(0, terminalClose.Reporter.CompleteCalls,
+            "Close failure emits no Complete");
+        Check.Equal(0, terminalClose.Sink.ErrorRecords.Count,
+            "closed-terminal failure cannot append Error");
+        Check.Equal("trace_io_failed",
+            terminalClose.Reporter.FailedCodes[0],
+            "terminal Close failure marker");
+        Check.Sequence(
+            new string[]
+            {
+                "sink:step:2",
+                "sink:end",
+                "sink:close",
+                "report:failed:trace_io_failed"
+            },
+            terminalClose.Events.GetRange(
+                terminalClose.Events.Count - 4, 4).ToArray(),
+            "terminal Close failure order");
     }
 
     private static void CompletionReporterCannotRewriteTrace()
@@ -15443,6 +20234,8 @@ internal static class PassiveDriverTerminalTests
 
     private static void FirstFaultWinsRace()
     {
+        AssertSuccessClaimUsesInterlocked();
+
         DriverFixture fixture = DriverFixture.Ready();
         int winners = 0;
         using (ManualResetEvent start = new ManualResetEvent(false))
@@ -15478,6 +20271,75 @@ internal static class PassiveDriverTerminalTests
             }
         }
         Check.Equal(1, failureMarkers, "one terminal marker");
+
+        SuccessAndFaultShareOneOwner();
+    }
+
+    private static void AssertSuccessClaimUsesInterlocked()
+    {
+        MethodInfo finishSuccess = typeof(PassiveDriver).GetMethod(
+            "FinishSuccess",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Check.True(finishSuccess != null,
+            "FinishSuccess reflection seam");
+        byte[] il = finishSuccess.GetMethodBody().GetILAsByteArray();
+        bool found = false;
+        for (int index = 0; index + 4 < il.Length; index++)
+        {
+            if (il[index] != 0x28)
+                continue;
+            try
+            {
+                MethodInfo called = finishSuccess.Module.ResolveMethod(
+                    BitConverter.ToInt32(il, index + 1)) as MethodInfo;
+                if (called == null
+                    || called.DeclaringType != typeof(Interlocked)
+                    || called.Name != "CompareExchange")
+                {
+                    continue;
+                }
+                ParameterInfo[] parameters = called.GetParameters();
+                found = parameters.Length == 3
+                    && parameters[0].ParameterType
+                        == typeof(int).MakeByRefType()
+                    && parameters[1].ParameterType == typeof(int)
+                    && parameters[2].ParameterType == typeof(int);
+                if (found)
+                    break;
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+        Check.True(found,
+            "success uses atomic terminal compare-exchange");
+    }
+
+    private static void SuccessAndFaultShareOneOwner()
+    {
+        DriverFixture successFirst = DriverFixture.Ready();
+        successFirst.CompleteThreeSteps();
+        Check.False(successFirst.Driver.TryFault("observer_exception"),
+            "fault cannot follow successful terminal claim");
+        Check.Equal(1, successFirst.Sink.EndRecords.Count,
+            "success-first End remains unique");
+        Check.Equal(0, successFirst.Sink.ErrorRecords.Count,
+            "success-first trace has no Error");
+        Check.Equal(1, successFirst.Sink.CloseCalls,
+            "success-first Close remains unique");
+
+        DriverFixture faultFirst = DriverFixture.Ready();
+        Check.True(faultFirst.Driver.TryFault("observer_exception"),
+            "fault claims terminal owner");
+        faultFirst.CompleteThreeSteps();
+        Check.Equal(0, faultFirst.Sink.EndRecords.Count,
+            "fault-first completion cannot append End");
+        Check.Equal(1, faultFirst.Sink.ErrorRecords.Count,
+            "fault-first Error remains unique");
+        Check.Equal(1, faultFirst.Sink.CloseCalls,
+            "fault-first Close remains unique");
+        Check.Equal(0, faultFirst.Reporter.CompleteCalls,
+            "fault-first completion emits no Complete");
     }
 
     private static void DisposeAndLateCallbacksAreFinal()
@@ -15493,7 +20355,8 @@ internal static class PassiveDriverTerminalTests
         Check.Equal(0, disposed.Sink.ErrorRecords.Count, "no Error");
         Check.False(disposed.Driver.TryFault("observer_exception"),
             "disabled late fault ignored");
-        FakeUpdateObservation late = new FakeUpdateObservation
+        FakeUpdateObservation late =
+            new FakeUpdateObservation(disposed.Events)
         {
             FirstState = disposed.State,
             SecondState = disposed.State,
@@ -15516,8 +20379,7 @@ internal static class PassiveDriverTerminalTests
 }
 ~~~
 
-Create `PassiveDriverTests.cs` with the permanent aggregate registration used
-by every later task and by the final Program:
+Create PassiveDriverTests.cs exactly:
 
 ~~~csharp
 internal static class PassiveDriverTests
@@ -15532,35 +20394,221 @@ internal static class PassiveDriverTests
 }
 ~~~
 
-Replace the four individual driver registrations in `Program.cs` with
-`PassiveDriverTests.Register(tests)`. The
-cumulative Program manifest is exactly:
+Replace Program.cs with this exact cumulative body:
 
 ~~~csharp
-tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+using System;
+using System.Collections.Generic;
+
+internal static class Program
 {
-    { "protocol", 4 },
-    { "encoding", 5 },
-    { "sink", 6 },
-    { "driver-boundary", 2 },
-    { "driver-initial", 8 },
-    { "driver-input", 8 },
-    { "driver-terminal", 6 }
-});
+private static int Main(string[] args)
+{
+    try
+    {
+        HarnessOptions options = HarnessOptions.Parse(args);
+        TestRegistry tests = new TestRegistry();
+        ProtocolTests.Register(tests);
+        EncodingTests.Register(tests);
+        CaptureSignatureTests.Register(tests);
+        TraceSinkTests.Register(tests);
+        PassiveDriverTests.Register(tests);
+        tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            { "protocol", 4 },
+            { "encoding", 5 },
+            { "sink", 6 },
+            { "driver-boundary", 2 },
+            { "driver-initial", 8 },
+            { "driver-input", 8 },
+            { "driver-terminal", 6 }
+        });
+        int result = tests.Run(options.Cohort);
+        if (result != 0)
+            return result;
+        Console.WriteLine("SSR oracle unit harness ready");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error.ToString());
+        return 1;
+    }
+}
+}
 ~~~
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Run the behavioral RED**
 
 ~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run --project oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore -- --cohort driver-terminal
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+check_hash() {
+  test "$(shasum -a 256 "$1" | awk '{print $1}')" = "$2"
+}
+verify_red_tree() {
+  check_hash oracle/plugin/Core/PassiveDriver.cs 06afabfe94ee421b7de8e62df2fc5a5485a79fa315792c7e70ed0fa9571285b6
+  check_hash oracle/plugin/Core/PassiveDriverInput.cs 916e95dd329713d9501a0ee32babb50c733c06fa00644e41f1828945224ee1be
+  check_hash oracle/plugin/Core/PassiveDriverLifecycleHooks.cs a4ddfcddfbeb52ef3622afda74aa053b5c818fd81bfa227f5706644c5b564317
+  check_hash oracle/plugin/tests/PassiveDriverTestSupport.cs 6b5e13d4c4c26bf0e8be72e261ed2e642b8f503db54ea5b27614e5a149755398
+  check_hash oracle/plugin/tests/PassiveDriverInputTests.cs ea0db38ae9d360d146f96e1c6d838a52f10e1d19a0f6db6c54b276c9569af618
+  check_hash oracle/plugin/tests/PassiveDriverTerminalTests.cs b1ee2438cfde4468e2202da3fdc3c5d1247e7bf23c8e4664baaa8c15dc09fb3b
+  check_hash oracle/plugin/tests/PassiveDriverTests.cs be190c28526b9fc4a78ea2bafdc06d6e84457850301c59922f53e3d5149acc20
+  check_hash oracle/plugin/tests/Program.cs 03c1f2ed72db209e9d3200e9486afa375d6935be42549896fa263f2cb31b09f0
+  test ! -e oracle/plugin/Core/PassiveDriverCompletion.cs
+  test -z "$(git diff --cached --name-only)"
+  test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+    'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+    'oracle/plugin/tests/Program.cs')"
+  test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = \
+    "$(printf '%s\n' \
+      'oracle/plugin/tests/PassiveDriverTerminalTests.cs' \
+      'oracle/plugin/tests/PassiveDriverTests.cs')"
+  test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = \
+    "$(printf '%s\n' \
+      ' M oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+      ' M oracle/plugin/tests/Program.cs' \
+      '?? oracle/plugin/tests/PassiveDriverTerminalTests.cs' \
+      '?? oracle/plugin/tests/PassiveDriverTests.cs')"
+  git diff --check
+}
+
+verify_red_tree
+clean_output="$("$dotnet_bin" build \
+  oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --nologo -warnaserror -t:Rebuild -m:1 \
+  -p:UseSharedCompilation=false 2>&1)"
+printf '%s\n' "$clean_output"
+case "$clean_output" in
+  *"Build succeeded."*"0 Warning(s)"*"0 Error(s)"*) ;;
+  *) exit 1 ;;
+esac
+case "$clean_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|\
+  *"error MSB"*|*"NETSDK"*|*"assets file"*|*"SDK"*|*"fixture"*|\
+  *"permission denied"*|*"Permission denied"*|*"Operation not permitted"*|\
+  *"UnauthorizedAccessException"*|*"timed out"*|*"timeout"*|*"NU1"*|\
+  *"package"*|*"Package"*|*"restore"*|*"No such file or directory"*|\
+  *"Segmentation fault"*|*"Killed"*) exit 1 ;;
+esac
+set +e
+red_output="$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build -- \
+  --cohort driver-terminal 2>&1)"
+red_status=$?
+set -e
+printf '%s\n' "$red_output"
+test "$red_status" = "1"
+test "$(printf '%s\n' "$red_output" | sed -n '1p')" = \
+  "cohort 'driver-terminal', test 'three steps End Close Complete order': System.InvalidOperationException: Done"
+case "$red_output" in
+  *": error "*|*": warning "*|*"error CS"*|*"warning CS"*|\
+  *"Build FAILED."*|*"error MSB"*|*"NETSDK"*|*"assets file"*|\
+  *"SDK"*|*"fixture"*|*"permission denied"*|*"Permission denied"*|\
+  *"Operation not permitted"*|*"UnauthorizedAccessException"*|\
+  *"timed out"*|*"timeout"*|*"NU1"*|*"package"*|*"Package"*|\
+  *"restore"*|*"No such file or directory"*|*"Segmentation fault"*|\
+  *"Killed"*) exit 1 ;;
+esac
+verify_red_tree
 ~~~
 
-Require ThreeStepsEndCloseCompleteOrder to fail because the terminal partial
-seam has no implementation. Do not accept a fixture, SDK, or assets failure.
+Require compilation to succeed and three steps End Close Complete order to
+fail because the Task 5.2 driver returns to Ready after Step 3 and emits no
+End, Close, or Complete. Do not accept a compiler, fixture, SDK,
+restore/assets, or unrelated behavioral failure.
 
-- [ ] **Step 3: Implement the complete terminal partial**
+- [ ] **Step 3: Apply only expected-count, UTC, third-Step, and completion production**
 
-Create PassiveDriverCompletion.cs exactly:
+Apply these exact diffs to the pinned Task 5.2 production files:
+
+~~~diff
+--- a/oracle/plugin/Core/PassiveDriver.cs
++++ b/oracle/plugin/Core/PassiveDriver.cs
+@@ -71,6 +71,7 @@
+
+     private readonly ITraceSink sink;
+     private readonly IPassiveReporter reporter;
++    private readonly int expectedInputCount;
+     private readonly int maxSettleFrames;
+     private readonly double maxSettleSeconds;
+
+@@ -134,6 +135,7 @@
+         }
+         this.sink = sink;
+         this.reporter = reporter;
++        this.expectedInputCount = expectedInputCount;
+         this.maxSettleFrames = maxSettleFrames;
+         this.maxSettleSeconds = maxSettleSeconds;
+         phase = PassivePhase.Disabled;
+@@ -435,7 +437,7 @@
+         try
+         {
+             OracleValidation.Utc(utcNow, "utcNow");
+-            CompleteUpdateCore(directive, sample);
++            CompleteUpdateCore(directive, sample, utcNow);
+         }
+         catch (RecordTooLargeException)
+         {
+@@ -596,7 +598,8 @@
+
+     private void CompleteUpdateCore(
+         UpdateDirective directive,
+-        GateSample sample)
++        GateSample sample,
++        DateTime utcNow)
+     {
+         if (sample == null)
+             throw new ArgumentNullException("sample");
+@@ -644,7 +647,8 @@
+                 {
+                     EmitSettledAttempt(
+                         sample.Capture,
+-                        directive.SettleFrames);
++                        directive.SettleFrames,
++                        utcNow);
+                 }
+                 return;
+             }
+~~~
+
+~~~diff
+--- a/oracle/plugin/Core/PassiveDriverInput.cs
++++ b/oracle/plugin/Core/PassiveDriverInput.cs
+@@ -187,7 +187,8 @@
+
+     private void EmitSettledAttempt(
+         CaptureRecord capture,
+-        int settleFrames)
++        int settleFrames,
++        DateTime utcNow)
+     {
+         if (!attemptPending || !attemptOutcomeKnown)
+         {
+@@ -210,6 +211,12 @@
+         ClearAttemptAfterStep();
+         lastCapture = null;
+
++        if (completedInputs == expectedInputCount)
++        {
++            FinishExpectedInputCount(utcNow);
++            return;
++        }
++
+         try
+         {
+             reporter.Ready(completedInputs);
+~~~
+
+Create PassiveDriverCompletion.cs with this exact complete body:
 
 ~~~csharp
 using System;
@@ -15568,11 +20616,8 @@ using System.Threading;
 
 internal sealed partial class PassiveDriver
 {
-    partial void FinishExpectedInputCount(
-        DateTime finishedAtUtc,
-        ref bool handled)
+    private void FinishExpectedInputCount(DateTime finishedAtUtc)
     {
-        handled = true;
         FinishSuccess(finishedAtUtc);
     }
 
@@ -15618,22 +20663,112 @@ internal sealed partial class PassiveDriver
 }
 ~~~
 
-- [ ] **Step 4: Run GREEN and the net35 gate**
+- [ ] **Step 4: Verify GREEN, all checkpoint hashes, and both target frameworks**
 
 ~~~bash
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet run --project oracle/plugin/tests/SsrOracle.UnitTests.csproj -c Release --no-restore -- --cohort driver-terminal
-/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet build oracle/plugin/tests/SsrOracle.Core.Net35.csproj -c Release --no-restore -warnaserror
+set -euo pipefail
+export LC_ALL=C
+export DOTNET_CLI_UI_LANGUAGE=en
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+export DOTNET_SDK_VULNERABILITY_CHECK_DISABLE=true
+export DOTNET_NOLOGO=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+dotnet_bin='/opt/homebrew/Cellar/dotnet/10.0.300/bin/dotnet'
+check_hash() {
+  test "$(shasum -a 256 "$1" | awk '{print $1}')" = "$2"
+}
+check_hash oracle/plugin/Core/PassiveDriver.cs 0f9976431c46d4613084245a8b117339f66d88e15489c2fa1e8f4572866da91d
+check_hash oracle/plugin/Core/PassiveDriverInput.cs 9f593b22ac56122eaac7840c3f38ca3d8ebbe1832e93ddcd15ad8825fd022a81
+check_hash oracle/plugin/Core/PassiveDriverLifecycleHooks.cs a4ddfcddfbeb52ef3622afda74aa053b5c818fd81bfa227f5706644c5b564317
+check_hash oracle/plugin/Core/PassiveDriverCompletion.cs 71d75b131edb7b786bed5864bcf0520c594a2e787b9477029f4032edad6682d9
+check_hash oracle/plugin/tests/PassiveDriverTestSupport.cs 6b5e13d4c4c26bf0e8be72e261ed2e642b8f503db54ea5b27614e5a149755398
+check_hash oracle/plugin/tests/PassiveDriverInputTests.cs ea0db38ae9d360d146f96e1c6d838a52f10e1d19a0f6db6c54b276c9569af618
+check_hash oracle/plugin/tests/PassiveDriverTerminalTests.cs b1ee2438cfde4468e2202da3fdc3c5d1247e7bf23c8e4664baaa8c15dc09fb3b
+check_hash oracle/plugin/tests/PassiveDriverTests.cs be190c28526b9fc4a78ea2bafdc06d6e84457850301c59922f53e3d5149acc20
+check_hash oracle/plugin/tests/Program.cs 03c1f2ed72db209e9d3200e9486afa375d6935be42549896fa263f2cb31b09f0
+"$dotnet_bin" build oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild
+test "$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build -- \
+  --cohort driver-terminal)" = 'SSR oracle unit harness ready'
+test "$("$dotnet_bin" run \
+  --project oracle/plugin/tests/SsrOracle.UnitTests.csproj \
+  -c Release --no-restore --no-build)" = 'SSR oracle unit harness ready'
+"$dotnet_bin" build oracle/plugin/tests/SsrOracle.Core.Net35.csproj \
+  -c Release --no-restore -warnaserror -t:Rebuild
 git diff --check
 ~~~
 
-- [ ] **Step 5: Inspect the task diff and commit**
-
-Retain the complete task diff and GREEN evidence, then run exactly:
+- [ ] **Step 5: Inspect exactly the task-owned diff and commit**
 
 ~~~bash
-git diff -- oracle/plugin/Core/PassiveDriverCompletion.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverTerminalTests.cs oracle/plugin/tests/PassiveDriverTests.cs oracle/plugin/tests/Program.cs
-git add oracle/plugin/Core/PassiveDriverCompletion.cs oracle/plugin/tests/PassiveDriverTestSupport.cs oracle/plugin/tests/PassiveDriverTerminalTests.cs oracle/plugin/tests/PassiveDriverTests.cs oracle/plugin/tests/Program.cs
+set -euo pipefail
+export LC_ALL=C
+task_paths="$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverCompletion.cs' \
+  'oracle/plugin/Core/PassiveDriverInput.cs' \
+  'oracle/plugin/tests/PassiveDriverTerminalTests.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/PassiveDriverTests.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test -z "$(git diff --cached --name-only)"
+test "$(git diff --name-only | LC_ALL=C sort)" = "$(printf '%s\n' \
+  'oracle/plugin/Core/PassiveDriver.cs' \
+  'oracle/plugin/Core/PassiveDriverInput.cs' \
+  'oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+  'oracle/plugin/tests/Program.cs')"
+test "$(git ls-files --others --exclude-standard | LC_ALL=C sort)" = \
+  "$(printf '%s\n' \
+    'oracle/plugin/Core/PassiveDriverCompletion.cs' \
+    'oracle/plugin/tests/PassiveDriverTerminalTests.cs' \
+    'oracle/plugin/tests/PassiveDriverTests.cs')"
+test "$(git status --short --untracked-files=all | LC_ALL=C sort)" = \
+  "$(printf '%s\n' \
+    ' M oracle/plugin/Core/PassiveDriver.cs' \
+    ' M oracle/plugin/Core/PassiveDriverInput.cs' \
+    ' M oracle/plugin/tests/PassiveDriverTestSupport.cs' \
+    ' M oracle/plugin/tests/Program.cs' \
+    '?? oracle/plugin/Core/PassiveDriverCompletion.cs' \
+    '?? oracle/plugin/tests/PassiveDriverTerminalTests.cs' \
+    '?? oracle/plugin/tests/PassiveDriverTests.cs')"
+git diff --check
+git add -- \
+  oracle/plugin/Core/PassiveDriver.cs \
+  oracle/plugin/Core/PassiveDriverInput.cs \
+  oracle/plugin/Core/PassiveDriverCompletion.cs \
+  oracle/plugin/tests/PassiveDriverTestSupport.cs \
+  oracle/plugin/tests/PassiveDriverTerminalTests.cs \
+  oracle/plugin/tests/PassiveDriverTests.cs \
+  oracle/plugin/tests/Program.cs
+test "$(git diff --cached --name-only | LC_ALL=C sort)" = "$task_paths"
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+git diff --cached --check
+git diff --cached -- \
+  oracle/plugin/Core/PassiveDriver.cs \
+  oracle/plugin/Core/PassiveDriverInput.cs \
+  oracle/plugin/Core/PassiveDriverCompletion.cs \
+  oracle/plugin/tests/PassiveDriverTestSupport.cs \
+  oracle/plugin/tests/PassiveDriverTerminalTests.cs \
+  oracle/plugin/tests/PassiveDriverTests.cs \
+  oracle/plugin/tests/Program.cs
+task_parent="$(git rev-parse HEAD)"
 git commit -m "feat: finalize passive trace capture"
+test "$(git rev-parse HEAD^)" = "$task_parent"
+test "$(git show -s --format=%s HEAD)" = \
+  "feat: finalize passive trace capture"
+test "$(git show --format= --name-only HEAD | LC_ALL=C sort)" = \
+  "$task_paths"
+test -z "$(git diff --cached --name-only)"
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+test -z "$(git status --short --untracked-files=all)"
+git diff --cached --check
+git diff --check
+git diff --check HEAD^ HEAD
 ~~~
 
 ### Track 6: Parse exact read-only configuration and physical paths
