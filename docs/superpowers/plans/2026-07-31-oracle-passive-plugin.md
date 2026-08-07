@@ -12266,14 +12266,17 @@ four hashes, and Step 12 passes from the exact implementation commit.
 > accepted commit-pinned correction round, together with its tracked evidence
 > seal and passing post-seal terminal verifier. Correction round `r01`, anchored
 > at `360436f8667407f5360fdf54701ab999a2729552`, was rejected before RED when
-> its embedded driver failed the baseline gate under Apple Bash 3.2 because a
-> literal brace expression was expanded into extra command arguments. Its
-> commit, 44 ledger rows, and 26 ignored artifacts are preserved as historical
-> evidence and cannot satisfy any `r02` gate. The authoritative gate status was
-> `2` with `/bin/bash: line 201: test: too many arguments`; no `r01` test commit
-> or evidence seal exists. Historical `task-4.2-*` ignored
-> artifacts are not correction evidence. Task 5 execution may begin only after
-> that seal and from the seal-pinned corrected test hashes; the exact-hash
+> Apple Bash 3.2 expanded a quoted brace literal; its authoritative status was
+> `2` with `/bin/bash: line 201: test: too many arguments`. Correction round
+> `r02`, anchored at `2471b92048592f13928969c04395f3e9495a476c` with corrected
+> test commit `489cc1ce2a06e5a6db60759f5484ed2f170b4d5a`, was rejected by its
+> shell-gate review because canonical preseal output would be created before a
+> manifest-53 absent-path check. Round `r01` has 44 frozen ledger rows and 26
+> artifacts; `r02` has 80 frozen rows and 82 artifacts. Neither has an evidence
+> seal, and neither namespace can satisfy the gate-only `r03` round. Historical
+> `task-4.2-*` ignored artifacts are not correction evidence. Task 5 execution
+> may begin only after the accepted `r03` seal and from the seal-pinned corrected
+> test hashes; the exact-hash
 > checkpoints and helper-dependent Task 5 test text below require a descendant
 > rebase before Task 5.1 and are not authorized from
 > `622abf4d22232ecdf3dfa831d02a985578a145f3` alone.
