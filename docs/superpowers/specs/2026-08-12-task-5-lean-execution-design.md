@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-12
 
-**Status:** Approved section by section and as a complete design on 2026-08-12
+**Status:** Approved section by section and as a complete design on 2026-08-12;
+execution-plan consistency clarification added on 2026-08-13
 
 ## 1. Purpose
 
@@ -18,8 +19,9 @@ checks.
 
 The controlling behavioral specification remains
 `docs/superpowers/specs/2026-08-07-task-5-passive-driver-design.md`. This document
-does not change its protocol, state model, file ownership, commit subjects, or
-out-of-scope boundaries.
+does not change its protocol, state model, commit subjects, or out-of-scope
+boundaries. Except for the narrow Task 5.3 test-ownership clarification in
+section 2.1, it does not change file ownership.
 
 ## 2. Decision
 
@@ -37,6 +39,27 @@ approved subject:
 2. `feat: balance passive lifecycle hooks`
 3. `feat: finalize passive trace capture`
 
+The tracked implementation plan is committed after this design and before Task
+5.1. Task 5.1 is the plan commit's direct child; the three implementation
+commits then remain consecutive and separately reviewed.
+
+### 2.1 Narrow Task 5.3 test-ownership clarification
+
+The controlling behavioral design requires Task 5.1 and Task 5.2 to prove the
+checkpoint behavior `Ready(3)` after Step 2, while Task 5.3 changes that exact
+continuation to terminal completion with no `Ready(3)`. To avoid retaining a
+known-obsolete assertion, Task 5.3 may make one narrow change to
+`PassiveDriverInputTests.cs`: rename the all-steps Ready helper to an
+intermediate-steps helper, stop it after Step 1, and require Ready values
+`0,1,2`. `PassiveDriverTerminalTests.cs` owns Step 2 and proves
+`Step 2 -> End -> Close -> Complete` with no `Ready(3)`.
+
+This clarification supersedes only the sentence in the behavioral design's
+file-ownership table that says input tests remain unchanged in Task 5.3. It does
+not move production ownership, add a fourth implementation commit, change a
+registration, or weaken the requirement that the Task 5.1 and Task 5.2
+checkpoints first demonstrate `Ready(3)`.
+
 The implementation is written from the approved behavioral specification and
 the current accepted source tree. Generated patches from the abandoned recovery
 workflow may be read for context, but they are neither executable authority nor
@@ -52,12 +75,13 @@ This design supersedes the bootstrap-recovery workflow described by:
 
 It does not supersede the Task 5 behavioral design.
 
-Where sections 11 and 12 of the controlling behavioral specification prescribe
+Except for the narrow Task 5.3 test-ownership clarification in section 2.1,
+sections 1 through 10 and the behavioral completion outcomes in section 13
+remain controlling. Where sections 11 and 12 prescribe
 execution and verification mechanics—exact diagnostic and byte pinning,
 predeclared mutation patches, immutable review-package machinery, hash
 authentication, and append-only correction workflow—this lean design supersedes
-those mechanics. Sections 1 through 10, the three behavioral ownership slices,
-and the behavioral completion outcomes in section 13 remain controlling.
+those mechanics.
 
 The recovery plan, captured launch outputs, candidate bundles, audit roots,
 review reports, and progress records are frozen historical evidence. They are
