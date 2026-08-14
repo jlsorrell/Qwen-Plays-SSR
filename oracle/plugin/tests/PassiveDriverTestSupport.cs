@@ -23,6 +23,7 @@ internal sealed class FakeTraceSink : ITraceSink
         new List<ErrorRecord>();
     internal Exception RunFailure { get; set; }
     internal Exception InitialFailure { get; set; }
+    internal Exception StepFailure { get; set; }
     internal Exception ErrorFailure { get; set; }
     internal Exception CloseFailure { get; set; }
     internal int RunCalls;
@@ -53,7 +54,9 @@ internal sealed class FakeTraceSink : ITraceSink
     public void WriteStep(StepRecord record)
     {
         StepCalls++;
-        Add("sink:step");
+        Add("sink:step:" + record.InputIndex.ToString());
+        if (StepFailure != null)
+            throw StepFailure;
         StepRecords.Add(record);
     }
 
@@ -310,37 +313,59 @@ internal sealed partial class DriverFixture
 
     internal static DriverFixture Ready()
     {
-        DriverFixture fixture = Active();
+        return Ready(600, 30.0);
+    }
+
+    internal static DriverFixture Ready(int maxFrames, double maxSeconds)
+    {
+        DriverFixture fixture = Active(maxFrames, maxSeconds);
         fixture.Observe(
-            fixture.State,
-            true,
-            fixture.State,
-            true,
-            1.0,
-            true,
+            fixture.State, fixture.State, 1.0, true,
             ProtocolSamples.Capture("ready-a"));
         fixture.Neutral();
         fixture.Observe(
-            fixture.State,
-            true,
-            fixture.State,
-            true,
-            2.0,
-            true,
+            fixture.State, fixture.State, 2.0, true,
             ProtocolSamples.Capture("ready-pair"));
         fixture.Observe(
-            fixture.State,
-            true,
-            fixture.State,
-            true,
-            3.0,
-            true,
+            fixture.State, fixture.State, 3.0, true,
             ProtocolSamples.Capture("ready-pair"));
-        Check.Equal(
-            PassivePhase.Ready,
-            fixture.Driver.Phase,
-            "ready fixture");
+        Check.Equal(PassivePhase.Ready, fixture.Driver.Phase, "ready fixture");
         return fixture;
+    }
+
+    internal void OpenDirection(
+        int rawDirection,
+        bool accepted,
+        bool movementScheduled,
+        double nowSeconds)
+    {
+        HookToken poll = Driver.PlayerPollEntered();
+        Driver.PhysicalPollReturned(rawDirection);
+        HookToken input = Driver.ProcessInputEntered(
+            State, rawDirection, nowSeconds);
+        Driver.ProcessInputReturned(
+            input, accepted, movementScheduled);
+        Driver.PlayerPollReturned(poll);
+    }
+
+    internal void OpenUndo(
+        bool restored,
+        bool movementScheduled,
+        double nowSeconds)
+    {
+        HookToken undo = Driver.UndoEntered(State, nowSeconds);
+        if (restored)
+            Driver.RestoreObserved();
+        Driver.UndoReturned(undo, movementScheduled);
+    }
+
+    internal void SettleCurrent(
+        CaptureRecord capture,
+        double firstUpdateSeconds)
+    {
+        Neutral();
+        Observe(State, State, firstUpdateSeconds, true, capture);
+        Observe(State, State, firstUpdateSeconds + 1.0, true, capture);
     }
 
     internal FakeUpdateObservation Observe(
