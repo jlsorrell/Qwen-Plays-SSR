@@ -13,9 +13,7 @@ private static int Main(string[] args)
         EncodingTests.Register(tests);
         CaptureSignatureTests.Register(tests);
         TraceSinkTests.Register(tests);
-        PassiveDriverBoundaryTests.Register(tests);
-        PassiveDriverInitialTests.Register(tests);
-        PassiveDriverInputTests.Register(tests);
+        PassiveDriverTests.Register(tests);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
             { "protocol", 4 },
@@ -23,7 +21,8 @@ private static int Main(string[] args)
             { "sink", 6 },
             { "driver-boundary", 2 },
             { "driver-initial", 8 },
-            { "driver-input", 8 }
+            { "driver-input", 8 },
+            { "driver-terminal", 6 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)

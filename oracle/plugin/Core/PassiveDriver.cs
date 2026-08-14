@@ -3,6 +3,53 @@ using System.Threading;
 
 internal sealed partial class PassiveDriver : IDisposable
 {
+    private const int NoTerminalOwner = 0;
+    private const int FaultTerminalOwner = 1;
+    private const int SuccessTerminalOwner = 2;
+    private const int DisposeTerminalOwner = 3;
+
+    private enum TerminalWorkKind
+    {
+        OrdinaryFault,
+        TraceIoFailure,
+        Dispose
+    }
+
+    private enum StepContinuation
+    {
+        None,
+        Ready,
+        Complete
+    }
+
+    private sealed class TerminalWork
+    {
+        internal TerminalWorkKind Kind;
+        internal string Code;
+        internal ErrorRecord Error;
+
+        internal static TerminalWork Ordinary(
+            string code, ErrorRecord error)
+        {
+            return new TerminalWork
+            {
+                Kind = TerminalWorkKind.OrdinaryFault,
+                Code = code,
+                Error = error
+            };
+        }
+
+        internal static TerminalWork TraceIo()
+        {
+            return new TerminalWork { Kind = TerminalWorkKind.TraceIoFailure };
+        }
+
+        internal static TerminalWork DisposeOnly()
+        {
+            return new TerminalWork { Kind = TerminalWorkKind.Dispose };
+        }
+    }
+
     private static readonly string[] RecordErrorCodes =
         new string[]
         {
@@ -70,6 +117,7 @@ internal sealed partial class PassiveDriver : IDisposable
 
     private readonly ITraceSink sink;
     private readonly IPassiveReporter reporter;
+    private readonly int expectedInputCount;
     private readonly int maxSettleFrames;
     private readonly double maxSettleSeconds;
 
@@ -81,6 +129,9 @@ internal sealed partial class PassiveDriver : IDisposable
     private int disposed;
     private int sinkCloseAttempted;
     private int terminalOwner;
+    private readonly object outputLeaseSync = new object();
+    private bool outputLeaseActive;
+    private TerminalWork deferredTerminalWork;
 
     private string runId;
     private DateTime startedAtUtc;
@@ -131,6 +182,7 @@ internal sealed partial class PassiveDriver : IDisposable
         }
         this.sink = sink;
         this.reporter = reporter;
+        this.expectedInputCount = expectedInputCount;
         this.maxSettleFrames = maxSettleFrames;
         this.maxSettleSeconds = maxSettleSeconds;
         phase = PassivePhase.Disabled;
@@ -197,19 +249,37 @@ internal sealed partial class PassiveDriver : IDisposable
         }
         if (Read(ref disposed) != 0 || Read(ref disabled) != 0)
             return false;
+        if (!TryAcquireOutputLease())
+            return false;
+        bool runTraceIoFailure = false;
+        bool runPrepared = false;
         try
         {
-            sink.WriteRun(run);
-            runId = run.RunId;
-            startedAtUtc = run.StartedAtUtc;
-            Interlocked.Exchange(ref prepared, 1);
+            try { sink.WriteRun(run); }
+            catch (Exception error)
+            {
+                runTraceIoFailure = true;
+                SelectTraceIoFailure();
+                SafeDiagnostic(error);
+                return false;
+            }
+            lock (outputLeaseSync)
+            {
+                if (TerminalSelected() || Read(ref disposed) != 0
+                    || Read(ref disabled) != 0)
+                    return false;
+                runId = run.RunId;
+                startedAtUtc = run.StartedAtUtc;
+                Interlocked.Exchange(ref prepared, 1);
+                runPrepared = true;
+            }
             return true;
         }
-        catch (Exception error)
+        finally
         {
-            SafeDiagnostic(error);
-            SelectTraceIoFailure();
-            return false;
+            ReleaseOutputLease(runTraceIoFailure);
+            if (!runPrepared)
+                Interlocked.Exchange(ref prepared, 0);
         }
     }
 
@@ -425,7 +495,7 @@ internal sealed partial class PassiveDriver : IDisposable
         try
         {
             OracleValidation.Utc(utcNow, "utcNow");
-            CompleteUpdateCore(directive, sample);
+            CompleteUpdateCore(directive, sample, utcNow);
         }
         catch (RecordTooLargeException)
         {
@@ -443,7 +513,7 @@ internal sealed partial class PassiveDriver : IDisposable
         }
         catch (Exception error)
         {
-            SafeDiagnostic(error);
+            SafeDiagnosticWithOutputLease(error);
             TryFaultInternal(
                 "observer_exception", FaultRequest.Derived());
         }
@@ -581,12 +651,26 @@ internal sealed partial class PassiveDriver : IDisposable
         if (Interlocked.CompareExchange(ref disposed, 1, 0) != 0)
             return;
         Interlocked.Exchange(ref disabled, 1);
-        BestEffortClose();
+        TerminalWork work = null;
+        bool execute = false;
+        lock (outputLeaseSync)
+        {
+            if (Interlocked.CompareExchange(
+                ref terminalOwner, DisposeTerminalOwner, NoTerminalOwner)
+                == NoTerminalOwner)
+            {
+                work = TerminalWork.DisposeOnly();
+                execute = QueueOrAcquireOutputLeaseLocked(work);
+            }
+        }
+        if (execute)
+            ExecuteTerminalWorkAndRelease(work);
     }
 
     private void CompleteUpdateCore(
         UpdateDirective directive,
-        GateSample sample)
+        GateSample sample,
+        DateTime utcNow)
     {
         if (sample == null)
             throw new ArgumentNullException("sample");
@@ -638,7 +722,7 @@ internal sealed partial class PassiveDriver : IDisposable
                 if (phase == PassivePhase.Settling)
                 {
                     EmitSettledAttempt(
-                        sample.Capture, directive.SettleFrames);
+                        sample.Capture, directive.SettleFrames, utcNow);
                 }
                 else
                 {
@@ -681,22 +765,51 @@ internal sealed partial class PassiveDriver : IDisposable
 
     private void EmitInitial(CaptureRecord capture)
     {
-        sink.WriteInitial(new InitialRecord(runId, capture));
-        stableState = epochState;
-        phase = PassivePhase.Ready;
-        epochState = null;
-        currentFrames = 0;
-        neutralSeen = false;
-        candidateSignature = null;
-        lastCapture = null;
+        if (!TryAcquireOutputLease())
+        {
+            ClearInitialAfterTerminalReturn();
+            return;
+        }
+        bool traceIoFailure = false;
         try
         {
-            reporter.Ready(0);
+            try { sink.WriteInitial(new InitialRecord(runId, capture)); }
+            catch (Exception error)
+            {
+                traceIoFailure = true;
+                SelectTraceIoFailure();
+                SafeDiagnostic(error);
+                return;
+            }
+            bool reportReady;
+            lock (outputLeaseSync)
+            {
+                reportReady = !TerminalSelected()
+                    && Read(ref disposed) == 0 && Read(ref disabled) == 0;
+                if (reportReady)
+                {
+                    stableState = epochState;
+                    phase = PassivePhase.Ready;
+                }
+                epochState = null;
+                currentFrames = 0;
+                neutralSeen = false;
+                candidateSignature = null;
+                lastCapture = null;
+            }
+            if (reportReady)
+            {
+                try { reporter.Ready(0); }
+                catch (Exception)
+                {
+                    TryFaultInternal(
+                        "observer_exception", FaultRequest.Derived());
+                }
+            }
         }
-        catch (Exception)
+        finally
         {
-            TryFaultInternal(
-                "observer_exception", FaultRequest.Derived());
+            ReleaseOutputLease(traceIoFailure);
         }
     }
 
@@ -814,35 +927,24 @@ internal sealed partial class PassiveDriver : IDisposable
         FaultRequest request)
     {
         OracleErrors.ForCode(code);
-        if (Interlocked.CompareExchange(
-            ref terminalOwner, 1, 0) != 0)
+        TerminalWork work;
+        bool execute;
+        lock (outputLeaseSync)
         {
-            return false;
+            if (Interlocked.CompareExchange(
+                ref terminalOwner, FaultTerminalOwner, NoTerminalOwner)
+                != NoTerminalOwner)
+                return false;
+            PassivePhase faultPhase = phase;
+            phase = PassivePhase.Faulted;
+            work = Read(ref prepared) == 0
+                ? TerminalWork.TraceIo()
+                : TerminalWork.Ordinary(
+                    code, BuildErrorRecord(code, request, faultPhase));
+            execute = QueueOrAcquireOutputLeaseLocked(work);
         }
-
-        PassivePhase faultPhase = phase;
-        phase = PassivePhase.Faulted;
-        if (Read(ref prepared) == 0)
-        {
-            BestEffortClose();
-            SafeFailed("trace_io_failed");
-            return true;
-        }
-
-        bool durable = false;
-        try
-        {
-            sink.WriteError(
-                BuildErrorRecord(code, request, faultPhase));
-            CloseSink();
-            durable = true;
-        }
-        catch (Exception error)
-        {
-            SafeDiagnostic(error);
-            BestEffortClose();
-        }
-        SafeFailed(durable ? code : "trace_io_failed");
+        if (execute)
+            ExecuteTerminalWorkAndRelease(work);
         return true;
     }
 
@@ -891,14 +993,21 @@ internal sealed partial class PassiveDriver : IDisposable
 
     private void SelectTraceIoFailure()
     {
-        if (Interlocked.CompareExchange(
-            ref terminalOwner, 1, 0) != 0)
+        TerminalWork work = null;
+        bool execute = false;
+        lock (outputLeaseSync)
         {
-            return;
+            if (Interlocked.CompareExchange(
+                ref terminalOwner, FaultTerminalOwner, NoTerminalOwner)
+                == NoTerminalOwner)
+            {
+                phase = PassivePhase.Faulted;
+                work = TerminalWork.TraceIo();
+                execute = QueueOrAcquireOutputLeaseLocked(work);
+            }
         }
-        phase = PassivePhase.Faulted;
-        BestEffortClose();
-        SafeFailed("trace_io_failed");
+        if (execute)
+            ExecuteTerminalWorkAndRelease(work);
     }
 
     private void CloseSink()

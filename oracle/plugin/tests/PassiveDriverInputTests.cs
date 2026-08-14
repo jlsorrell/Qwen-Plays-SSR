@@ -107,7 +107,7 @@ private static void AcceptedAndRefusedDirectionOutcomes()
     ReadyFailureFollowsClearedStep();
     PopulatedErrorPreflightRejectsBoundaryCapture();
     StepPrecedesIntermediateReady();
-    EverySettledStepReportsReady();
+    EveryIntermediateSettledStepReportsReady();
 }
 
 private static void UndoAcceptanceAndRestoreRules()
@@ -681,19 +681,17 @@ private static void StepPrecedesIntermediateReady()
         "Step precedes Ready");
 }
 
-private static void EverySettledStepReportsReady()
+private static void EveryIntermediateSettledStepReportsReady()
 {
     DriverFixture fixture = DriverFixture.Ready();
     fixture.OpenDirection(2, true, true, 10.0);
     fixture.SettleCurrent(ProtocolSamples.MovedCapture, 11.0);
     fixture.OpenDirection(0, false, false, 20.0);
     fixture.SettleCurrent(ProtocolSamples.MovedCapture, 21.0);
-    fixture.OpenUndo(true, false, 30.0);
-    fixture.SettleCurrent(ProtocolSamples.InitialCapture, 31.0);
     Check.Sequence(
-        new int[] { 0, 1, 2, 3 },
+        new int[] { 0, 1, 2 },
         fixture.Reporter.ReadyValues.ToArray(),
-        "every checkpoint Step reports Ready");
+        "every intermediate Step reports Ready");
 }
 
 private static void RestartDepthAndNullFields()

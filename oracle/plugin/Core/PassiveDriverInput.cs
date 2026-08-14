@@ -228,31 +228,49 @@ internal sealed partial class PassiveDriver
 
     private void EmitSettledAttempt(
         CaptureRecord capture,
-        int settleFrames)
+        int settleFrames,
+        DateTime utcNow)
     {
         if (!attemptPending || !attemptOutcomeKnown)
-            throw new InvalidOperationException(
-                "settled attempt lacks outcome");
-        sink.WriteStep(new StepRecord(
-            runId, completedInputs, attemptInput, attemptAccepted,
-            attemptMovementScheduled, settleFrames, false, capture));
-        stableState = attemptState;
-        attemptPending = false;
-        attemptOutcomeKnown = false;
-        attemptState = null;
-        candidateSignature = null;
-        lastCapture = null;
-        currentFrames = 0;
-        completedInputs++;
-        phase = PassivePhase.Ready;
+            throw new InvalidOperationException("settled attempt lacks outcome");
+        if (!TryAcquireOutputLease())
+        {
+            ClearAttemptAfterTerminalReturn();
+            return;
+        }
+        bool traceIoFailure = false;
         try
         {
-            reporter.Ready(completedInputs);
+            try
+            {
+                sink.WriteStep(new StepRecord(
+                    runId, completedInputs, attemptInput, attemptAccepted,
+                    attemptMovementScheduled, settleFrames, false, capture));
+            }
+            catch (TraceIoException)
+            {
+                traceIoFailure = true;
+                SelectTraceIoFailure();
+                throw;
+            }
+            StepContinuation continuation =
+                SelectDurableStepContinuation(utcNow);
+            if (continuation == StepContinuation.Complete)
+                FinishExpectedInputCount(utcNow);
+            else if (continuation == StepContinuation.Ready)
+            {
+                try { reporter.Ready(completedInputs); }
+                catch (Exception error)
+                {
+                    SafeDiagnostic(error);
+                    TryFaultInternal(
+                        "observer_exception", FaultRequest.Derived());
+                }
+            }
         }
-        catch (Exception error)
+        finally
         {
-            SafeDiagnostic(error);
-            TryFaultInternal("observer_exception", FaultRequest.Derived());
+            ReleaseOutputLease(traceIoFailure);
         }
     }
 }
