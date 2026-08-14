@@ -36,6 +36,7 @@ internal sealed partial class PassiveDriver : IDisposable
         internal bool HasOffendingInput;
         internal int OffendingIndex;
         internal OracleInput? OffendingInput;
+        internal bool ForceNullInputs;
 
         internal static FaultRequest Derived()
         {
@@ -56,6 +57,13 @@ internal sealed partial class PassiveDriver : IDisposable
             value.HasOffendingInput = true;
             value.OffendingIndex = index;
             value.OffendingInput = input;
+            return value;
+        }
+
+        internal static FaultRequest Restart()
+        {
+            FaultRequest value = new FaultRequest();
+            value.ForceNullInputs = true;
             return value;
         }
     }
@@ -518,7 +526,9 @@ internal sealed partial class PassiveDriver : IDisposable
     {
         if (!IsObservationActive())
         {
-            ConsumeLateToken(token, HookKind.PlayerPoll);
+            if (ConsumeLateToken(token, HookKind.PlayerPoll)
+                && playerPoll != null && playerPoll.Id == token.Id)
+                playerPoll = null;
             return;
         }
         if (!ConsumeOrdinaryToken(token, HookKind.PlayerPoll))
@@ -536,7 +546,9 @@ internal sealed partial class PassiveDriver : IDisposable
     {
         if (!IsObservationActive())
         {
-            ConsumeLateToken(token, HookKind.PlayerPoll);
+            if (ConsumeLateToken(token, HookKind.PlayerPoll)
+                && playerPoll != null && playerPoll.Id == token.Id)
+                playerPoll = null;
             return;
         }
         if (!ConsumeCleanupToken(token, HookKind.PlayerPoll))
@@ -786,14 +798,15 @@ internal sealed partial class PassiveDriver : IDisposable
         return token.TryConsume();
     }
 
-    private void ConsumeLateToken(
+    private bool ConsumeLateToken(
         HookToken token,
         HookKind expectedKind)
     {
         if (token == null || !token.Active)
-            return;
-        if (token.BelongsTo(this) && token.Kind == expectedKind)
-            token.TryConsume();
+            return false;
+        return token.BelongsTo(this)
+            && token.Kind == expectedKind
+            && token.TryConsume();
     }
 
     private bool TryFaultInternal(
@@ -843,7 +856,12 @@ internal sealed partial class PassiveDriver : IDisposable
         int frames;
         int? inputIndex = null;
         OracleInput? input = null;
-        if (attemptPending)
+        if (request.ForceNullInputs)
+        {
+            frames = request.FrameOverride.HasValue
+                ? request.FrameOverride.Value : activeFrames;
+        }
+        else if (attemptPending)
         {
             frames = request.FrameOverride.HasValue
                 ? request.FrameOverride.Value : activeFrames;

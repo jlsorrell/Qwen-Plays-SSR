@@ -17,6 +17,10 @@ internal static void Register(TestRegistry tests)
         AcceptedAndRefusedDirectionOutcomes);
     tests.Add("driver-input", "Undo acceptance and restore rules",
         UndoAcceptanceAndRestoreRules);
+    tests.Add("driver-input", "restart depth and null fields",
+        RestartDepthAndNullFields);
+    tests.Add("driver-input", "state replacement and ClearThrew",
+        StateReplacementAndClearThrew);
 }
 
 private static void AllCardinalsCorrelate()
@@ -690,6 +694,542 @@ private static void EverySettledStepReportsReady()
         new int[] { 0, 1, 2, 3 },
         fixture.Reporter.ReadyValues.ToArray(),
         "every checkpoint Step reports Ready");
+}
+
+private static void RestartDepthAndNullFields()
+{
+    RestartFieldsFollowEveryActivePhase();
+    RestartDepthPrecedesFault();
+    RestartNestedPathsBalance();
+    RestartCleanupIsLifoAndSingleUse();
+}
+
+private static void RestartFieldsFollowEveryActivePhase()
+{
+    AssertRestartError(DriverFixture.Active(), 0, "AwaitGame");
+
+    DriverFixture initial = DriverFixture.Active();
+    initial.Observe(
+        initial.State, initial.State, 1.0, false,
+        ProtocolSamples.InitialCapture);
+    AssertRestartError(initial, 1, "AwaitInitialNeutral");
+
+    AssertRestartError(DriverFixture.Ready(), 0, "Ready");
+
+    DriverFixture settling = DriverFixture.Ready();
+    settling.OpenDirection(2, true, true, 10.0);
+    settling.Observe(
+        settling.State, settling.State, 11.0, false,
+        ProtocolSamples.MovedCapture);
+    AssertRestartError(settling, 1, "Settling");
+}
+
+private static void AssertRestartError(
+    DriverFixture fixture, int frames, string label)
+{
+    HookToken token = fixture.Driver.RestartEntered();
+    ErrorRecord error = AssertInputError(
+        fixture, "unexpected_input", null, null, frames,
+        label + " Restart");
+    Check.True(error.LastCapture == null, label + " null capture");
+    Check.Equal(1, fixture.Sink.CloseCalls, label + " one Close");
+    Check.Sequence(
+        new string[] { "unexpected_input" },
+        fixture.Reporter.FailedCodes.ToArray(),
+        label + " Failed marker");
+    fixture.Driver.RestartReturned(token);
+}
+
+private static void RestartDepthPrecedesFault()
+{
+    List<string> events = new List<string>();
+    ReentrantErrorTraceSink sink = new ReentrantErrorTraceSink(events);
+    FakePassiveReporter reporter = new FakePassiveReporter(events);
+    PassiveDriver driver = new PassiveDriver(
+        sink, reporter, OracleProtocol.ExpectedInputCount, 600, 30.0);
+    sink.Driver = driver;
+    Check.True(driver.Prepare(ProtocolSamples.Run), "reentrant prepare");
+    Check.True(driver.Activate(), "reentrant activate");
+    HookToken outer = driver.RestartEntered();
+    driver.RestartReturned(outer);
+    Check.Equal(1, sink.ErrorRecords.Count, "one reentrant Error");
+    Check.Equal(0, sink.StepRecords.Count, "no reentrant Step");
+    Check.True(sink.Reentered, "Error callback reentered hooks");
+    Check.True(
+        sink.NestedRestartActive,
+        "Restart depth is established before Error reentry");
+    Check.True(
+        sink.SuppressedUndoActive,
+        "nested Restart keeps suppressed Undo bookkeeping active");
+    Check.True(
+        sink.NestedCleanupBalanced,
+        "reentrant Restart and Undo cleanup balances");
+    Check.Sequence(
+        new string[] { "unexpected_input" },
+        reporter.FailedCodes.ToArray(),
+        "outer Restart remains sole marker");
+}
+
+private static void RestartNestedPathsBalance()
+{
+    DriverFixture fixture = DriverFixture.Ready();
+    HookToken outer = fixture.Driver.RestartEntered();
+    HookToken inner = fixture.Driver.RestartEntered();
+    HookToken undo = fixture.Driver.UndoEntered(fixture.State, 10.0);
+    fixture.Driver.RestoreObserved();
+    fixture.Driver.UndoReturned(undo, false);
+    fixture.Driver.RestartThrew(inner);
+    fixture.Driver.RestartReturned(outer);
+    Check.Equal(1, fixture.Sink.ErrorRecords.Count, "nested one Error");
+    Check.Equal(0, fixture.Sink.StepRecords.Count, "nested no Step");
+}
+
+private static void RestartCleanupIsLifoAndSingleUse()
+{
+    DriverFixture fixture = DriverFixture.Ready();
+    HookToken outer = fixture.Driver.RestartEntered();
+    HookToken inner = fixture.Driver.RestartEntered();
+    Check.Throws<InvalidOperationException>(
+        delegate { fixture.Driver.RestartReturned(outer); },
+        "outer cannot pop before inner");
+    fixture.Driver.RestartReturned(inner);
+    fixture.Driver.RestartReturned(outer);
+    fixture.Driver.RestartReturned(outer);
+    fixture.Driver.RestartThrew(inner);
+    Check.Equal(1, fixture.Sink.ErrorRecords.Count, "cleanup one Error");
+}
+
+private static void StateReplacementAndClearThrew()
+{
+    StateSetUsesActualReturnedIdentity();
+    StateSetContextIdentityIsAuthoritative();
+    StateSetBeforeInitialRulesAreExact();
+    StateSetAfterInitialRulesAreExact();
+    ClearThrewDispatchesAndProtectsOwnership();
+    LateHookCleanupIsOutputInert();
+}
+
+private static void StateSetUsesActualReturnedIdentity()
+{
+    DriverFixture same = DriverFixture.Ready();
+    HookToken sameToken = same.Driver.StateSetEntered(
+        same.State, same.OtherState);
+    same.Driver.StateSetReturned(sameToken, same.State, 10.0);
+    Check.Equal(PassivePhase.Ready, same.Driver.Phase, "actual same wins");
+    Check.Equal(0, same.Sink.ErrorRecords.Count, "requested ignored");
+
+    DriverFixture different = DriverFixture.Ready();
+    HookToken differentToken = different.Driver.StateSetEntered(
+        different.State, different.State);
+    different.Driver.StateSetReturned(
+        differentToken, different.OtherState, 10.0);
+    AssertInputError(
+        different, "state_replaced", null, null, 0,
+        "actual different wins");
+}
+
+private static void StateSetContextIdentityIsAuthoritative()
+{
+    DriverFixture fixture = DriverFixture.Ready();
+    HookToken token = fixture.Driver.StateSetEntered(
+        fixture.State, fixture.OtherState);
+    fixture.Driver.StateSetReturned(token, fixture.State, 10.0);
+    Check.Equal(PassivePhase.Ready, fixture.Driver.Phase, "entry identity");
+    Check.Equal(0, fixture.Sink.ErrorRecords.Count, "no diagnostic equality");
+}
+
+private static void StateSetBeforeInitialRulesAreExact()
+{
+    DriverFixture toNull = DriverFixture.Active();
+    toNull.Observe(
+        toNull.State, toNull.State, 1.0, true,
+        ProtocolSamples.Capture("null-stale"));
+    toNull.Neutral();
+    toNull.Observe(
+        toNull.State, toNull.State, 2.0, true,
+        ProtocolSamples.Capture("null-stale"));
+    HookToken nullToken = toNull.Driver.StateSetEntered(
+        toNull.State, toNull.OtherState);
+    toNull.Driver.StateSetReturned(nullToken, null, 3.0);
+    Check.Equal(PassivePhase.AwaitGame, toNull.Driver.Phase, "null AwaitGame");
+    Check.Equal(0, toNull.Driver.CurrentSettleFrames, "null clears frames");
+
+    DriverFixture nullFault = DriverFixture.Active();
+    nullFault.Observe(
+        nullFault.State, nullFault.State, 1.0, true,
+        ProtocolSamples.Capture("null-capture"));
+    nullFault.Neutral();
+    nullFault.Observe(
+        nullFault.State, nullFault.State, 2.0, true,
+        ProtocolSamples.Capture("null-capture"));
+    HookToken nullFaultToken = nullFault.Driver.StateSetEntered(
+        nullFault.State, nullFault.OtherState);
+    nullFault.Driver.StateSetReturned(nullFaultToken, null, 3.0);
+    Check.True(
+        nullFault.Driver.TryFault("capture_failed"),
+        "post-null generic fault claims");
+    Check.True(
+        nullFault.Sink.ErrorRecords[0].LastCapture == null,
+        "null reset clears last capture");
+
+    DriverFixture same = DriverFixture.Active();
+    same.Observe(
+        same.State, same.State, 1.0, false,
+        ProtocolSamples.InitialCapture);
+    HookToken sameToken = same.Driver.StateSetEntered(
+        same.State, same.OtherState);
+    same.Driver.StateSetReturned(sameToken, same.State, 2.0);
+    Check.Equal(
+        PassivePhase.AwaitInitialNeutral, same.Driver.Phase,
+        "same reference retains Initial");
+
+    DriverFixture replaced = DriverFixture.Active();
+    replaced.Observe(
+        replaced.State, replaced.State, 1.0, true,
+        ProtocolSamples.Capture("replacement-stale"));
+    replaced.Neutral();
+    replaced.Observe(
+        replaced.State, replaced.State, 2.0, true,
+        ProtocolSamples.Capture("replacement-stale"));
+    HookToken replacedToken = replaced.Driver.StateSetEntered(
+        replaced.State, replaced.State);
+    replaced.Driver.StateSetReturned(
+        replacedToken, replaced.OtherState, 3.0);
+    Check.Equal(
+        PassivePhase.AwaitInitialNeutral, replaced.Driver.Phase,
+        "replacement restarts Initial");
+    Check.Equal(0, replaced.Driver.CurrentSettleFrames, "replacement frame zero");
+    replaced.Neutral();
+    replaced.Observe(
+        replaced.OtherState, replaced.OtherState, 4.0, true,
+        ProtocolSamples.Capture("replacement-fresh"));
+    Check.Equal(
+        0, replaced.Sink.InitialRecords.Count,
+        "replacement requires first fresh capture");
+    replaced.Observe(
+        replaced.OtherState, replaced.OtherState, 5.0, true,
+        ProtocolSamples.Capture("replacement-fresh"));
+    Check.Equal(
+        1, replaced.Sink.InitialRecords.Count,
+        "replacement settles only a fresh pair");
+}
+
+private static void StateSetAfterInitialRulesAreExact()
+{
+    DriverFixture ready = DriverFixture.Ready();
+    HookToken same = ready.Driver.StateSetEntered(
+        ready.State, ready.OtherState);
+    ready.Driver.StateSetReturned(same, ready.State, 10.0);
+    Check.Equal(0, ready.Sink.ErrorRecords.Count, "Ready same no Error");
+
+    DriverFixture replaced = DriverFixture.Ready();
+    HookToken different = replaced.Driver.StateSetEntered(
+        replaced.State, replaced.State);
+    replaced.Driver.StateSetReturned(
+        different, replaced.OtherState, 10.0);
+    AssertInputError(
+        replaced, "state_replaced", null, null, 0,
+        "Ready replacement");
+
+    DriverFixture settling = DriverFixture.Ready();
+    settling.OpenDirection(2, true, true, 10.0);
+    settling.Observe(
+        settling.State, settling.State, 11.0, false,
+        ProtocolSamples.MovedCapture);
+    HookToken pending = settling.Driver.StateSetEntered(
+        settling.State, settling.State);
+    settling.Driver.StateSetReturned(
+        pending, settling.OtherState, 12.0);
+    AssertInputError(
+        settling, "state_replaced", 0, OracleInput.West, 1,
+        "Settling replacement");
+}
+
+private static void ClearThrewDispatchesAndProtectsOwnership()
+{
+    DriverFixture dispatchPoll = DriverFixture.Ready();
+    HookToken directPoll = dispatchPoll.Driver.PlayerPollEntered();
+    dispatchPoll.Driver.ClearThrew(directPoll);
+    dispatchPoll.Driver.PhysicalPollReturned(8);
+    dispatchPoll.Driver.ClearThrew(directPoll);
+
+    DriverFixture dispatchProcess = DriverFixture.Ready();
+    HookToken directProcessPoll = dispatchProcess.Driver.PlayerPollEntered();
+    dispatchProcess.Driver.PhysicalPollReturned(2);
+    HookToken directProcess = dispatchProcess.Driver.ProcessInputEntered(
+        dispatchProcess.State, 2, 10.0);
+    dispatchProcess.Driver.ClearThrew(directProcess);
+    dispatchProcess.Driver.ProcessInputReturned(
+        directProcess, true, false);
+    Check.Throws<InvalidOperationException>(
+        delegate
+        {
+            Check.True(
+                dispatchProcess.Driver.PendingAccepted,
+                "cleared ProcessInput getter unexpectedly returned");
+        },
+        "cleared ProcessInput cannot publish an outcome");
+    dispatchProcess.Driver.ClearThrew(directProcess);
+    dispatchProcess.Driver.ClearThrew(directProcessPoll);
+
+    DriverFixture dispatchUndo = DriverFixture.Ready();
+    HookToken directUndo = dispatchUndo.Driver.UndoEntered(
+        dispatchUndo.State, 10.0);
+    dispatchUndo.Driver.ClearThrew(directUndo);
+    dispatchUndo.Driver.RestoreObserved();
+    dispatchUndo.Driver.ClearThrew(directUndo);
+
+    DriverFixture dispatchRestart = DriverFixture.Ready();
+    HookToken directRestart = dispatchRestart.Driver.RestartEntered();
+    dispatchRestart.Driver.ClearThrew(directRestart);
+    HookToken postClearRestart = dispatchRestart.Driver.RestartEntered();
+    Check.False(
+        postClearRestart.Active,
+        "cleared Restart leaves no nested depth after terminal selection");
+    dispatchRestart.Driver.ClearThrew(directRestart);
+
+    DriverFixture dispatchStateSet = DriverFixture.Ready();
+    HookToken directStateSet = dispatchStateSet.Driver.StateSetEntered(
+        dispatchStateSet.State, dispatchStateSet.OtherState);
+    dispatchStateSet.Driver.ClearThrew(directStateSet);
+    dispatchStateSet.Driver.StateSetReturned(
+        directStateSet, dispatchStateSet.OtherState, 10.0);
+    dispatchStateSet.Driver.ClearThrew(directStateSet);
+
+    Check.Equal(
+        1, dispatchPoll.Sink.ErrorRecords.Count,
+        "cleared PlayerPoll rejects later physical return");
+    AssertInputError(
+        dispatchProcess, "hook_order_mismatch", 0, OracleInput.West, 0,
+        "cleared ProcessInput rejects consumed-token return");
+    Check.Equal(
+        1, dispatchUndo.Sink.ErrorRecords.Count,
+        "cleared Undo rejects later Restore");
+    Check.Equal(
+        1, dispatchRestart.Sink.ErrorRecords.Count,
+        "Restart direct ClearThrew adds no second Error");
+    AssertInputError(
+        dispatchStateSet, "hook_order_mismatch", null, null, 0,
+        "cleared StateSet rejects consumed-token return");
+
+    DriverFixture pollFixture = DriverFixture.Ready();
+    HookToken poll = pollFixture.Driver.PlayerPollEntered();
+    HookToken pollUnrelated = pollFixture.Driver.StateSetEntered(
+        pollFixture.State, pollFixture.OtherState);
+    List<string> pollBefore = new List<string>(pollFixture.Events);
+    pollFixture.Driver.ClearThrew(pollUnrelated);
+    pollFixture.Driver.PhysicalPollReturned(8);
+    pollFixture.Driver.PlayerPollReturned(poll);
+    pollFixture.Driver.ClearThrew(poll);
+    Check.Sequence(
+        pollBefore, pollFixture.Events,
+        "StateSet cleanup preserves PlayerPoll until matching cleanup");
+
+    DriverFixture processFixture = DriverFixture.Ready();
+    HookToken processPoll = processFixture.Driver.PlayerPollEntered();
+    processFixture.Driver.PhysicalPollReturned(2);
+    HookToken process = processFixture.Driver.ProcessInputEntered(
+        processFixture.State, 2, 10.0);
+    HookToken processUnrelated = processFixture.Driver.StateSetEntered(
+        processFixture.State, processFixture.OtherState);
+    List<string> processBefore = new List<string>(processFixture.Events);
+    processFixture.Driver.ClearThrew(processUnrelated);
+    processFixture.Driver.ProcessInputReturned(process, true, false);
+    Check.True(
+        processFixture.Driver.PendingAccepted,
+        "ProcessInput remains live after StateSet cleanup");
+    processFixture.Driver.ClearThrew(process);
+    processFixture.Driver.ClearThrew(processPoll);
+    Check.Sequence(
+        processBefore, processFixture.Events,
+        "StateSet cleanup preserves ProcessInput until matching cleanup");
+
+    DriverFixture undoFixture = DriverFixture.Ready();
+    HookToken undo = undoFixture.Driver.UndoEntered(
+        undoFixture.State, 10.0);
+    HookToken undoUnrelated = undoFixture.Driver.StateSetEntered(
+        undoFixture.State, undoFixture.OtherState);
+    List<string> undoBefore = new List<string>(undoFixture.Events);
+    undoFixture.Driver.ClearThrew(undoUnrelated);
+    undoFixture.Driver.RestoreObserved();
+    undoFixture.Driver.UndoReturned(undo, false);
+    Check.True(
+        undoFixture.Driver.PendingAccepted,
+        "Undo remains live after StateSet cleanup");
+    undoFixture.Driver.ClearThrew(undo);
+    Check.Sequence(
+        undoBefore, undoFixture.Events,
+        "StateSet cleanup preserves Undo until matching cleanup");
+
+    DriverFixture restartFixture = DriverFixture.Ready();
+    HookToken restartUnrelated = restartFixture.Driver.StateSetEntered(
+        restartFixture.State, restartFixture.OtherState);
+    HookToken restart = restartFixture.Driver.RestartEntered();
+    List<string> restartBefore = new List<string>(restartFixture.Events);
+    restartFixture.Driver.ClearThrew(restartUnrelated);
+    HookToken nestedRestart = restartFixture.Driver.RestartEntered();
+    Check.True(
+        nestedRestart.Active,
+        "Restart depth remains live after StateSet cleanup");
+    restartFixture.Driver.RestartReturned(nestedRestart);
+    restartFixture.Driver.RestartReturned(restart);
+    restartFixture.Driver.ClearThrew(restart);
+    Check.Sequence(
+        restartBefore, restartFixture.Events,
+        "StateSet cleanup preserves Restart until matching cleanup");
+
+    DriverFixture stateSetFixture = DriverFixture.Ready();
+    HookToken stateSet = stateSetFixture.Driver.StateSetEntered(
+        stateSetFixture.State, stateSetFixture.OtherState);
+    HookToken stateSetUnrelated =
+        stateSetFixture.Driver.PlayerPollEntered();
+    List<string> stateSetBefore = new List<string>(stateSetFixture.Events);
+    stateSetFixture.Driver.ClearThrew(stateSetUnrelated);
+    stateSetFixture.Driver.StateSetReturned(
+        stateSet, stateSetFixture.State, 10.0);
+    stateSetFixture.Driver.ClearThrew(stateSet);
+    Check.Sequence(
+        stateSetBefore, stateSetFixture.Events,
+        "PlayerPoll cleanup preserves StateSet until matching cleanup");
+
+    DriverFixture owner = DriverFixture.Ready();
+    HookToken ownerPoll = owner.Driver.PlayerPollEntered();
+    DriverFixture foreign = DriverFixture.Ready();
+    HookToken foreignPoll = foreign.Driver.PlayerPollEntered();
+    List<string> ownerBefore = new List<string>(owner.Events);
+    Check.Throws<InvalidOperationException>(
+        delegate { owner.Driver.ClearThrew(foreignPoll); },
+        "foreign cleanup rejected");
+    owner.Driver.PhysicalPollReturned(8);
+    owner.Driver.PlayerPollReturned(ownerPoll);
+    owner.Driver.ClearThrew(ownerPoll);
+    foreign.Driver.ClearThrew(foreignPoll);
+    Check.Sequence(
+        ownerBefore, owner.Events,
+        "foreign cleanup cannot clear the owned PlayerPoll");
+
+    Check.Equal(0, pollFixture.Sink.ErrorRecords.Count, "poll cleanup no Error");
+    Check.Equal(
+        0, processFixture.Sink.ErrorRecords.Count,
+        "ProcessInput cleanup no Error");
+    Check.Equal(0, undoFixture.Sink.ErrorRecords.Count, "Undo cleanup no Error");
+    Check.Equal(
+        1, restartFixture.Sink.ErrorRecords.Count,
+        "Restart entry retains its sole terminal Error");
+    Check.Equal(
+        0, stateSetFixture.Sink.ErrorRecords.Count,
+        "StateSet cleanup no Error");
+}
+
+private static void LateHookCleanupIsOutputInert()
+{
+    DriverFixture faulted = DriverFixture.Ready();
+    HookToken poll = faulted.Driver.PlayerPollEntered();
+    Check.True(faulted.Driver.TryFault("capture_failed"), "fault wins");
+    List<string> faultedBefore = new List<string>(faulted.Events);
+    faulted.Driver.PlayerPollReturned(poll);
+    faulted.Driver.PlayerPollThrew(poll);
+    Check.Sequence(
+        faultedBefore, faulted.Events,
+        "late faulted PlayerPoll is output-inert");
+
+    DriverFixture disabled = DriverFixture.Ready();
+    HookToken disabledStateSet = disabled.Driver.StateSetEntered(
+        disabled.State, disabled.OtherState);
+    disabled.Driver.Disable();
+    List<string> disabledBefore = new List<string>(disabled.Events);
+    disabled.Driver.StateSetReturned(
+        disabledStateSet, disabled.OtherState, 10.0);
+    disabled.Driver.StateSetThrew(disabledStateSet);
+    Check.Sequence(
+        disabledBefore, disabled.Events,
+        "late Disabled StateSet is output-inert");
+
+    DriverFixture disposedProcess = DriverFixture.Ready();
+    HookToken processPoll = disposedProcess.Driver.PlayerPollEntered();
+    disposedProcess.Driver.PhysicalPollReturned(2);
+    HookToken process = disposedProcess.Driver.ProcessInputEntered(
+        disposedProcess.State, 2, 10.0);
+    disposedProcess.Driver.Dispose();
+    List<string> processBefore = new List<string>(disposedProcess.Events);
+    disposedProcess.Driver.ProcessInputReturned(process, true, true);
+    disposedProcess.Driver.ProcessInputThrew(process);
+    disposedProcess.Driver.PlayerPollReturned(processPoll);
+    Check.Sequence(
+        processBefore, disposedProcess.Events,
+        "late disposed ProcessInput is output-inert");
+
+    DriverFixture disposedUndo = DriverFixture.Ready();
+    HookToken undo = disposedUndo.Driver.UndoEntered(
+        disposedUndo.State, 10.0);
+    disposedUndo.Driver.RestoreObserved();
+    disposedUndo.Driver.Dispose();
+    List<string> undoBefore = new List<string>(disposedUndo.Events);
+    disposedUndo.Driver.UndoReturned(undo, false);
+    disposedUndo.Driver.UndoThrew(undo);
+    Check.Sequence(
+        undoBefore, disposedUndo.Events,
+        "late disposed Undo is output-inert");
+
+    Check.Equal(1, faulted.Sink.ErrorRecords.Count, "faulted one Error");
+    Check.Equal(
+        0, disabled.Sink.ErrorRecords.Count,
+        "Disabled StateSet no Error");
+    Check.Equal(
+        0, disposedProcess.Sink.ErrorRecords.Count,
+        "disposed ProcessInput no Error");
+    Check.Equal(
+        0, disposedUndo.Sink.ErrorRecords.Count,
+        "disposed Undo no Error");
+}
+
+private sealed class ReentrantErrorTraceSink : ITraceSink
+{
+    private readonly IList<string> events;
+    internal readonly List<ErrorRecord> ErrorRecords =
+        new List<ErrorRecord>();
+    internal readonly List<StepRecord> StepRecords =
+        new List<StepRecord>();
+    internal PassiveDriver Driver;
+    internal bool Reentered;
+    internal bool NestedRestartActive;
+    internal bool SuppressedUndoActive;
+    internal bool NestedCleanupBalanced;
+
+    internal ReentrantErrorTraceSink(IList<string> eventsValue)
+    {
+        events = eventsValue;
+    }
+
+    public void WriteRun(RunRecord record) { events.Add("sink:run"); }
+    public void WriteInitial(InitialRecord record)
+    {
+        events.Add("sink:initial");
+    }
+    public void WriteStep(StepRecord record)
+    {
+        StepRecords.Add(record);
+        events.Add("sink:step:" + record.InputIndex.ToString());
+    }
+    public void WriteEnd(EndRecord record) { events.Add("sink:end"); }
+    public void WriteError(ErrorRecord record)
+    {
+        events.Add("sink:error:" + record.Code);
+        if (!Reentered)
+        {
+            Reentered = true;
+            HookToken nested = Driver.RestartEntered();
+            HookToken undo = Driver.UndoEntered(new object(), 1.0);
+            NestedRestartActive = nested.Active;
+            SuppressedUndoActive = undo.Active;
+            Driver.RestoreObserved();
+            Driver.UndoReturned(undo, false);
+            Driver.RestartReturned(nested);
+            NestedCleanupBalanced = true;
+        }
+        ErrorRecords.Add(record);
+    }
+    public void Close() { events.Add("sink:close"); }
 }
 
 }

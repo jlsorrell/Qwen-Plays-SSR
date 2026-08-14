@@ -23,7 +23,7 @@ private static int Main(string[] args)
             { "sink", 6 },
             { "driver-boundary", 2 },
             { "driver-initial", 8 },
-            { "driver-input", 6 }
+            { "driver-input", 8 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)

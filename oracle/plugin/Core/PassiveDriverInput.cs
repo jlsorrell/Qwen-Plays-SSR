@@ -58,6 +58,14 @@ internal sealed partial class PassiveDriver
     internal void ProcessInputReturned(
         HookToken token, bool accepted, bool movementScheduled)
     {
+        if (!IsObservationActive())
+        {
+            if (ConsumeLateToken(token, HookKind.ProcessInput)
+                && processInputContext != null
+                && processInputContext.Id == token.Id)
+                processInputContext = null;
+            return;
+        }
         if (!ConsumeOrdinaryToken(token, HookKind.ProcessInput))
             return;
         if (processInputContext == null
@@ -67,7 +75,7 @@ internal sealed partial class PassiveDriver
             return;
         }
         processInputContext = null;
-        if (!attemptPending || !IsObservationActive())
+        if (restartDepth > 0 || !attemptPending)
             return;
         attemptAccepted = accepted;
         attemptMovementScheduled = movementScheduled;
@@ -89,7 +97,8 @@ internal sealed partial class PassiveDriver
 
     internal HookToken UndoEntered(object stateReference, double nowSeconds)
     {
-        if (!IsObservationActive())
+        bool suppressed = restartDepth > 0;
+        if (!suppressed && !IsObservationActive())
             return HookToken.Inert(HookKind.Undo);
         if (undoContext != null)
         {
@@ -100,12 +109,15 @@ internal sealed partial class PassiveDriver
         if (!token.Active)
             return token;
         undoContext = new UndoContext { Id = token.Id };
-        HandleManualAttempt(OracleInput.Undo, stateReference, nowSeconds);
+        if (!suppressed)
+            HandleManualAttempt(OracleInput.Undo, stateReference, nowSeconds);
         return token;
     }
 
     internal void RestoreObserved()
     {
+        if (restartDepth > 0)
+            return;
         if (!IsObservationActive())
             return;
         if (undoContext == null || undoContext.RestoreSeen)
@@ -118,6 +130,13 @@ internal sealed partial class PassiveDriver
 
     internal void UndoReturned(HookToken token, bool movementScheduled)
     {
+        if (!IsObservationActive())
+        {
+            if (ConsumeLateToken(token, HookKind.Undo)
+                && undoContext != null && undoContext.Id == token.Id)
+                undoContext = null;
+            return;
+        }
         if (!ConsumeOrdinaryToken(token, HookKind.Undo))
             return;
         if (undoContext == null || undoContext.Id != token.Id)
@@ -127,7 +146,7 @@ internal sealed partial class PassiveDriver
         }
         bool accepted = undoContext.RestoreSeen;
         undoContext = null;
-        if (!attemptPending || !IsObservationActive())
+        if (restartDepth > 0 || !attemptPending)
             return;
         attemptAccepted = accepted;
         attemptMovementScheduled = movementScheduled;
