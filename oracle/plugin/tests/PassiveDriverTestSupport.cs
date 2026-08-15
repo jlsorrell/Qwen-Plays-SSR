@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
+using System.Threading;
 
 internal sealed class FakeTraceSink : ITraceSink
 {
@@ -23,8 +25,16 @@ internal sealed class FakeTraceSink : ITraceSink
         new List<ErrorRecord>();
     internal Exception RunFailure { get; set; }
     internal Exception InitialFailure { get; set; }
+    internal Exception StepFailure { get; set; }
+    internal Exception EndFailure { get; set; }
     internal Exception ErrorFailure { get; set; }
     internal Exception CloseFailure { get; set; }
+    internal Action<RunRecord> RunEntering { get; set; }
+    internal Action<InitialRecord> InitialEntering { get; set; }
+    internal Action<StepRecord> StepEntering { get; set; }
+    internal Action<StepRecord> StepObserved { get; set; }
+    internal Action<EndRecord> EndObserved { get; set; }
+    internal Action<ErrorRecord> ErrorEntering { get; set; }
     internal int RunCalls;
     internal int InitialCalls;
     internal int StepCalls;
@@ -34,6 +44,8 @@ internal sealed class FakeTraceSink : ITraceSink
 
     public void WriteRun(RunRecord record)
     {
+        if (RunEntering != null)
+            RunEntering(record);
         RunCalls++;
         Add("sink:run");
         if (RunFailure != null)
@@ -43,6 +55,8 @@ internal sealed class FakeTraceSink : ITraceSink
 
     public void WriteInitial(InitialRecord record)
     {
+        if (InitialEntering != null)
+            InitialEntering(record);
         InitialCalls++;
         Add("sink:initial");
         if (InitialFailure != null)
@@ -52,20 +66,32 @@ internal sealed class FakeTraceSink : ITraceSink
 
     public void WriteStep(StepRecord record)
     {
+        if (StepEntering != null)
+            StepEntering(record);
         StepCalls++;
-        Add("sink:step");
+        Add("sink:step:" + record.InputIndex.ToString());
+        if (StepFailure != null)
+            throw StepFailure;
         StepRecords.Add(record);
+        if (StepObserved != null)
+            StepObserved(record);
     }
 
     public void WriteEnd(EndRecord record)
     {
         EndCalls++;
         Add("sink:end");
+        if (EndFailure != null)
+            throw EndFailure;
         EndRecords.Add(record);
+        if (EndObserved != null)
+            EndObserved(record);
     }
 
     public void WriteError(ErrorRecord record)
     {
+        if (ErrorEntering != null)
+            ErrorEntering(record);
         ErrorCalls++;
         Add("sink:error:" + record.Code);
         if (ErrorFailure != null)
@@ -100,8 +126,12 @@ internal sealed class FakePassiveReporter : IPassiveReporter
     internal readonly List<string> FailedCodes = new List<string>();
     internal readonly List<string> Diagnostics = new List<string>();
     internal Exception ReadyFailure { get; set; }
+    internal Exception CompleteFailure { get; set; }
     internal Exception FailedFailure { get; set; }
     internal Exception DiagnosticFailure { get; set; }
+    internal Action<int> ReadyObserved { get; set; }
+    internal Action CompleteObserved { get; set; }
+    internal Action<string> DiagnosticObserved { get; set; }
     internal int CompleteCalls;
     internal int FailedCalls;
     internal int DiagnosticCalls;
@@ -110,6 +140,8 @@ internal sealed class FakePassiveReporter : IPassiveReporter
     {
         ReadyValues.Add(completedInputs);
         Add("report:ready:" + completedInputs.ToString() + "/3");
+        if (ReadyObserved != null)
+            ReadyObserved(completedInputs);
         if (ReadyFailure != null)
             throw ReadyFailure;
     }
@@ -118,6 +150,10 @@ internal sealed class FakePassiveReporter : IPassiveReporter
     {
         CompleteCalls++;
         Add("report:complete");
+        if (CompleteObserved != null)
+            CompleteObserved();
+        if (CompleteFailure != null)
+            throw CompleteFailure;
     }
 
     public void Failed(string code)
@@ -134,6 +170,8 @@ internal sealed class FakePassiveReporter : IPassiveReporter
         DiagnosticCalls++;
         Diagnostics.Add(message);
         Add("report:diagnostic:" + message);
+        if (DiagnosticObserved != null)
+            DiagnosticObserved(message);
         if (DiagnosticFailure != null)
             throw DiagnosticFailure;
     }
@@ -141,6 +179,104 @@ internal sealed class FakePassiveReporter : IPassiveReporter
     private void Add(string value)
     {
         events.Add(value);
+    }
+}
+
+internal sealed class BlockingTraceOutput : ITraceOutput
+{
+    private readonly object sync = new object();
+    private readonly List<byte> bytes = new List<byte>();
+    private bool blockNextWrite;
+    private ManualResetEvent writeEntered;
+    private ManualResetEvent releaseWrite;
+    private bool closed;
+    private int flushCalls;
+    private int closeCalls;
+
+    internal int ByteCount
+    {
+        get { lock (sync) { return bytes.Count; } }
+    }
+
+    internal int FlushCalls
+    {
+        get { lock (sync) { return flushCalls; } }
+    }
+
+    internal int CloseCalls
+    {
+        get { lock (sync) { return closeCalls; } }
+    }
+
+    internal byte[] SnapshotBytes()
+    {
+        lock (sync) { return bytes.ToArray(); }
+    }
+
+    internal void BlockNextWrite(
+        ManualResetEvent entered, ManualResetEvent release)
+    {
+        if (entered == null || release == null)
+            throw new ArgumentNullException(
+                entered == null ? "entered" : "release");
+        lock (sync)
+        {
+            if (blockNextWrite || closed)
+                throw new InvalidOperationException("output cannot arm write");
+            blockNextWrite = true;
+            writeEntered = entered;
+            releaseWrite = release;
+        }
+    }
+
+    public int Write(byte[] buffer, int offset, int count)
+    {
+        ManualResetEvent entered = null;
+        ManualResetEvent release = null;
+        lock (sync)
+        {
+            if (blockNextWrite)
+            {
+                blockNextWrite = false;
+                entered = writeEntered;
+                release = releaseWrite;
+            }
+        }
+        if (entered != null)
+        {
+            entered.Set();
+            if (!release.WaitOne(5000))
+                throw new TimeoutException("blocked write was not released");
+        }
+        lock (sync)
+        {
+            if (closed)
+                throw new IOException("write after close");
+            for (int index = 0; index < count; index++)
+                bytes.Add(buffer[offset + index]);
+        }
+        return count;
+    }
+
+    public void Flush()
+    {
+        lock (sync)
+        {
+            if (closed)
+                throw new IOException("flush after close");
+            flushCalls++;
+        }
+    }
+
+    public void Close()
+    {
+        lock (sync)
+        {
+            closeCalls++;
+            if (closed)
+                throw new IOException("duplicate close");
+            closed = true;
+        }
     }
 }
 
@@ -265,6 +401,17 @@ internal sealed partial class DriverFixture
     internal readonly PassiveDriver Driver;
     internal readonly PassiveUpdateBoundary Boundary;
 
+    private DriverFixture(
+        int maxFrames, double maxSeconds, ITraceSink selectedSink)
+    {
+        Sink = selectedSink as FakeTraceSink;
+        Reporter = new FakePassiveReporter(Events);
+        Driver = new PassiveDriver(
+            selectedSink, Reporter, OracleProtocol.ExpectedInputCount,
+            maxFrames, maxSeconds);
+        Boundary = new PassiveUpdateBoundary(Driver);
+    }
+
     private DriverFixture(int maxFrames, double maxSeconds)
     {
         Sink = new FakeTraceSink(Events);
@@ -310,37 +457,140 @@ internal sealed partial class DriverFixture
 
     internal static DriverFixture Ready()
     {
-        DriverFixture fixture = Active();
+        return Ready(600, 30.0);
+    }
+
+    internal static DriverFixture Ready(int maxFrames, double maxSeconds)
+    {
+        return MakeReady(new DriverFixture(maxFrames, maxSeconds));
+    }
+
+    internal static DriverFixture ReadyWithSink(ITraceSink sink)
+    {
+        if (sink == null)
+            throw new ArgumentNullException("sink");
+        return MakeReady(new DriverFixture(600, 30.0, sink));
+    }
+
+    private static DriverFixture MakeReady(DriverFixture fixture)
+    {
+        Check.True(fixture.Driver.Prepare(ProtocolSamples.Run), "prepare");
+        Check.True(fixture.Driver.Activate(), "activate");
         fixture.Observe(
-            fixture.State,
-            true,
-            fixture.State,
-            true,
-            1.0,
-            true,
+            fixture.State, fixture.State, 1.0, true,
             ProtocolSamples.Capture("ready-a"));
         fixture.Neutral();
         fixture.Observe(
-            fixture.State,
-            true,
-            fixture.State,
-            true,
-            2.0,
-            true,
+            fixture.State, fixture.State, 2.0, true,
             ProtocolSamples.Capture("ready-pair"));
         fixture.Observe(
-            fixture.State,
-            true,
-            fixture.State,
-            true,
-            3.0,
-            true,
+            fixture.State, fixture.State, 3.0, true,
             ProtocolSamples.Capture("ready-pair"));
-        Check.Equal(
-            PassivePhase.Ready,
-            fixture.Driver.Phase,
-            "ready fixture");
+        Check.Equal(PassivePhase.Ready, fixture.Driver.Phase, "ready fixture");
         return fixture;
+    }
+
+    internal FakeUpdateObservation ObserveAtUtc(
+        object firstState,
+        object secondState,
+        double now,
+        bool quiescent,
+        CaptureRecord capture,
+        DateTime utc)
+    {
+        FakeUpdateObservation observation = NewObservation(
+            firstState, firstState != null,
+            secondState, secondState != null,
+            now, quiescent, capture);
+        observation.Utc = utc;
+        Boundary.Observe(observation);
+        return observation;
+    }
+
+    internal void SettleCurrentAtUtc(
+        CaptureRecord capture, double firstUpdateSeconds, DateTime finalUtc)
+    {
+        Neutral();
+        ObserveAtUtc(
+            State, State, firstUpdateSeconds, true, capture, finalUtc);
+        ObserveAtUtc(
+            State, State, firstUpdateSeconds + 1.0, true, capture, finalUtc);
+    }
+
+    internal void CompleteFirstTwoSteps()
+    {
+        OpenDirection(2, true, true, 10.0);
+        SettleCurrentAtUtc(ProtocolSamples.MovedCapture, 11.0, UtcFinish);
+        OpenDirection(0, false, false, 20.0);
+        SettleCurrentAtUtc(ProtocolSamples.MovedCapture, 21.0, UtcFinish);
+    }
+
+    internal void OpenThirdStep()
+    {
+        OpenUndo(true, false, 30.0);
+        Neutral();
+    }
+
+    internal void ObserveThirdCandidate()
+    {
+        ObserveAtUtc(
+            State, State, 31.0, true,
+            ProtocolSamples.InitialCapture, UtcFinish);
+    }
+
+    internal void ObserveThirdMatch(DateTime finalUtc)
+    {
+        ObserveAtUtc(
+            State, State, 32.0, true,
+            ProtocolSamples.InitialCapture, finalUtc);
+    }
+
+    internal void CompleteThirdStep(DateTime finalUtc)
+    {
+        OpenThirdStep();
+        ObserveThirdCandidate();
+        ObserveThirdMatch(finalUtc);
+    }
+
+    internal void CompleteThreeSteps()
+    {
+        CompleteFirstTwoSteps();
+        CompleteThirdStep(UtcFinish);
+    }
+
+    internal void OpenDirection(
+        int rawDirection,
+        bool accepted,
+        bool movementScheduled,
+        double nowSeconds)
+    {
+        HookToken poll = Driver.PlayerPollEntered();
+        Driver.PhysicalPollReturned(rawDirection);
+        HookToken input = Driver.ProcessInputEntered(
+            State, rawDirection, nowSeconds);
+        Driver.ProcessInputReturned(
+            input, accepted, movementScheduled);
+        Driver.PlayerPollReturned(poll);
+    }
+
+    internal void OpenUndo(
+        bool restored,
+        bool movementScheduled,
+        double nowSeconds)
+    {
+        HookToken undo = Driver.UndoEntered(State, nowSeconds);
+        if (restored)
+            Driver.RestoreObserved();
+        Driver.UndoReturned(undo, movementScheduled);
+    }
+
+    internal void SettleCurrent(
+        CaptureRecord capture,
+        double firstUpdateSeconds)
+    {
+        Neutral();
+        Observe(State, State, firstUpdateSeconds, true, capture);
+        Observe(State, State, firstUpdateSeconds + 1.0, true, capture);
     }
 
     internal FakeUpdateObservation Observe(

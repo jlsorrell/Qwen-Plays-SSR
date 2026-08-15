@@ -1,8 +1,55 @@
 using System;
 using System.Threading;
 
-internal sealed class PassiveDriver : IDisposable
+internal sealed partial class PassiveDriver : IDisposable
 {
+    private const int NoTerminalOwner = 0;
+    private const int FaultTerminalOwner = 1;
+    private const int SuccessTerminalOwner = 2;
+    private const int DisposeTerminalOwner = 3;
+
+    private enum TerminalWorkKind
+    {
+        OrdinaryFault,
+        TraceIoFailure,
+        Dispose
+    }
+
+    private enum StepContinuation
+    {
+        None,
+        Ready,
+        Complete
+    }
+
+    private sealed class TerminalWork
+    {
+        internal TerminalWorkKind Kind;
+        internal string Code;
+        internal ErrorRecord Error;
+
+        internal static TerminalWork Ordinary(
+            string code, ErrorRecord error)
+        {
+            return new TerminalWork
+            {
+                Kind = TerminalWorkKind.OrdinaryFault,
+                Code = code,
+                Error = error
+            };
+        }
+
+        internal static TerminalWork TraceIo()
+        {
+            return new TerminalWork { Kind = TerminalWorkKind.TraceIoFailure };
+        }
+
+        internal static TerminalWork DisposeOnly()
+        {
+            return new TerminalWork { Kind = TerminalWorkKind.Dispose };
+        }
+    }
+
     private static readonly string[] RecordErrorCodes =
         new string[]
         {
@@ -26,11 +73,17 @@ internal sealed class PassiveDriver : IDisposable
     {
         internal long Id;
         internal bool SawPhysicalPoll;
+        internal int RawDirection;
+        internal bool SawManualProcessInput;
     }
 
     private struct FaultRequest
     {
         internal int? FrameOverride;
+        internal bool HasOffendingInput;
+        internal int OffendingIndex;
+        internal OracleInput? OffendingInput;
+        internal bool ForceNullInputs;
 
         internal static FaultRequest Derived()
         {
@@ -43,10 +96,28 @@ internal sealed class PassiveDriver : IDisposable
             value.FrameOverride = frames;
             return value;
         }
+
+        internal static FaultRequest Offending(
+            int index, OracleInput? input)
+        {
+            FaultRequest value = new FaultRequest();
+            value.HasOffendingInput = true;
+            value.OffendingIndex = index;
+            value.OffendingInput = input;
+            return value;
+        }
+
+        internal static FaultRequest Restart()
+        {
+            FaultRequest value = new FaultRequest();
+            value.ForceNullInputs = true;
+            return value;
+        }
     }
 
     private readonly ITraceSink sink;
     private readonly IPassiveReporter reporter;
+    private readonly int expectedInputCount;
     private readonly int maxSettleFrames;
     private readonly double maxSettleSeconds;
 
@@ -58,6 +129,9 @@ internal sealed class PassiveDriver : IDisposable
     private int disposed;
     private int sinkCloseAttempted;
     private int terminalOwner;
+    private readonly object outputLeaseSync = new object();
+    private bool outputLeaseActive;
+    private TerminalWork deferredTerminalWork;
 
     private string runId;
     private DateTime startedAtUtc;
@@ -73,6 +147,14 @@ internal sealed class PassiveDriver : IDisposable
     private byte[] candidateSignature;
     private CaptureRecord lastCapture;
     private PlayerPollContext playerPoll;
+    private int completedInputs;
+    private object stableState;
+    private bool attemptPending;
+    private bool attemptOutcomeKnown;
+    private OracleInput attemptInput;
+    private bool attemptAccepted;
+    private bool attemptMovementScheduled;
+    private object attemptState;
 
     internal PassiveDriver(
         ITraceSink sink,
@@ -100,6 +182,7 @@ internal sealed class PassiveDriver : IDisposable
         }
         this.sink = sink;
         this.reporter = reporter;
+        this.expectedInputCount = expectedInputCount;
         this.maxSettleFrames = maxSettleFrames;
         this.maxSettleSeconds = maxSettleSeconds;
         phase = PassivePhase.Disabled;
@@ -122,7 +205,37 @@ internal sealed class PassiveDriver : IDisposable
 
     internal bool UpdateObservationActive
     {
-        get { return IsInitialObservationActive(); }
+        get { return IsObservationActive(); }
+    }
+
+    internal OracleInput PendingInput
+    {
+        get
+        {
+            if (!attemptPending)
+                throw new InvalidOperationException("no pending attempt");
+            return attemptInput;
+        }
+    }
+
+    internal bool PendingAccepted
+    {
+        get
+        {
+            if (!attemptPending || !attemptOutcomeKnown)
+                throw new InvalidOperationException("attempt outcome is pending");
+            return attemptAccepted;
+        }
+    }
+
+    internal bool PendingMovementScheduled
+    {
+        get
+        {
+            if (!attemptPending || !attemptOutcomeKnown)
+                throw new InvalidOperationException("attempt outcome is pending");
+            return attemptMovementScheduled;
+        }
     }
 
     internal bool Prepare(RunRecord run)
@@ -136,19 +249,37 @@ internal sealed class PassiveDriver : IDisposable
         }
         if (Read(ref disposed) != 0 || Read(ref disabled) != 0)
             return false;
+        if (!TryAcquireOutputLease())
+            return false;
+        bool runTraceIoFailure = false;
+        bool runPrepared = false;
         try
         {
-            sink.WriteRun(run);
-            runId = run.RunId;
-            startedAtUtc = run.StartedAtUtc;
-            Interlocked.Exchange(ref prepared, 1);
+            try { sink.WriteRun(run); }
+            catch (Exception error)
+            {
+                runTraceIoFailure = true;
+                SelectTraceIoFailure();
+                SafeDiagnostic(error);
+                return false;
+            }
+            lock (outputLeaseSync)
+            {
+                if (TerminalSelected() || Read(ref disposed) != 0
+                    || Read(ref disabled) != 0)
+                    return false;
+                runId = run.RunId;
+                startedAtUtc = run.StartedAtUtc;
+                Interlocked.Exchange(ref prepared, 1);
+                runPrepared = true;
+            }
             return true;
         }
-        catch (Exception error)
+        finally
         {
-            SafeDiagnostic(error);
-            SelectTraceIoFailure();
-            return false;
+            ReleaseOutputLease(runTraceIoFailure);
+            if (!runPrepared)
+                Interlocked.Exchange(ref prepared, 0);
         }
     }
 
@@ -176,7 +307,7 @@ internal sealed class PassiveDriver : IDisposable
         bool usableGame,
         double nowSeconds)
     {
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
             return UpdateDirective.Inactive(this);
         if (!IsValidMonotonic(nowSeconds))
         {
@@ -204,8 +335,11 @@ internal sealed class PassiveDriver : IDisposable
         int settleFrames = 0;
         bool inspectGate = false;
         bool timeoutAfterSample = false;
-        if (phase == PassivePhase.AwaitInitialNeutral)
+        if (phase == PassivePhase.AwaitInitialNeutral
+            || phase == PassivePhase.Settling)
         {
+            string timeoutCode = phase == PassivePhase.Settling
+                ? "settle_timeout" : "initial_settle_timeout";
             if (nowSeconds < epochStartedAt)
             {
                 TryFaultInternal(
@@ -218,7 +352,7 @@ internal sealed class PassiveDriver : IDisposable
                 || elapsed > maxSettleSeconds)
             {
                 TryFaultInternal(
-                    "initial_settle_timeout",
+                    timeoutCode,
                     FaultRequest.DerivedWithFrames(
                         Math.Min(nextFrames, maxSettleFrames)));
                 return UpdateDirective.Inactive(this);
@@ -261,7 +395,7 @@ internal sealed class PassiveDriver : IDisposable
                 "hook_order_mismatch", FaultRequest.Derived());
             return false;
         }
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
         {
             ConsumeAuthorizedDirective(directive);
             return false;
@@ -316,6 +450,19 @@ internal sealed class PassiveDriver : IDisposable
             return true;
         }
 
+        object expectedState = phase == PassivePhase.Settling
+            ? attemptState : stableState;
+        if ((phase == PassivePhase.Ready || phase == PassivePhase.Settling)
+            && (!usableGame || stateReference == null
+                || !Object.ReferenceEquals(expectedState, stateReference)))
+        {
+            ConsumeAuthorizedDirective(directive);
+            TryFaultInternal("state_replaced", FaultRequest.Derived());
+            return false;
+        }
+        if (phase == PassivePhase.Ready || phase == PassivePhase.Settling)
+            return true;
+
         ConsumeAuthorizedDirective(directive);
         return false;
     }
@@ -337,7 +484,7 @@ internal sealed class PassiveDriver : IDisposable
                 "update directive is not outstanding");
         }
         outstandingUpdate = null;
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
             return;
         if (directive.Epoch != epoch)
         {
@@ -348,7 +495,7 @@ internal sealed class PassiveDriver : IDisposable
         try
         {
             OracleValidation.Utc(utcNow, "utcNow");
-            CompleteUpdateCore(directive, sample);
+            CompleteUpdateCore(directive, sample, utcNow);
         }
         catch (RecordTooLargeException)
         {
@@ -366,9 +513,7 @@ internal sealed class PassiveDriver : IDisposable
         }
         catch (Exception error)
         {
-            SafeDiagnostic(error);
-            TryFaultInternal(
-                "observer_exception", FaultRequest.Derived());
+            FaultObserverWithOutputLease(error);
         }
     }
 
@@ -400,7 +545,7 @@ internal sealed class PassiveDriver : IDisposable
 
     internal HookToken PlayerPollEntered()
     {
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
             return HookToken.Inert(HookKind.PlayerPoll);
         if (playerPoll != null)
         {
@@ -415,7 +560,7 @@ internal sealed class PassiveDriver : IDisposable
 
     internal void PhysicalPollReturned(int rawDirection)
     {
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
             return;
         if (playerPoll == null || playerPoll.SawPhysicalPoll)
         {
@@ -424,24 +569,34 @@ internal sealed class PassiveDriver : IDisposable
             return;
         }
         playerPoll.SawPhysicalPoll = true;
+        playerPoll.RawDirection = rawDirection;
         if (rawDirection == 8)
         {
-            if (phase == PassivePhase.AwaitInitialNeutral)
+            if (phase == PassivePhase.AwaitInitialNeutral
+                || phase == PassivePhase.Settling)
                 neutralSeen = true;
             return;
         }
-        if (phase == PassivePhase.AwaitInitialNeutral)
+        if (phase == PassivePhase.AwaitInitialNeutral
+            || phase == PassivePhase.Settling)
         {
             neutralSeen = false;
             candidateSignature = null;
         }
+        OracleInput ignored;
+        if (!TryMapCardinal(rawDirection, out ignored))
+            TryFaultInternal(
+                "unexpected_input",
+                FaultRequest.Offending(completedInputs, null));
     }
 
     internal void PlayerPollReturned(HookToken token)
     {
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
         {
-            ConsumeLateToken(token, HookKind.PlayerPoll);
+            if (ConsumeLateToken(token, HookKind.PlayerPoll)
+                && playerPoll != null && playerPoll.Id == token.Id)
+                playerPoll = null;
             return;
         }
         if (!ConsumeOrdinaryToken(token, HookKind.PlayerPoll))
@@ -457,9 +612,11 @@ internal sealed class PassiveDriver : IDisposable
 
     internal void PlayerPollThrew(HookToken token)
     {
-        if (!IsInitialObservationActive())
+        if (!IsObservationActive())
         {
-            ConsumeLateToken(token, HookKind.PlayerPoll);
+            if (ConsumeLateToken(token, HookKind.PlayerPoll)
+                && playerPoll != null && playerPoll.Id == token.Id)
+                playerPoll = null;
             return;
         }
         if (!ConsumeCleanupToken(token, HookKind.PlayerPoll))
@@ -492,12 +649,26 @@ internal sealed class PassiveDriver : IDisposable
         if (Interlocked.CompareExchange(ref disposed, 1, 0) != 0)
             return;
         Interlocked.Exchange(ref disabled, 1);
-        BestEffortClose();
+        TerminalWork work = null;
+        bool execute = false;
+        lock (outputLeaseSync)
+        {
+            if (Interlocked.CompareExchange(
+                ref terminalOwner, DisposeTerminalOwner, NoTerminalOwner)
+                == NoTerminalOwner)
+            {
+                work = TerminalWork.DisposeOnly();
+                execute = QueueOrAcquireOutputLeaseLocked(work);
+            }
+        }
+        if (execute)
+            ExecuteTerminalWorkAndRelease(work);
     }
 
     private void CompleteUpdateCore(
         UpdateDirective directive,
-        GateSample sample)
+        GateSample sample,
+        DateTime utcNow)
     {
         if (sample == null)
             throw new ArgumentNullException("sample");
@@ -508,8 +679,19 @@ internal sealed class PassiveDriver : IDisposable
                     "gate inspected without an active epoch");
             return;
         }
-        if (phase != PassivePhase.AwaitInitialNeutral)
+        if (phase == PassivePhase.Ready)
+        {
+            if (sample.Kind != GateSampleKind.NotInspected)
+                throw new InvalidOperationException(
+                    "gate inspected without an active epoch");
             return;
+        }
+        if (phase != PassivePhase.AwaitInitialNeutral
+            && phase != PassivePhase.Settling)
+            return;
+
+        string timeoutCode = phase == PassivePhase.Settling
+            ? "settle_timeout" : "initial_settle_timeout";
 
         if (sample.Kind == GateSampleKind.NotInspected)
         {
@@ -535,7 +717,15 @@ internal sealed class PassiveDriver : IDisposable
             if (candidateSignature != null
                 && SameBytes(candidateSignature, signature))
             {
-                EmitInitial(sample.Capture);
+                if (phase == PassivePhase.Settling)
+                {
+                    EmitSettledAttempt(
+                        sample.Capture, directive.SettleFrames, utcNow);
+                }
+                else
+                {
+                    EmitInitial(sample.Capture);
+                }
                 return;
             }
             candidateSignature = signature;
@@ -548,7 +738,7 @@ internal sealed class PassiveDriver : IDisposable
         if (directive.TimeoutAfterSample)
         {
             TryFaultInternal(
-                "initial_settle_timeout",
+                timeoutCode,
                 FaultRequest.Derived());
         }
     }
@@ -560,8 +750,8 @@ internal sealed class PassiveDriver : IDisposable
             CanonicalJson.EncodeError(
                 new ErrorRecord(
                     runId,
-                    null,
-                    null,
+                    Int32.MaxValue,
+                    OracleInput.North,
                     RecordErrorCodes[index],
                     OracleProtocol.MaxSettleFrames,
                     capture));
@@ -573,20 +763,51 @@ internal sealed class PassiveDriver : IDisposable
 
     private void EmitInitial(CaptureRecord capture)
     {
-        sink.WriteInitial(new InitialRecord(runId, capture));
-        phase = PassivePhase.Ready;
-        currentFrames = 0;
-        neutralSeen = false;
-        candidateSignature = null;
-        lastCapture = null;
+        if (!TryAcquireOutputLease())
+        {
+            ClearInitialAfterTerminalReturn();
+            return;
+        }
+        bool traceIoFailure = false;
         try
         {
-            reporter.Ready(0);
+            try { sink.WriteInitial(new InitialRecord(runId, capture)); }
+            catch (Exception error)
+            {
+                traceIoFailure = true;
+                SelectTraceIoFailure();
+                SafeDiagnostic(error);
+                return;
+            }
+            bool reportReady;
+            lock (outputLeaseSync)
+            {
+                reportReady = !TerminalSelected()
+                    && Read(ref disposed) == 0 && Read(ref disabled) == 0;
+                if (reportReady)
+                {
+                    stableState = epochState;
+                    phase = PassivePhase.Ready;
+                }
+                epochState = null;
+                currentFrames = 0;
+                neutralSeen = false;
+                candidateSignature = null;
+                lastCapture = null;
+            }
+            if (reportReady)
+            {
+                try { reporter.Ready(0); }
+                catch (Exception)
+                {
+                    TryFaultInternal(
+                        "observer_exception", FaultRequest.Derived());
+                }
+            }
         }
-        catch (Exception)
+        finally
         {
-            TryFaultInternal(
-                "observer_exception", FaultRequest.Derived());
+            ReleaseOutputLease(traceIoFailure);
         }
     }
 
@@ -688,14 +909,15 @@ internal sealed class PassiveDriver : IDisposable
         return token.TryConsume();
     }
 
-    private void ConsumeLateToken(
+    private bool ConsumeLateToken(
         HookToken token,
         HookKind expectedKind)
     {
         if (token == null || !token.Active)
-            return;
-        if (token.BelongsTo(this) && token.Kind == expectedKind)
-            token.TryConsume();
+            return false;
+        return token.BelongsTo(this)
+            && token.Kind == expectedKind
+            && token.TryConsume();
     }
 
     private bool TryFaultInternal(
@@ -703,35 +925,24 @@ internal sealed class PassiveDriver : IDisposable
         FaultRequest request)
     {
         OracleErrors.ForCode(code);
-        if (Interlocked.CompareExchange(
-            ref terminalOwner, 1, 0) != 0)
+        TerminalWork work;
+        bool execute;
+        lock (outputLeaseSync)
         {
-            return false;
+            if (Interlocked.CompareExchange(
+                ref terminalOwner, FaultTerminalOwner, NoTerminalOwner)
+                != NoTerminalOwner)
+                return false;
+            PassivePhase faultPhase = phase;
+            phase = PassivePhase.Faulted;
+            work = Read(ref prepared) == 0
+                ? TerminalWork.TraceIo()
+                : TerminalWork.Ordinary(
+                    code, BuildErrorRecord(code, request, faultPhase));
+            execute = QueueOrAcquireOutputLeaseLocked(work);
         }
-
-        PassivePhase faultPhase = phase;
-        phase = PassivePhase.Faulted;
-        if (Read(ref prepared) == 0)
-        {
-            BestEffortClose();
-            SafeFailed("trace_io_failed");
-            return true;
-        }
-
-        bool durable = false;
-        try
-        {
-            sink.WriteError(
-                BuildErrorRecord(code, request, faultPhase));
-            CloseSink();
-            durable = true;
-        }
-        catch (Exception error)
-        {
-            SafeDiagnostic(error);
-            BestEffortClose();
-        }
-        SafeFailed(durable ? code : "trace_io_failed");
+        if (execute)
+            ExecuteTerminalWorkAndRelease(work);
         return true;
     }
 
@@ -740,18 +951,39 @@ internal sealed class PassiveDriver : IDisposable
         FaultRequest request,
         PassivePhase faultPhase)
     {
+        int activeFrames = (faultPhase == PassivePhase.AwaitInitialNeutral
+            || faultPhase == PassivePhase.Settling) ? currentFrames : 0;
         int frames;
-        if (request.FrameOverride.HasValue)
-            frames = request.FrameOverride.Value;
-        else if (faultPhase == PassivePhase.AwaitInitialNeutral)
-            frames = currentFrames;
+        int? inputIndex = null;
+        OracleInput? input = null;
+        if (request.ForceNullInputs)
+        {
+            frames = request.FrameOverride.HasValue
+                ? request.FrameOverride.Value : activeFrames;
+        }
+        else if (attemptPending)
+        {
+            frames = request.FrameOverride.HasValue
+                ? request.FrameOverride.Value : activeFrames;
+            inputIndex = completedInputs;
+            input = attemptInput;
+        }
+        else if (request.HasOffendingInput)
+        {
+            frames = request.FrameOverride.HasValue
+                ? request.FrameOverride.Value : 0;
+            inputIndex = request.OffendingIndex;
+            input = request.OffendingInput;
+        }
         else
-            frames = 0;
-
+        {
+            frames = request.FrameOverride.HasValue
+                ? request.FrameOverride.Value : activeFrames;
+        }
         return new ErrorRecord(
             runId,
-            null,
-            null,
+            inputIndex,
+            input,
             code,
             frames,
             lastCapture);
@@ -759,14 +991,21 @@ internal sealed class PassiveDriver : IDisposable
 
     private void SelectTraceIoFailure()
     {
-        if (Interlocked.CompareExchange(
-            ref terminalOwner, 1, 0) != 0)
+        TerminalWork work = null;
+        bool execute = false;
+        lock (outputLeaseSync)
         {
-            return;
+            if (Interlocked.CompareExchange(
+                ref terminalOwner, FaultTerminalOwner, NoTerminalOwner)
+                == NoTerminalOwner)
+            {
+                phase = PassivePhase.Faulted;
+                work = TerminalWork.TraceIo();
+                execute = QueueOrAcquireOutputLeaseLocked(work);
+            }
         }
-        phase = PassivePhase.Faulted;
-        BestEffortClose();
-        SafeFailed("trace_io_failed");
+        if (execute)
+            ExecuteTerminalWorkAndRelease(work);
     }
 
     private void CloseSink()
@@ -820,14 +1059,15 @@ internal sealed class PassiveDriver : IDisposable
         }
     }
 
-    private bool IsInitialObservationActive()
+    private bool IsObservationActive()
     {
-        return Read(ref prepared) != 0
-            && Read(ref disabled) == 0
+        return Read(ref prepared) != 0 && Read(ref disabled) == 0
             && Read(ref disposed) == 0
             && !TerminalSelected()
             && (phase == PassivePhase.AwaitGame
-                || phase == PassivePhase.AwaitInitialNeutral);
+                || phase == PassivePhase.AwaitInitialNeutral
+                || phase == PassivePhase.Ready
+                || phase == PassivePhase.Settling);
     }
 
     private bool TerminalSelected()
