@@ -513,9 +513,7 @@ internal sealed partial class PassiveDriver : IDisposable
         }
         catch (Exception error)
         {
-            SafeDiagnosticWithOutputLease(error);
-            TryFaultInternal(
-                "observer_exception", FaultRequest.Derived());
+            FaultObserverWithOutputLease(error);
         }
     }
 

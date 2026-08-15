@@ -262,9 +262,7 @@ internal sealed partial class PassiveDriver
                 try { reporter.Ready(completedInputs); }
                 catch (Exception error)
                 {
-                    SafeDiagnostic(error);
-                    TryFaultInternal(
-                        "observer_exception", FaultRequest.Derived());
+                    FaultObserverBeforeDiagnostic(error);
                 }
             }
         }

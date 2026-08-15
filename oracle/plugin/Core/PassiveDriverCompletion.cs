@@ -17,18 +17,25 @@ internal sealed partial class PassiveDriver
         }
     }
 
-    private void SafeDiagnosticWithOutputLease(Exception error)
+    private void FaultObserverWithOutputLease(Exception error)
     {
         if (!TryAcquireOutputLease())
             return;
         try
         {
-            SafeDiagnostic(error);
+            FaultObserverBeforeDiagnostic(error);
         }
         finally
         {
             ReleaseOutputLease(false);
         }
+    }
+
+    private void FaultObserverBeforeDiagnostic(Exception error)
+    {
+        TryFaultInternal(
+            "observer_exception", FaultRequest.Derived());
+        SafeDiagnostic(error);
     }
 
     private bool QueueOrAcquireOutputLeaseLocked(TerminalWork work)

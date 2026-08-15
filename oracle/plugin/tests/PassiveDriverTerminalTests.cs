@@ -420,6 +420,8 @@ private static void FirstFaultWinsRace()
     FaultWinsWhileDurableStepIsBlocked();
     FaultDuringReadyIsDeferred();
     FaultDuringDiagnosticIsDeferred();
+    CompleteUpdateFailureOwnsBeforeDiagnosticDispose();
+    ReadyFailureOwnsBeforeDiagnosticDispose();
     FaultFaultRace();
     SuccessWinsWhileEndIsBlocked();
     SuccessWinsWhileCompleteIsBlocked();
@@ -855,9 +857,9 @@ private static void FaultDuringDiagnosticIsDeferred()
         delegate { FinishFirstStepMatch(fixture); },
         delegate
         {
-            Check.True(
+            Check.False(
                 fixture.Driver.TryFault("capture_failed"),
-                "Diagnostic contender claims");
+                "Ready failure already owns during Diagnostic");
             Check.Equal(
                 1, fixture.Reporter.DiagnosticCalls,
                 "Diagnostic is visible before terminal drain");
@@ -870,9 +872,101 @@ private static void FaultDuringDiagnosticIsDeferred()
         delegate
         {
             AssertOnlyError(
-                fixture, "capture_failed", null, null, 0,
-                "Diagnostic deferred fault");
+                fixture, "observer_exception", null, null, 0,
+                "Diagnostic deferred observer fault");
         });
+}
+
+private static void ReadyFailureOwnsBeforeDiagnosticDispose()
+{
+    DriverFixture fixture = DriverFixture.Ready();
+    PrepareFirstStepMatch(fixture);
+    fixture.Reporter.ReadyFailure =
+        new InvalidOperationException("Ready(1) failure");
+    bool faultedBeforeDiagnosticReentry = false;
+    fixture.Reporter.DiagnosticObserved = delegate(string message)
+    {
+        faultedBeforeDiagnosticReentry =
+            fixture.Driver.Phase == PassivePhase.Faulted;
+        fixture.Driver.Dispose();
+    };
+
+    FinishFirstStepMatch(fixture);
+
+    Check.Equal(1, fixture.Sink.StepRecords.Count, "Ready failure Step durable");
+    Check.Equal(
+        1, fixture.Reporter.DiagnosticCalls,
+        "Ready failure one Diagnostic");
+    Check.True(
+        faultedBeforeDiagnosticReentry,
+        "Ready failure owns before Diagnostic Dispose");
+    ErrorRecord error = AssertOnlyError(
+        fixture, "observer_exception", null, null, 0,
+        "Ready failure Diagnostic Dispose");
+    Check.True(error.LastCapture == null, "Ready failure null capture");
+    Check.Equal(
+        PassivePhase.Faulted, fixture.Driver.Phase,
+        "Ready failure remains Faulted after Dispose");
+    Check.Sequence(
+        new int[] { 0, 1 }, fixture.Reporter.ReadyValues.ToArray(),
+        "Ready failure Ready values");
+    Check.Sequence(
+        new string[]
+        {
+            "sink:step:0", "report:ready:1/3",
+            "report:diagnostic:System.InvalidOperationException",
+            "sink:error:observer_exception", "sink:close",
+            "report:failed:observer_exception"
+        },
+        fixture.Events.GetRange(fixture.Events.Count - 6, 6).ToArray(),
+        "Ready failure authoritative terminal suffix");
+}
+
+private static void CompleteUpdateFailureOwnsBeforeDiagnosticDispose()
+{
+    DriverFixture fixture = DriverFixture.Ready();
+    bool faultedBeforeDiagnosticReentry = false;
+    fixture.Reporter.DiagnosticObserved = delegate(string message)
+    {
+        faultedBeforeDiagnosticReentry =
+            fixture.Driver.Phase == PassivePhase.Faulted;
+        fixture.Driver.Dispose();
+    };
+    UpdateDirective directive = fixture.Driver.BeginUpdate(
+        fixture.State, true, 10.0);
+    Check.True(directive.Active, "generic failure directive active");
+    Check.True(
+        fixture.Driver.AuthorizeUpdate(
+            directive, fixture.State, true, true),
+        "generic failure directive authorized");
+
+    fixture.Driver.CompleteUpdate(
+        directive,
+        GateSample.Captured(ProtocolSamples.MovedCapture),
+        DriverFixture.UtcFinish);
+
+    Check.Equal(
+        1, fixture.Reporter.DiagnosticCalls,
+        "generic failure one Diagnostic");
+    Check.True(
+        faultedBeforeDiagnosticReentry,
+        "generic failure owns before Diagnostic Dispose");
+    ErrorRecord error = AssertOnlyError(
+        fixture, "observer_exception", null, null, 0,
+        "generic failure Diagnostic Dispose");
+    Check.True(error.LastCapture == null, "generic failure null capture");
+    Check.Equal(
+        PassivePhase.Faulted, fixture.Driver.Phase,
+        "generic failure remains Faulted after Dispose");
+    Check.Sequence(
+        new string[]
+        {
+            "report:diagnostic:System.InvalidOperationException",
+            "sink:error:observer_exception", "sink:close",
+            "report:failed:observer_exception"
+        },
+        fixture.Events.GetRange(fixture.Events.Count - 4, 4).ToArray(),
+        "generic failure authoritative terminal suffix");
 }
 
 private static void FaultFaultRace()
