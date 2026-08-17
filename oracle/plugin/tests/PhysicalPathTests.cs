@@ -73,14 +73,27 @@ internal static class PhysicalPathTests
         for (int index = 0; index < drift.Length; index++)
         {
             FakePhysicalPathOperations ops = Base(); ops.Kinds["/a"] = PhysicalPathKind.Directory; ops.Real["/a"] = "/real/a";
+            string requested = drift[index] == "suffix" || drift[index] == "target" ? "/a/b/c" : "/a/b";
             int called = 0;
             OracleConfigurationException error = Check.Throws<OracleConfigurationException>(delegate {
-                PhysicalPath.ResolvePossiblyAbsent("/a/b", ops, delegate {
+                PhysicalPath.ResolvePossiblyAbsent(requested, ops, delegate {
                     called++; if (drift[index] == "kind") ops.Kinds["/a"] = PhysicalPathKind.File;
                     else if (drift[index] == "symlink") ops.Kinds["/a"] = PhysicalPathKind.Symlink;
                     else if (drift[index] == "canonical") ops.Real["/a"] = "/changed/a";
-                    else if (drift[index] == "suffix") ops.Kinds["/a/b"] = PhysicalPathKind.Directory;
-                    else ops.Kinds["/a/b"] = PhysicalPathKind.Directory;
+                    else if (drift[index] == "suffix")
+                    {
+                        ops.Kinds["/a/b"] = PhysicalPathKind.Directory;
+                        ops.Real["/a/b"] = "/real/a/b";
+                        Check.Equal(PhysicalPathKind.Missing, ops.Classify("/a/b/c"), "suffix target remains missing");
+                    }
+                    else
+                    {
+                        ops.Kinds["/a/b"] = PhysicalPathKind.Directory;
+                        ops.Kinds["/a/b/c"] = PhysicalPathKind.Directory;
+                        ops.Real["/a/b"] = "/real/a/b";
+                        ops.Real["/a/b/c"] = "/real/a/b/c";
+                        Check.Equal(PhysicalPathKind.Directory, ops.Classify("/a/b/c"), "target becomes directory");
+                    }
                 }); }, "drift failure");
             Check.Equal("invalid_path", error.Code, "drift code"); Check.Equal(1, called, "callback once");
         }
