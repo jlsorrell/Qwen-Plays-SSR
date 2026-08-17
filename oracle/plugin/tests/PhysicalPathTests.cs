@@ -84,7 +84,6 @@ internal static class PhysicalPathTests
                     {
                         ops.Kinds["/a/b"] = PhysicalPathKind.Directory;
                         ops.Real["/a/b"] = "/real/a/b";
-                        Check.Equal(PhysicalPathKind.Missing, ops.Classify("/a/b/c"), "suffix target remains missing");
                     }
                     else
                     {
@@ -92,10 +91,24 @@ internal static class PhysicalPathTests
                         ops.Kinds["/a/b/c"] = PhysicalPathKind.Directory;
                         ops.Real["/a/b"] = "/real/a/b";
                         ops.Real["/a/b/c"] = "/real/a/b/c";
-                        Check.Equal(PhysicalPathKind.Directory, ops.Classify("/a/b/c"), "target becomes directory");
                     }
                 }); }, "drift failure");
-            Check.Equal("invalid_path", error.Code, "drift code"); Check.Equal(1, called, "callback once");
+            Check.Equal("invalid_path", error.Code, "drift code");
+            Check.Equal(1, called, "callback once");
+            if (drift[index] == "suffix")
+            {
+                Check.Equal(PhysicalPathKind.Directory, ops.Classify("/a/b"), "suffix ancestor becomes directory");
+                Check.Equal("/real/a/b", ops.RealPath("/a/b"), "suffix ancestor real path");
+                Check.Equal(PhysicalPathKind.Missing, ops.Classify("/a/b/c"), "suffix target remains missing");
+                Check.False(ops.Real.ContainsKey("/a/b/c"), "suffix target real path remains absent");
+            }
+            else if (drift[index] == "target")
+            {
+                Check.Equal(PhysicalPathKind.Directory, ops.Classify("/a/b"), "target ancestor becomes directory");
+                Check.Equal("/real/a/b", ops.RealPath("/a/b"), "target ancestor real path");
+                Check.Equal(PhysicalPathKind.Directory, ops.Classify("/a/b/c"), "target becomes directory");
+                Check.Equal("/real/a/b/c", ops.RealPath("/a/b/c"), "target real path");
+            }
         }
     }
     private static void AssertInvalid(string path, PhysicalPathKind kind)
