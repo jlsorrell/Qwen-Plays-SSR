@@ -5,7 +5,7 @@ using System.Globalization;
 internal static class OracleProtocol
 {
     internal const int SchemaVersion = 1;
-    internal const string PluginVersion = "0.2.0";
+    internal const string PluginVersion = "0.3.0";
     internal const int ExpectedInputCount = 3;
     internal const int MaxSettleFrames = 600;
     internal const int MaxSettleSeconds = 30;

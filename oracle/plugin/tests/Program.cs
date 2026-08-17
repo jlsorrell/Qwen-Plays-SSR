@@ -14,6 +14,13 @@ private static int Main(string[] args)
         CaptureSignatureTests.Register(tests);
         TraceSinkTests.Register(tests);
         PassiveDriverTests.Register(tests);
+        ConfigurationTests.Register(tests, options);
+        PhysicalPathTests.Register(tests);
+        GameObservationTests.Register(tests);
+        PatchBoundaryTests.Register(tests);
+        PassiveStartupTests.Register(tests);
+        PassiveReporterTests.Register(tests);
+        AssemblySurfaceTests.Register(tests, options);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
             { "protocol", 4 },
@@ -22,7 +29,15 @@ private static int Main(string[] args)
             { "driver-boundary", 2 },
             { "driver-initial", 8 },
             { "driver-input", 8 },
-            { "driver-terminal", 6 }
+            { "driver-terminal", 6 },
+            { "config", 6 },
+            { "path", 6 },
+            { "observation", 5 },
+            { "boundary", 5 },
+            { "startup", 7 },
+            { "reporter", 4 },
+            { "assembly", 4 },
+            { "plugin", 6 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)

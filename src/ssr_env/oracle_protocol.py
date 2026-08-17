@@ -537,8 +537,8 @@ def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
     )
     if assembly_hash != EXPECTED_ASSEMBLY_SHA256:
         _record_error(reader, "game_assembly_sha256 is not the reviewed hash")
-    if cast(str, values["plugin_version"]) != "0.2.0":
-        _record_error(reader, "plugin_version must be '0.2.0'")
+    if cast(str, values["plugin_version"]) != "0.3.0":
+        _record_error(reader, "plugin_version must be '0.3.0'")
     if values["input_sha256"] is not None:
         _record_error(reader, "input_sha256 must be null in passive mode")
     if cast(int, values["expected_input_count"]) != EXPECTED_INPUT_COUNT:

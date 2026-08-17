@@ -1,0 +1,1722 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
+using System.Text;
+
+internal sealed class ParameterShape
+{
+    internal ParameterShape(string type) { Type = type; }
+    internal string Type;
+}
+
+internal sealed class MethodShape
+{
+    internal MethodShape(MethodDefinitionHandle handle, string owner,
+        string name, string visibility, bool isStatic, string returnType,
+        ParameterShape[] parameters)
+    {
+        Handle = handle; Owner = owner; Name = name; Visibility = visibility;
+        IsStatic = isStatic; ReturnType = returnType; Parameters = parameters;
+    }
+    internal MethodDefinitionHandle Handle;
+    internal string Owner;
+    internal string Name;
+    internal string Visibility;
+    internal bool IsStatic;
+    internal string ReturnType;
+    internal ParameterShape[] Parameters;
+}
+
+internal sealed class FieldShape
+{
+    internal FieldShape(string owner, string name, string visibility,
+        bool isStatic, string fieldType)
+    { Owner = owner; Name = name; Visibility = visibility; IsStatic = isStatic; FieldType = fieldType; }
+    internal string Owner;
+    internal string Name;
+    internal string Visibility;
+    internal bool IsStatic;
+    internal string FieldType;
+}
+
+internal sealed class EnumShape
+{
+    internal EnumShape(string name, int value) { Name = name; Value = value; }
+    internal string Name;
+    internal int Value;
+}
+
+internal sealed class MethodCall
+{
+    internal MethodCall(int offset, string owner, string name,
+        string returnType, string[] parameters)
+    { Offset = offset; Owner = owner; Name = name; ReturnType = returnType; Parameters = parameters; }
+    internal int Offset;
+    internal string Owner;
+    internal string Name;
+    internal string ReturnType;
+    internal string[] Parameters;
+}
+
+internal sealed class IlInstruction
+{
+    internal int Offset;
+    internal OpCode OpCode;
+    internal int Token;
+    internal bool HasToken;
+    internal int Int32Value;
+    internal bool HasInt32;
+    internal int VariableIndex;
+    internal bool HasVariable;
+    internal int BranchTarget;
+    internal bool HasBranchTarget;
+}
+
+internal sealed class MethodParameterMetadata
+{
+    internal MethodParameterMetadata(string name, bool isOut)
+    { Name = name; IsOut = isOut; }
+    internal string Name;
+    internal bool IsOut;
+}
+
+internal sealed class MetadataTypeProvider : ISignatureTypeProvider<string, object>
+{
+    public string GetArrayType(string elementType, ArrayShape shape)
+    { return elementType + "[" + new string(',', shape.Rank - 1) + "]"; }
+    public string GetByReferenceType(string elementType) { return elementType + "&"; }
+    public string GetFunctionPointerType(MethodSignature<string> signature)
+    { return "methodptr"; }
+    public string GetGenericInstantiation(string genericType,
+        ImmutableArray<string> typeArguments)
+    {
+        int tick = genericType.LastIndexOf('`');
+        if (tick >= 0) genericType = genericType.Substring(0, tick);
+        return genericType + "<" + String.Join(",", typeArguments) + ">";
+    }
+    public string GetGenericMethodParameter(object genericContext, int index)
+    { return "!!" + index.ToString(CultureInfo.InvariantCulture); }
+    public string GetGenericTypeParameter(object genericContext, int index)
+    { return "!" + index.ToString(CultureInfo.InvariantCulture); }
+    public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired)
+    { return unmodifiedType; }
+    public string GetPinnedType(string elementType) { return elementType; }
+    public string GetPointerType(string elementType) { return elementType + "*"; }
+    public string GetPrimitiveType(PrimitiveTypeCode typeCode)
+    {
+        switch (typeCode)
+        {
+            case PrimitiveTypeCode.Boolean: return "System.Boolean";
+            case PrimitiveTypeCode.Byte: return "System.Byte";
+            case PrimitiveTypeCode.Char: return "System.Char";
+            case PrimitiveTypeCode.Double: return "System.Double";
+            case PrimitiveTypeCode.Int16: return "System.Int16";
+            case PrimitiveTypeCode.Int32: return "System.Int32";
+            case PrimitiveTypeCode.Int64: return "System.Int64";
+            case PrimitiveTypeCode.IntPtr: return "System.IntPtr";
+            case PrimitiveTypeCode.Object: return "System.Object";
+            case PrimitiveTypeCode.SByte: return "System.SByte";
+            case PrimitiveTypeCode.Single: return "System.Single";
+            case PrimitiveTypeCode.String: return "System.String";
+            case PrimitiveTypeCode.UInt16: return "System.UInt16";
+            case PrimitiveTypeCode.UInt32: return "System.UInt32";
+            case PrimitiveTypeCode.UInt64: return "System.UInt64";
+            case PrimitiveTypeCode.UIntPtr: return "System.UIntPtr";
+            case PrimitiveTypeCode.Void: return "System.Void";
+            default: throw new BadImageFormatException("unsupported primitive");
+        }
+    }
+    public string GetSZArrayType(string elementType) { return elementType + "[]"; }
+    public string GetTypeFromDefinition(MetadataReader reader,
+        TypeDefinitionHandle handle, byte rawTypeKind)
+    { return MetadataImage.DefinitionName(reader, handle); }
+    public string GetTypeFromReference(MetadataReader reader,
+        TypeReferenceHandle handle, byte rawTypeKind)
+    { return MetadataImage.ReferenceName(reader, handle); }
+    public string GetTypeFromSpecification(MetadataReader reader, object genericContext,
+        TypeSpecificationHandle handle, byte rawTypeKind)
+    { return reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext); }
+}
+
+internal sealed class MetadataImage : IDisposable
+{
+    private static readonly Dictionary<ushort, OpCode> Opcodes = BuildOpcodes();
+    private readonly FileStream stream;
+    private readonly PEReader pe;
+    private readonly MetadataTypeProvider provider = new MetadataTypeProvider();
+
+    private MetadataImage(FileStream stream, PEReader pe)
+    { this.stream = stream; this.pe = pe; Reader = pe.GetMetadataReader(); }
+    internal MetadataReader Reader { get; private set; }
+    internal PEHeaders Headers { get { return pe.PEHeaders; } }
+
+    internal static MetadataImage Open(string path, string option)
+    {
+        if (String.IsNullOrEmpty(path)) throw new ArgumentException(option + " is required");
+        if (!Path.IsPathRooted(path)) throw new ArgumentException(option + " must be absolute");
+        FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        try
+        {
+            PEReader pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!pe.HasMetadata) throw new BadImageFormatException("managed metadata is required");
+            return new MetadataImage(stream, pe);
+        }
+        catch { stream.Dispose(); throw; }
+    }
+
+    public void Dispose() { pe.Dispose(); stream.Dispose(); }
+
+    internal static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
+    {
+        TypeDefinition definition = reader.GetTypeDefinition(handle);
+        string name = reader.GetString(definition.Name);
+        TypeDefinitionHandle parent = definition.GetDeclaringType();
+        if (!parent.IsNil) return DefinitionName(reader, parent) + "." + name;
+        string typeNamespace = reader.GetString(definition.Namespace);
+        return typeNamespace.Length == 0 ? name : typeNamespace + "." + name;
+    }
+
+    internal static string ReferenceName(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        TypeReference reference = reader.GetTypeReference(handle);
+        string name = reader.GetString(reference.Name);
+        if (reference.ResolutionScope.Kind == HandleKind.TypeReference)
+            return ReferenceName(reader, (TypeReferenceHandle)reference.ResolutionScope) + "." + name;
+        string typeNamespace = reader.GetString(reference.Namespace);
+        return typeNamespace.Length == 0 ? name : typeNamespace + "." + name;
+    }
+
+    internal string TypeName(EntityHandle handle)
+    {
+        if (handle.Kind == HandleKind.TypeDefinition) return DefinitionName(Reader, (TypeDefinitionHandle)handle);
+        if (handle.Kind == HandleKind.TypeReference) return ReferenceName(Reader, (TypeReferenceHandle)handle);
+        if (handle.Kind == HandleKind.TypeSpecification)
+            return Reader.GetTypeSpecification((TypeSpecificationHandle)handle).DecodeSignature(provider, null);
+        throw new BadImageFormatException("unsupported type handle");
+    }
+
+    internal TypeDefinitionHandle FindType(string name)
+    {
+        TypeDefinitionHandle found = default(TypeDefinitionHandle);
+        foreach (TypeDefinitionHandle handle in Reader.TypeDefinitions)
+        {
+            if (DefinitionName(Reader, handle) != name) continue;
+            if (!found.IsNil) throw new InvalidOperationException("duplicate type: " + name);
+            found = handle;
+        }
+        if (found.IsNil) throw new InvalidOperationException("missing type: " + name);
+        return found;
+    }
+
+    internal MethodShape[] Methods(string owner, string name)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        List<MethodShape> result = new List<MethodShape>();
+        foreach (MethodDefinitionHandle handle in definition.GetMethods())
+        {
+            MethodDefinition method = Reader.GetMethodDefinition(handle);
+            if (Reader.GetString(method.Name) != name) continue;
+            result.Add(Shape(owner, handle, method));
+        }
+        return result.ToArray();
+    }
+
+    internal MethodShape[] AllMethods(string owner)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        List<MethodShape> result = new List<MethodShape>();
+        foreach (MethodDefinitionHandle handle in definition.GetMethods())
+            result.Add(Shape(owner, handle, Reader.GetMethodDefinition(handle)));
+        return result.ToArray();
+    }
+
+    internal string[] AllTypeNames()
+    {
+        List<string> result = new List<string>();
+        foreach (TypeDefinitionHandle handle in Reader.TypeDefinitions)
+            result.Add(DefinitionName(Reader, handle));
+        return result.ToArray();
+    }
+
+    internal MethodParameterMetadata[] ParameterMetadata(MethodShape shape)
+    {
+        MethodDefinition method = Reader.GetMethodDefinition(shape.Handle);
+        MethodParameterMetadata[] result =
+            new MethodParameterMetadata[shape.Parameters.Length];
+        foreach (ParameterHandle handle in method.GetParameters())
+        {
+            Parameter parameter = Reader.GetParameter(handle);
+            if (parameter.SequenceNumber == 0) continue;
+            int index = parameter.SequenceNumber - 1;
+            result[index] = new MethodParameterMetadata(
+                Reader.GetString(parameter.Name),
+                (parameter.Attributes & ParameterAttributes.Out) != 0);
+        }
+        for (int index = 0; index < result.Length; index++)
+            if (result[index] == null)
+                result[index] = new MethodParameterMetadata("", false);
+        return result;
+    }
+
+    internal bool HasTypeAttribute(string owner, string attributeType)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        foreach (CustomAttributeHandle handle in definition.GetCustomAttributes())
+            if (AttributeType(handle) == attributeType) return true;
+        return false;
+    }
+
+    internal string[] TypeAttributeStrings(string owner, string attributeType)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        foreach (CustomAttributeHandle handle in definition.GetCustomAttributes())
+        {
+            if (AttributeType(handle) != attributeType) continue;
+            BlobReader value = Reader.GetBlobReader(
+                Reader.GetCustomAttribute(handle).Value);
+            if (value.ReadUInt16() != 1)
+                throw new BadImageFormatException("invalid custom attribute prolog");
+            List<string> strings = new List<string>();
+            while (value.RemainingBytes > 2)
+                strings.Add(value.ReadSerializedString());
+            if (value.RemainingBytes != 2 || value.ReadUInt16() != 0)
+                throw new BadImageFormatException("custom attribute has named arguments");
+            return strings.ToArray();
+        }
+        throw new InvalidOperationException("missing attribute: " + attributeType);
+    }
+
+    internal string[] AssemblyReferences()
+    {
+        List<string> result = new List<string>();
+        foreach (AssemblyReferenceHandle handle in Reader.AssemblyReferences)
+            result.Add(Reader.GetString(Reader.GetAssemblyReference(handle).Name));
+        result.Sort(StringComparer.Ordinal);
+        return result.ToArray();
+    }
+
+    internal string StringConstant(string owner, string name)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        foreach (FieldDefinitionHandle handle in definition.GetFields())
+        {
+            FieldDefinition field = Reader.GetFieldDefinition(handle);
+            if (Reader.GetString(field.Name) != name) continue;
+            Constant constant = Reader.GetConstant(field.GetDefaultValue());
+            if (constant.TypeCode != ConstantTypeCode.String)
+                throw new InvalidOperationException("constant is not a string");
+            BlobReader value = Reader.GetBlobReader(constant.Value);
+            return value.ReadUTF16(value.RemainingBytes);
+        }
+        throw new InvalidOperationException("missing constant: " + owner + "." + name);
+    }
+
+    private string AttributeType(CustomAttributeHandle handle)
+    {
+        EntityHandle constructor = Reader.GetCustomAttribute(handle).Constructor;
+        if (constructor.Kind == HandleKind.MemberReference)
+        {
+            MemberReference member = Reader.GetMemberReference(
+                (MemberReferenceHandle)constructor);
+            return TypeName((EntityHandle)member.Parent);
+        }
+        if (constructor.Kind == HandleKind.MethodDefinition)
+        {
+            MethodDefinition method = Reader.GetMethodDefinition(
+                (MethodDefinitionHandle)constructor);
+            return DefinitionName(Reader, method.GetDeclaringType());
+        }
+        throw new BadImageFormatException("invalid attribute constructor");
+    }
+
+    private MethodShape Shape(string owner, MethodDefinitionHandle handle,
+        MethodDefinition method)
+    {
+        MethodSignature<string> signature = method.DecodeSignature(provider, null);
+        ParameterShape[] parameters = new ParameterShape[signature.ParameterTypes.Length];
+        for (int index = 0; index < parameters.Length; index++)
+            parameters[index] = new ParameterShape(signature.ParameterTypes[index]);
+        return new MethodShape(handle, owner, Reader.GetString(method.Name),
+            MethodVisibility(method.Attributes),
+            (method.Attributes & MethodAttributes.Static) != 0,
+            signature.ReturnType, parameters);
+    }
+
+    internal FieldShape[] Fields(string owner, string name)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        List<FieldShape> result = new List<FieldShape>();
+        foreach (FieldDefinitionHandle handle in definition.GetFields())
+        {
+            FieldDefinition field = Reader.GetFieldDefinition(handle);
+            if (Reader.GetString(field.Name) != name) continue;
+            result.Add(new FieldShape(owner, name, FieldVisibility(field.Attributes),
+                (field.Attributes & FieldAttributes.Static) != 0,
+                field.DecodeSignature(provider, null)));
+        }
+        return result.ToArray();
+    }
+
+    internal int EnumValue(string owner, string name)
+    {
+        TypeDefinition definition = Reader.GetTypeDefinition(FindType(owner));
+        foreach (FieldDefinitionHandle handle in definition.GetFields())
+        {
+            FieldDefinition field = Reader.GetFieldDefinition(handle);
+            if (Reader.GetString(field.Name) != name) continue;
+            if ((field.Attributes & (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal))
+                != (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal)
+                || field.DecodeSignature(provider, null) != owner)
+                throw new InvalidOperationException("invalid enum shape: " + name);
+            ConstantHandle constantHandle = field.GetDefaultValue();
+            if (constantHandle.IsNil) throw new InvalidOperationException("missing enum value: " + name);
+            Constant constant = Reader.GetConstant(constantHandle);
+            if (constant.TypeCode != ConstantTypeCode.Int32) throw new InvalidOperationException("wrong enum type: " + name);
+            BlobReader bytes = Reader.GetBlobReader(constant.Value);
+            int value = bytes.ReadInt32();
+            if (bytes.RemainingBytes != 0) throw new BadImageFormatException("trailing enum bytes");
+            return value;
+        }
+        throw new InvalidOperationException("missing enum: " + name);
+    }
+
+    internal List<IlInstruction> Instructions(MethodShape shape)
+    {
+        MethodDefinition definition = Reader.GetMethodDefinition(shape.Handle);
+        if (definition.RelativeVirtualAddress == 0) return new List<IlInstruction>();
+        ImmutableArray<byte> bytes = pe.GetMethodBody(definition.RelativeVirtualAddress).GetILContent();
+        List<IlInstruction> result = new List<IlInstruction>();
+        int offset = 0;
+        while (offset < bytes.Length)
+        {
+            int instructionOffset = offset;
+            ushort value = bytes[offset++];
+            if (value == 0xfe) { RequireBytes(bytes, offset, 1); value = (ushort)(0xfe00 | bytes[offset++]); }
+            OpCode opCode;
+            if (!Opcodes.TryGetValue(value, out opCode)) throw new BadImageFormatException("unknown opcode");
+            IlInstruction instruction = new IlInstruction { Offset = instructionOffset, OpCode = opCode };
+            int size = OperandSize(bytes, offset, opCode.OperandType);
+            RequireBytes(bytes, offset, size);
+            if (opCode.OperandType == OperandType.ShortInlineI)
+            { instruction.HasInt32 = true; instruction.Int32Value = unchecked((sbyte)bytes[offset]); }
+            else if (opCode.OperandType == OperandType.InlineI)
+            { instruction.HasInt32 = true; instruction.Int32Value = ReadInt32(bytes, offset); }
+            else if (opCode.OperandType == OperandType.InlineMethod
+                || opCode.OperandType == OperandType.InlineField
+                || opCode.OperandType == OperandType.InlineString
+                || opCode.OperandType == OperandType.InlineTok
+                || opCode.OperandType == OperandType.InlineType)
+            { instruction.HasToken = true; instruction.Token = ReadInt32(bytes, offset); }
+            else if (opCode.OperandType == OperandType.ShortInlineVar)
+            { instruction.HasVariable = true; instruction.VariableIndex = bytes[offset]; }
+            else if (opCode.OperandType == OperandType.InlineVar)
+            { instruction.HasVariable = true; instruction.VariableIndex = bytes[offset] | (bytes[offset + 1] << 8); }
+            else if (opCode.OperandType == OperandType.ShortInlineBrTarget)
+            {
+                instruction.HasBranchTarget = true;
+                instruction.BranchTarget = offset + size + unchecked((sbyte)bytes[offset]);
+            }
+            else if (opCode.OperandType == OperandType.InlineBrTarget)
+            {
+                instruction.HasBranchTarget = true;
+                instruction.BranchTarget = offset + size + ReadInt32(bytes, offset);
+            }
+            result.Add(instruction);
+            offset += size;
+        }
+        return result;
+    }
+
+    internal List<MethodCall> Calls(MethodShape shape)
+    {
+        List<MethodCall> result = new List<MethodCall>();
+        List<IlInstruction> instructions = Instructions(shape);
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            IlInstruction instruction = instructions[index];
+            if (!instruction.HasToken || (instruction.OpCode.Value != OpCodes.Call.Value
+                && instruction.OpCode.Value != OpCodes.Callvirt.Value
+                && instruction.OpCode.Value != OpCodes.Newobj.Value)) continue;
+            result.Add(ResolveCall(instruction.Offset, instruction.Token));
+        }
+        return result;
+    }
+
+    private MethodCall ResolveCall(int offset, int token)
+    {
+        EntityHandle handle = System.Reflection.Metadata.Ecma335.MetadataTokens.EntityHandle(token);
+        if (handle.Kind == HandleKind.MethodSpecification)
+            handle = Reader.GetMethodSpecification(
+                (MethodSpecificationHandle)handle).Method;
+        if (handle.Kind == HandleKind.MethodDefinition)
+        {
+            MethodDefinition method = Reader.GetMethodDefinition((MethodDefinitionHandle)handle);
+            MethodSignature<string> signature = method.DecodeSignature(provider, null);
+            return new MethodCall(offset, DefinitionName(Reader, method.GetDeclaringType()),
+                Reader.GetString(method.Name), signature.ReturnType, Copy(signature.ParameterTypes));
+        }
+        if (handle.Kind == HandleKind.MemberReference)
+        {
+            MemberReference member = Reader.GetMemberReference((MemberReferenceHandle)handle);
+            MethodSignature<string> signature = member.DecodeMethodSignature(provider, null);
+            return new MethodCall(offset, TypeName((EntityHandle)member.Parent),
+                Reader.GetString(member.Name), signature.ReturnType, Copy(signature.ParameterTypes));
+        }
+        throw new BadImageFormatException("call is not a method");
+    }
+
+    internal string TokenType(IlInstruction instruction)
+    {
+        if (!instruction.HasToken)
+            throw new InvalidOperationException("instruction has no token");
+        EntityHandle handle = System.Reflection.Metadata.Ecma335.MetadataTokens
+            .EntityHandle(instruction.Token);
+        return TypeName(handle);
+    }
+
+    internal string StringLiteral(IlInstruction instruction)
+    {
+        if (!instruction.HasToken
+            || instruction.OpCode.Value != OpCodes.Ldstr.Value)
+            throw new InvalidOperationException("instruction is not ldstr");
+        UserStringHandle handle = System.Reflection.Metadata.Ecma335.MetadataTokens
+            .UserStringHandle(instruction.Token & 0x00ffffff);
+        return Reader.GetUserString(handle);
+    }
+
+    internal string FieldName(IlInstruction instruction)
+    {
+        if (!instruction.HasToken)
+            throw new InvalidOperationException("instruction has no field token");
+        EntityHandle handle = System.Reflection.Metadata.Ecma335.MetadataTokens
+            .EntityHandle(instruction.Token);
+        if (handle.Kind == HandleKind.FieldDefinition)
+            return Reader.GetString(Reader.GetFieldDefinition(
+                (FieldDefinitionHandle)handle).Name);
+        if (handle.Kind == HandleKind.MemberReference)
+            return Reader.GetString(Reader.GetMemberReference(
+                (MemberReferenceHandle)handle).Name);
+        throw new BadImageFormatException("token is not a field");
+    }
+
+    internal MethodShape MethodFromToken(IlInstruction instruction)
+    {
+        if (!instruction.HasToken)
+            throw new InvalidOperationException("instruction has no method token");
+        EntityHandle handle = System.Reflection.Metadata.Ecma335.MetadataTokens
+            .EntityHandle(instruction.Token);
+        if (handle.Kind != HandleKind.MethodDefinition)
+            throw new BadImageFormatException("delegate target is not a method definition");
+        MethodDefinitionHandle methodHandle = (MethodDefinitionHandle)handle;
+        MethodDefinition method = Reader.GetMethodDefinition(methodHandle);
+        string owner = DefinitionName(Reader, method.GetDeclaringType());
+        return Shape(owner, methodHandle, method);
+    }
+
+    internal MethodCall MethodTokenCall(IlInstruction instruction)
+    {
+        if (!instruction.HasToken)
+            throw new InvalidOperationException("instruction has no method token");
+        return ResolveCall(instruction.Offset, instruction.Token);
+    }
+
+    internal static bool TryConstant(IlInstruction instruction, out int value)
+    {
+        value = 0;
+        short opcode = instruction.OpCode.Value;
+        if (opcode == OpCodes.Ldc_I4_0.Value) return true;
+        if (opcode == OpCodes.Ldc_I4_M1.Value) { value = -1; return true; }
+        if (opcode == OpCodes.Ldc_I4_1.Value) { value = 1; return true; }
+        if (opcode == OpCodes.Ldc_I4_2.Value) { value = 2; return true; }
+        if (opcode == OpCodes.Ldc_I4_3.Value) { value = 3; return true; }
+        if (opcode == OpCodes.Ldc_I4_4.Value) { value = 4; return true; }
+        if (opcode == OpCodes.Ldc_I4_5.Value) { value = 5; return true; }
+        if (opcode == OpCodes.Ldc_I4_6.Value) { value = 6; return true; }
+        if (opcode == OpCodes.Ldc_I4_7.Value) { value = 7; return true; }
+        if (opcode == OpCodes.Ldc_I4_8.Value) { value = 8; return true; }
+        if (instruction.HasInt32) { value = instruction.Int32Value; return true; }
+        return false;
+    }
+
+    internal static bool TryArgumentIndex(
+        IlInstruction instruction, out int value)
+    {
+        value = 0;
+        short opcode = instruction.OpCode.Value;
+        if (opcode == OpCodes.Ldarg_0.Value) return true;
+        if (opcode == OpCodes.Ldarg_1.Value) { value = 1; return true; }
+        if (opcode == OpCodes.Ldarg_2.Value) { value = 2; return true; }
+        if (opcode == OpCodes.Ldarg_3.Value) { value = 3; return true; }
+        if ((opcode == OpCodes.Ldarg.Value || opcode == OpCodes.Ldarg_S.Value)
+            && instruction.HasVariable)
+        { value = instruction.VariableIndex; return true; }
+        return false;
+    }
+
+    private static string[] Copy(ImmutableArray<string> values)
+    { string[] copy = new string[values.Length]; for (int i = 0; i < copy.Length; i++) copy[i] = values[i]; return copy; }
+    private static string MethodVisibility(MethodAttributes value)
+    { MethodAttributes access = value & MethodAttributes.MemberAccessMask; return access == MethodAttributes.Public ? "public" : access == MethodAttributes.Private ? "private" : access == MethodAttributes.Assembly ? "assembly" : "other"; }
+    private static string FieldVisibility(FieldAttributes value)
+    { FieldAttributes access = value & FieldAttributes.FieldAccessMask; return access == FieldAttributes.Public ? "public" : access == FieldAttributes.Private ? "private" : access == FieldAttributes.Assembly ? "assembly" : "other"; }
+    private static Dictionary<ushort, OpCode> BuildOpcodes()
+    { Dictionary<ushort, OpCode> result = new Dictionary<ushort, OpCode>(); FieldInfo[] fields = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static); for (int i = 0; i < fields.Length; i++) if (fields[i].FieldType == typeof(OpCode)) { OpCode code = (OpCode)fields[i].GetValue(null); result[unchecked((ushort)code.Value)] = code; } return result; }
+    private static int OperandSize(ImmutableArray<byte> bytes, int offset, OperandType type)
+    { switch (type) { case OperandType.InlineNone: return 0; case OperandType.ShortInlineBrTarget: case OperandType.ShortInlineI: case OperandType.ShortInlineVar: return 1; case OperandType.InlineVar: return 2; case OperandType.InlineBrTarget: case OperandType.InlineField: case OperandType.InlineI: case OperandType.InlineMethod: case OperandType.InlineSig: case OperandType.InlineString: case OperandType.InlineTok: case OperandType.InlineType: case OperandType.ShortInlineR: return 4; case OperandType.InlineI8: case OperandType.InlineR: return 8; case OperandType.InlineSwitch: RequireBytes(bytes, offset, 4); return checked(4 + ReadInt32(bytes, offset) * 4); default: throw new BadImageFormatException("unsupported operand"); } }
+    private static int ReadInt32(ImmutableArray<byte> bytes, int offset)
+    { RequireBytes(bytes, offset, 4); return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24); }
+    private static void RequireBytes(ImmutableArray<byte> bytes, int offset, int count)
+    { if (offset < 0 || count < 0 || offset > bytes.Length - count) throw new BadImageFormatException("truncated IL"); }
+}
+
+internal static class AssemblySurfaceTests
+{
+    internal static void Register(TestRegistry tests, HarnessOptions options)
+    {
+        tests.Add("assembly", "pinned Assembly-CSharp hash",
+            delegate { PinnedHash(options.AssemblyPath); });
+        tests.Add("assembly", "exact ten observed methods",
+            delegate { ExactObservedMethods(options.AssemblyPath); });
+        tests.Add("assembly", "exact required game fields",
+            delegate { ExactRequiredFields(options.AssemblyPath); });
+        tests.Add("assembly", "metadata matcher rejects near misses",
+            SyntheticMatcherRejectsNearMisses);
+        tests.Add("plugin", "game adapter call surface is passive",
+            delegate { AdapterCallSurface(options.PluginPath); });
+        tests.Add("plugin", "controller crosses authorized update boundary",
+            delegate { ControllerUsesAuthorizedBoundary(options.PluginPath); });
+        tests.Add("plugin", "eight Harmony patch contracts are exact",
+            delegate { ExactPatchSurface(options.PluginPath); });
+        tests.Add("plugin", "PE CLR and direct references are pinned",
+            delegate { PluginPeAndReferences(options.PluginPath); });
+        tests.Add("plugin", "BepInPlugin identity is exact",
+            delegate { BepInPluginIdentity(options.PluginPath); });
+        tests.Add("plugin", "typed modes and owner teardown are closed",
+            delegate { TypedModeAndOwnerOnlyTeardown(options.PluginPath); });
+    }
+
+    private static ParameterShape P(string type) { return new ParameterShape(type); }
+
+    private static void PinnedHash(string path)
+    {
+        if (String.IsNullOrEmpty(path)) throw new ArgumentException("--assembly is required");
+        byte[] digest;
+        using (SHA256 hash = SHA256.Create())
+        using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) digest = hash.ComputeHash(stream);
+        StringBuilder actual = new StringBuilder(64);
+        for (int index = 0; index < digest.Length; index++) actual.Append(digest[index].ToString("x2", CultureInfo.InvariantCulture));
+        Check.Equal(OracleProtocol.ExpectedAssemblySha256, actual.ToString(), "Assembly-CSharp SHA-256");
+    }
+
+    private static void ExactObservedMethods(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--assembly"))
+        {
+            RequireMethod(image, "Game", "Update", "private", false, "System.Void");
+            RequireMethod(image, "Game", "DoPlayerInput", "private", false, "System.Void");
+            RequireMethod(image, "Game", "Playerinputstring", "private", false, "Direction");
+            RequireMethod(image, "GameState", "ProcessInput", "public", false, "System.Boolean", P("Direction"));
+            RequireMethod(image, "Game", "DoUndo", "public", false, "System.Void");
+            RequireMethod(image, "Game", "RestorePrevState", "private", false, "System.Void", P("GameState.BakStruct"));
+            RequireMethod(image, "Game", "DoRestart", "public", false, "System.Void");
+            RequireMethod(image, "Game", "SetGameState", "public", false, "System.Void", P("GameState"));
+            RequireMethod(image, "GameState", "Moving", "public", false, "System.Boolean");
+            RequireMethod(image, "GameState", "Save", "public", false, "System.String", P("System.Boolean"), P("System.Boolean"));
+            Check.Equal(0, image.EnumValue("Direction", "North"), "North");
+            Check.Equal(1, image.EnumValue("Direction", "South"), "South");
+            Check.Equal(2, image.EnumValue("Direction", "West"), "West");
+            Check.Equal(3, image.EnumValue("Direction", "East"), "East");
+            Check.Equal(8, image.EnumValue("Direction", "None"), "None");
+        }
+    }
+
+    private static void ExactRequiredFields(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--assembly"))
+        {
+            RequireField(image, "Game", "gamestate", "public", false, "GameState");
+            RequireField(image, "Game", "exitSequence", "public", false, "System.Boolean");
+            RequireField(image, "Game", "bluespawnanim", "public", false, "System.Boolean");
+            RequireField(image, "Game", "escmenu", "public", false, "UnityEngine.GameObject");
+            RequireField(image, "Game", "endingsequence", "public", true, "System.Boolean");
+            RequireField(image, "Game", "leaving", "private", false, "System.Boolean");
+            RequireField(image, "Game", "gameover", "private", false, "System.Boolean");
+            RequireField(image, "Game", "exploding", "private", false, "System.Boolean");
+            RequireField(image, "GameState", "player", "public", false, "Entity");
+            RequireField(image, "GameState", "movements", "public", false, "System.Collections.Generic.List<Movement>");
+            RequireField(image, "GameState", "worldsausagespawns", "public", false, "System.Collections.Generic.List<Coord>");
+            RequireField(image, "GameState", "pushestotry", "public", false, "System.Int32");
+            RequireField(image, "GameState", "pushtargetlevel", "public", false, "System.String");
+            RequireField(image, "GameState", "overworld", "public", false, "System.Boolean");
+            RequireField(image, "GameState", "won", "public", false, "System.Boolean");
+            RequireField(image, "GameState", "returning", "public", false, "System.Boolean");
+            RequireField(image, "GameState", "haveevercookedall", "public", false, "System.Boolean");
+            RequireField(image, "GameState", "lostreason", "public", false, "System.String");
+            RequireField(image, "GameState", "displayname", "public", false, "System.String");
+            RequireField(image, "GameState", "sausagescooked", "public", false, "System.Int32");
+            RequireField(image, "GameState", "shouldredrawcoffins", "public", true, "Coord");
+            RequireField(image, "SaveGame", "homePath", "public", true, "System.String");
+            RequireField(image, "SaveGame", "PersistentDataPath", "public", true, "System.String");
+        }
+    }
+
+    private static void SyntheticMatcherRejectsNearMisses()
+    {
+        MethodShape expected = new MethodShape(default(MethodDefinitionHandle), "GameState", "ProcessInput", "public", false, "System.Boolean", new ParameterShape[] { P("Direction") });
+        Check.Throws<InvalidOperationException>(delegate { RequireMethodShape(new MethodShape[] { new MethodShape(default(MethodDefinitionHandle), "GameState", "ProcessInput", "private", false, "System.Boolean", new ParameterShape[] { P("Direction") }) }, expected); }, "visibility");
+        Check.Throws<InvalidOperationException>(delegate { RequireMethodShape(new MethodShape[] { new MethodShape(default(MethodDefinitionHandle), "GameState", "ProcessInput", "public", true, "System.Boolean", new ParameterShape[] { P("Direction") }) }, expected); }, "static");
+        Check.Throws<InvalidOperationException>(delegate { RequireMethodShape(new MethodShape[] { new MethodShape(default(MethodDefinitionHandle), "GameState", "ProcessInput", "public", false, "System.Void", new ParameterShape[] { P("Direction") }) }, expected); }, "return");
+        Check.Throws<InvalidOperationException>(delegate { RequireMethodShape(new MethodShape[] { new MethodShape(default(MethodDefinitionHandle), "GameState", "ProcessInput", "public", false, "System.Boolean", new ParameterShape[] { P("System.Int32") }) }, expected); }, "parameter");
+        FieldShape field = new FieldShape("Game", "gamestate", "public", false, "GameState");
+        Check.Throws<InvalidOperationException>(delegate { RequireFieldShape(new FieldShape[] { new FieldShape("Game", "gamestate", "public", false, "System.Object") }, field); }, "field type");
+        Check.Throws<InvalidOperationException>(delegate { RequireEnumShape(new EnumShape[] { new EnumShape("None", 7) }, new EnumShape("None", 8)); }, "enum value");
+    }
+
+    private static void AdapterCallSurface(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            MethodShape[] methods = image.AllMethods("GameAdapter");
+            List<MethodCall> gameCalls = new List<MethodCall>();
+            MethodShape saveOwner = null;
+            for (int index = 0; index < methods.Length; index++)
+            {
+                List<MethodCall> calls = image.Calls(methods[index]);
+                for (int call = 0; call < calls.Count; call++)
+                {
+                    MethodCall value = calls[call];
+                    if (value.Owner == "Game" || value.Owner == "GameState")
+                    {
+                        gameCalls.Add(value);
+                        if (value.Owner == "GameState" && value.Name == "Save") saveOwner = methods[index];
+                    }
+                }
+            }
+            Check.Equal(2, gameCalls.Count, "exact direct game call count");
+            RequireGameCall(gameCalls, "GameState", "Moving", "System.Boolean", new string[0]);
+            RequireGameCall(gameCalls, "GameState", "Save", "System.String", new string[] { "System.Boolean", "System.Boolean" });
+            if (saveOwner == null) throw new InvalidOperationException("Save owner missing");
+            RequireFalseFalseBeforeSave(image, saveOwner);
+        }
+    }
+
+    private static void ControllerUsesAuthorizedBoundary(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            List<MethodCall> observe = image.Calls(OnlyMethod(
+                image, "OracleController", "ObserveUpdate"));
+            RequireOrderedCalls(observe, new string[]
+            {
+                "OracleController.AdapterUpdateObservation::.ctor",
+                "PassiveUpdateBoundary::Observe"
+            }, "controller update boundary");
+
+            List<MethodCall> boundary = image.Calls(OnlyMethod(
+                image, "PassiveUpdateBoundary", "Observe"));
+            RequireOrderedCalls(boundary, new string[]
+            {
+                "IPassiveUpdateObservation::TryGetState",
+                "IPassiveUpdateObservation::NowSeconds",
+                "IPassiveUpdateObservation::VerifySavePath",
+                "IPassiveUpdateObservation::TryGetState",
+                "IPassiveUpdateObservation::IsQuiescent",
+                "IPassiveUpdateObservation::Capture",
+                "IPassiveUpdateObservation::UtcNow"
+            }, "state/clock/path/state/gate/capture/utc order");
+
+            MethodShape[] methods = image.AllMethods("OracleController");
+            List<string> movementOwners = new List<string>();
+            for (int method = 0; method < methods.Length; method++)
+            {
+                List<MethodCall> calls = image.Calls(methods[method]);
+                for (int call = 0; call < calls.Count; call++)
+                    if (calls[call].Owner == "IOracleGameAdapter"
+                        && (calls[call].Name == "MovementScheduled"
+                            || calls[call].Name == "CurrentMovementScheduled"))
+                        movementOwners.Add(methods[method].Name + "::" + calls[call].Name);
+            }
+            movementOwners.Sort(StringComparer.Ordinal);
+            RequireSequence(new string[]
+            {
+                "ProcessInputReturned::MovementScheduled",
+                "UndoReturned::CurrentMovementScheduled"
+            }, movementOwners.ToArray(), "movement reads stay on normal returns");
+        }
+    }
+
+    private static void ExactPatchSurface(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            string[] patches = new string[]
+            {
+                "GameUpdatePatch", "GameDoPlayerInputPatch",
+                "GamePlayerinputstringPatch", "GameStateProcessInputPatch",
+                "GameDoUndoPatch", "GameRestorePrevStatePatch",
+                "GameDoRestartPatch", "GameSetGameStatePatch"
+            };
+            List<string> attributed = new List<string>();
+            string[] allTypes = image.AllTypeNames();
+            for (int index = 0; index < allTypes.Length; index++)
+                if (image.HasTypeAttribute(allTypes[index], "HarmonyLib.HarmonyPatch"))
+                    attributed.Add(allTypes[index]);
+            attributed.Sort(StringComparer.Ordinal);
+            string[] expectedPatches = (string[])patches.Clone();
+            Array.Sort(expectedPatches, StringComparer.Ordinal);
+            RequireSequence(expectedPatches, attributed.ToArray(),
+                "exact HarmonyPatch types");
+
+            RequirePatch(image, "GameUpdatePatch", new string[][]
+            {
+                S("Prefix", "System.Void", "Game"),
+                S("Postfix", "System.Void", "Game"),
+                S("Finalizer", "System.Exception", "System.Exception")
+            });
+            RequirePatch(image, "GameDoPlayerInputPatch", new string[][]
+            {
+                S("Prefix", "System.Void", "HookToken&"),
+                S("Postfix", "System.Void", "HookToken"),
+                S("Finalizer", "System.Exception", "System.Exception", "HookToken")
+            });
+            RequirePatch(image, "GamePlayerinputstringPatch", new string[][]
+            {
+                S("Prefix", "System.Boolean"),
+                S("Postfix", "System.Void", "Direction")
+            });
+            RequirePatch(image, "GameStateProcessInputPatch", new string[][]
+            {
+                S("Prefix", "System.Void", "GameState", "Direction", "HookToken&"),
+                S("Postfix", "System.Void", "GameState", "System.Boolean", "HookToken"),
+                S("Finalizer", "System.Exception", "System.Exception", "HookToken")
+            });
+            RequirePatch(image, "GameDoUndoPatch", new string[][]
+            {
+                S("Prefix", "System.Void", "Game", "HookToken&"),
+                S("Postfix", "System.Void", "Game", "HookToken"),
+                S("Finalizer", "System.Exception", "System.Exception", "HookToken")
+            });
+            RequirePatch(image, "GameRestorePrevStatePatch", new string[][]
+            { S("Prefix", "System.Void", "GameState.BakStruct") });
+            RequirePatch(image, "GameDoRestartPatch", new string[][]
+            {
+                S("Prefix", "System.Void", "HookToken&"),
+                S("Postfix", "System.Void", "HookToken"),
+                S("Finalizer", "System.Exception", "System.Exception", "HookToken")
+            });
+            RequirePatch(image, "GameSetGameStatePatch", new string[][]
+            {
+                S("Prefix", "System.Void", "Game", "GameState", "HookToken&"),
+                S("Postfix", "System.Void", "Game", "HookToken"),
+                S("Finalizer", "System.Exception", "System.Exception", "HookToken")
+            });
+
+            RequireTargetMethod(image, "GameUpdatePatch", "Game", "Update",
+                (int)(BindingFlags.Instance | BindingFlags.NonPublic),
+                "System.Void");
+            RequireTargetMethod(image, "GameDoPlayerInputPatch", "Game",
+                "DoPlayerInput",
+                (int)(BindingFlags.Instance | BindingFlags.NonPublic),
+                "System.Void");
+            RequireTargetMethod(image, "GamePlayerinputstringPatch", "Game",
+                "Playerinputstring",
+                (int)(BindingFlags.Instance | BindingFlags.NonPublic),
+                "Direction");
+            RequireTargetMethod(image, "GameStateProcessInputPatch", "GameState",
+                "ProcessInput", (int)(BindingFlags.Instance | BindingFlags.Public),
+                "System.Boolean", "Direction");
+            RequireTargetMethod(image, "GameDoUndoPatch", "Game", "DoUndo",
+                (int)(BindingFlags.Instance | BindingFlags.Public), "System.Void");
+            RequireTargetMethod(image, "GameRestorePrevStatePatch", "Game",
+                "RestorePrevState",
+                (int)(BindingFlags.Instance | BindingFlags.NonPublic),
+                "System.Void", "GameState.BakStruct");
+            RequireTargetMethod(image, "GameDoRestartPatch", "Game", "DoRestart",
+                (int)(BindingFlags.Instance | BindingFlags.Public), "System.Void");
+            RequireTargetMethod(image, "GameSetGameStatePatch", "Game",
+                "SetGameState", (int)(BindingFlags.Instance | BindingFlags.Public),
+                "System.Void", "GameState");
+
+            RequireNoOp(image, "OracleController", "UpdateEntered",
+                "Update entered remains observation-safe");
+            RequireTrueReturn(image, "GameHooks", "AllowNativePlayerInput");
+            RequireDirectReturnCall(image, "GamePlayerinputstringPatch", "Prefix",
+                "GameHooks", "AllowNativePlayerInput", new int[0]);
+
+            RequireObservedForwarding(image, "GameUpdatePatch", "Prefix",
+                "UpdateEntered", new string[] { "System.Object" },
+                new string[] { "__instance" });
+            RequireObservedForwarding(image, "GameUpdatePatch", "Postfix",
+                "ObserveUpdate", new string[] { "System.Object" },
+                new string[] { "__instance" });
+            RequireObservedForwarding(image, "GameDoPlayerInputPatch", "Prefix",
+                "PlayerPollEntered", new string[0], new string[0]);
+            RequireObservedForwarding(image, "GameDoPlayerInputPatch", "Postfix",
+                "PlayerPollReturned", new string[] { "HookToken" },
+                new string[] { "__state" });
+            RequireObservedForwarding(image, "GamePlayerinputstringPatch", "Postfix",
+                "PhysicalPollReturned", new string[] { "System.Int32" },
+                new string[] { "__result" });
+            RequireObservedForwarding(image, "GameStateProcessInputPatch", "Prefix",
+                "ProcessInputEntered",
+                new string[] { "System.Object", "System.Int32" },
+                new string[] { "__instance", "__0" });
+            RequireObservedForwarding(image, "GameStateProcessInputPatch", "Postfix",
+                "ProcessInputReturned",
+                new string[] { "HookToken", "System.Boolean", "System.Object" },
+                new string[] { "__state", "__result", "__instance" });
+            RequireObservedForwarding(image, "GameDoUndoPatch", "Prefix",
+                "UndoEntered", new string[] { "System.Object" },
+                new string[] { "__instance" });
+            RequireObservedForwarding(image, "GameDoUndoPatch", "Postfix",
+                "UndoReturned", new string[] { "HookToken", "System.Object" },
+                new string[] { "__state", "__instance" });
+            RequireObservedForwarding(image, "GameRestorePrevStatePatch", "Prefix",
+                "RestoreObserved", new string[0], new string[0]);
+            RequireObservedForwarding(image, "GameDoRestartPatch", "Prefix",
+                "RestartEntered", new string[0], new string[0]);
+            RequireObservedForwarding(image, "GameDoRestartPatch", "Postfix",
+                "RestartReturned", new string[] { "HookToken" },
+                new string[] { "__state" });
+            RequireObservedForwarding(image, "GameSetGameStatePatch", "Prefix",
+                "StateSetEntered", new string[] { "System.Object", "System.Object" },
+                new string[] { "__instance", "__0" });
+            RequireObservedForwarding(image, "GameSetGameStatePatch", "Postfix",
+                "StateSetReturned", new string[] { "HookToken", "System.Object" },
+                new string[] { "__state", "__instance" });
+
+            RequireTokenStateWriteBack(image, "GameDoPlayerInputPatch",
+                "PlayerPollEntered", 0);
+            RequireTokenStateWriteBack(image, "GameStateProcessInputPatch",
+                "ProcessInputEntered", 2);
+            RequireTokenStateWriteBack(image, "GameDoUndoPatch",
+                "UndoEntered", 1);
+            RequireTokenStateWriteBack(image, "GameDoRestartPatch",
+                "RestartEntered", 0);
+            RequireTokenStateWriteBack(image, "GameSetGameStatePatch",
+                "StateSetEntered", 2);
+            RequireInertBeforeObserve(image, "GameDoPlayerInputPatch", 0);
+            RequireInertBeforeObserve(image, "GameStateProcessInputPatch", 1);
+            RequireInertBeforeObserve(image, "GameDoUndoPatch", 2);
+            RequireInertBeforeObserve(image, "GameDoRestartPatch", 3);
+            RequireInertBeforeObserve(image, "GameSetGameStatePatch", 4);
+
+            RequireDirectReturnCall(image, "GameUpdatePatch", "Finalizer",
+                "GameHooks", "FinalizeUpdate", new int[] { 0 });
+            string[] tokenFinalizers = new string[]
+            {
+                "GameDoPlayerInputPatch", "GameStateProcessInputPatch",
+                "GameDoUndoPatch", "GameDoRestartPatch", "GameSetGameStatePatch"
+            };
+            for (int index = 0; index < tokenFinalizers.Length; index++)
+                RequireDirectReturnCall(image, tokenFinalizers[index], "Finalizer",
+                    "GameHooks", "Finalize", new int[] { 1, 0 });
+
+            for (int patch = 0; patch < patches.Length; patch++)
+            {
+                MethodShape[] methods = image.AllMethods(patches[patch]);
+                for (int method = 0; method < methods.Length; method++)
+                {
+                    MethodParameterMetadata[] parameters =
+                        image.ParameterMetadata(methods[method]);
+                    for (int parameter = 0; parameter < parameters.Length; parameter++)
+                    {
+                        bool byReference = methods[method].Parameters[parameter]
+                            .Type.EndsWith("&", StringComparison.Ordinal);
+                        if (byReference)
+                        {
+                            Check.Equal("__state", parameters[parameter].Name,
+                                "only __state is by-ref");
+                            Check.True(parameters[parameter].IsOut,
+                                "by-ref __state is out");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static void PluginPeAndReferences(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            Check.Equal(PEMagic.PE32, image.Headers.PEHeader.Magic, "PE32");
+            CorFlags flags = image.Headers.CorHeader.Flags;
+            Check.True((flags & CorFlags.ILOnly) != 0, "IL-only");
+            Check.True((flags & (CorFlags.Requires32Bit | CorFlags.Prefers32Bit)) == 0,
+                "AnyCPU");
+            Check.Equal("v2.0.50727", image.Reader.MetadataVersion, "CLR metadata");
+            string[] allowed = new string[]
+            {
+                "0Harmony", "Assembly-CSharp", "BepInEx", "System",
+                "System.Core", "UnityEngine.CoreModule", "mscorlib"
+            };
+            string[] references = image.AssemblyReferences();
+            for (int index = 0; index < references.Length; index++)
+                Check.True(Array.IndexOf(allowed, references[index]) >= 0,
+                    "unexpected direct reference: " + references[index]);
+            Check.True(Array.IndexOf(references, "0Harmony") >= 0, "Harmony reference");
+            Check.True(Array.IndexOf(references, "Assembly-CSharp") >= 0,
+                "game reference");
+            Check.True(Array.IndexOf(references, "BepInEx") >= 0, "BepInEx reference");
+            Check.False(File.Exists(Path.ChangeExtension(path, ".pdb")), "no Release PDB");
+            string directory = Path.GetDirectoryName(path);
+            string[] external = new string[]
+            { "0Harmony.dll", "Assembly-CSharp.dll", "BepInEx.dll", "UnityEngine.dll", "UnityEngine.CoreModule.dll" };
+            for (int index = 0; index < external.Length; index++)
+                Check.False(File.Exists(Path.Combine(directory, external[index])),
+                    "non-copying reference: " + external[index]);
+        }
+    }
+
+    private static void BepInPluginIdentity(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+            RequireSequence(new string[]
+            {
+                "dev.jlsor.ssr.oracle", "SSR Executable Oracle", "0.3.0"
+            }, image.TypeAttributeStrings(
+                "SsrOracle.Plugin", "BepInEx.BepInPlugin"),
+                "BepInPlugin identity");
+    }
+
+    private static void TypedModeAndOwnerOnlyTeardown(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            Check.Equal(0, image.EnumValue("OracleMode", "Off"), "Off mode");
+            Check.Equal(1, image.EnumValue("OracleMode", "Passive"), "Passive mode");
+            string[] types = image.AllTypeNames();
+            for (int index = 0; index < types.Length; index++)
+                Check.False(types[index].IndexOf("Replay", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "no replay type");
+            Check.Equal("dev.jlsor.ssr.oracle.passive",
+                image.StringConstant("GameHooks", "HarmonyOwner"), "passive owner");
+
+            MethodShape awakeMethod = OnlyMethod(image, "SsrOracle.Plugin", "Awake");
+            List<MethodCall> awake = image.Calls(awakeMethod);
+            RequireCallCount(awake, "OracleConfiguration", "Load", 1, "config loaded once");
+            RequireCallCount(awake, "PluginModePolicy", "StartOff", 1,
+                "Off uses legacy policy");
+            RequireCallCount(awake, "OracleController", "Start", 1,
+                "Passive starts controller");
+            RequireAwakeModeControlFlow(image, awakeMethod, awake);
+
+            List<MethodCall> destroy = image.Calls(
+                OnlyMethod(image, "SsrOracle.Plugin", "OnDestroy"));
+            RequireCallCount(destroy, "OracleController", "Dispose", 1,
+                "OnDestroy delegates once");
+            for (int index = 0; index < destroy.Count; index++)
+                Check.False(destroy[index].Name == "UnpatchSelf"
+                    || destroy[index].Name == "Close",
+                    "OnDestroy has no direct teardown");
+            RequireSoleControllerDispose(image);
+
+            List<MethodCall> unpatch = image.Calls(
+                OnlyMethod(image, "SsrOracle.Plugin.OracleRuntimeHost", "UnpatchSelf"));
+            RequireOrderedCalls(unpatch, new string[]
+            { "HarmonyLib.Harmony::UnpatchSelf", "GameHooks::Clear" },
+                "owner-only unpatch before clear");
+        }
+    }
+
+    private static void RequireAwakeModeControlFlow(MetadataImage image,
+        MethodShape awakeMethod, List<MethodCall> calls)
+    {
+        MethodCall load = OnlyCall(calls, "OracleConfiguration", "Load",
+            "Awake config load");
+        List<MethodCall> modeCalls = CallsNamed(
+            calls, "OracleConfiguration", "get_Mode");
+        Check.Equal(2, modeCalls.Count, "Awake exact mode reads");
+        MethodCall startOff = OnlyCall(calls, "PluginModePolicy", "StartOff",
+            "Awake Off policy");
+        MethodCall start = OnlyCall(calls, "OracleController", "Start",
+            "Awake passive controller start");
+        Check.True(load.Offset < modeCalls[0].Offset,
+            "configuration load precedes Off gate");
+        Check.True(modeCalls[0].Offset < startOff.Offset
+            && startOff.Offset < modeCalls[1].Offset
+            && modeCalls[1].Offset < start.Offset,
+            "Off return and Passive gate precede controller start");
+
+        List<IlInstruction> instructions = image.Instructions(awakeMethod);
+        int offBranch = FindConditionalBranch(
+            instructions, modeCalls[0].Offset, startOff.Offset,
+            "Off mode branch");
+        Check.True(instructions[offBranch].BranchTarget > startOff.Offset,
+            "Off branch skips only the Off path");
+        int startOffIndex = InstructionIndex(instructions, startOff.Offset);
+        Check.True(startOffIndex + 1 < instructions.Count
+            && instructions[startOffIndex + 1].OpCode.Value == OpCodes.Ret.Value,
+            "Off policy returns before passive work");
+        Check.True(instructions[offBranch].BranchTarget
+            <= modeCalls[1].Offset,
+            "non-Off branch reaches Passive gate");
+
+        int passiveBranch = FirstConditionalBranchAfter(
+            instructions, modeCalls[1].Offset, "Passive mode branch");
+        int passiveTarget = instructions[passiveBranch].BranchTarget;
+        Check.True(passiveTarget > instructions[passiveBranch].Offset
+            && passiveTarget <= start.Offset,
+            "Passive branch target enters passive construction");
+        Check.True(HasReturnBetween(instructions,
+            instructions[passiveBranch].Offset, passiveTarget),
+            "invalid mode returns before passive construction");
+        RequireClosedPreGateRegion(image, awakeMethod,
+            instructions, passiveTarget);
+        RequirePostGateCall(calls, "HarmonyLib.Harmony", ".ctor",
+            passiveTarget, "one post-gate Harmony construction");
+        RequirePostGateCall(calls, "GameAdapter", ".ctor",
+            passiveTarget, "one post-gate GameAdapter construction");
+        RequirePostGateCall(calls, "SsrOracle.Plugin.OracleRuntimeHost", ".ctor",
+            passiveTarget, "one post-gate runtime construction");
+        RequirePostGateCall(calls, "OracleController", ".ctor",
+            passiveTarget, "one post-gate controller construction");
+        RequirePostGateCall(calls, "OracleController", "Start",
+            passiveTarget, "one post-gate controller start");
+        RequireCallCount(calls, "NdjsonTraceSink", "Create", 0,
+            "Awake opens no sink directly");
+        RequireCallCount(calls, "GameAdapter",
+            "AuthenticateAndRedirectSavePath", 0,
+            "Awake redirects no save path directly");
+    }
+
+    private static void RequireSoleControllerDispose(MetadataImage image)
+    {
+        int count = 0;
+        string owner = null;
+        string[] types = image.AllTypeNames();
+        for (int type = 0; type < types.Length; type++)
+        {
+            MethodShape[] methods = image.AllMethods(types[type]);
+            for (int method = 0; method < methods.Length; method++)
+            {
+                List<MethodCall> calls = image.Calls(methods[method]);
+                for (int call = 0; call < calls.Count; call++)
+                {
+                    if (calls[call].Owner != "OracleController"
+                        || calls[call].Name != "Dispose") continue;
+                    count++;
+                    owner = methods[method].Owner + "::" + methods[method].Name;
+                }
+            }
+        }
+        Check.Equal(1, count, "sole controller Dispose call");
+        Check.Equal("SsrOracle.Plugin::OnDestroy", owner,
+            "OnDestroy owns controller disposal");
+    }
+
+    private static void RequirePostGateCall(List<MethodCall> calls,
+        string owner, string name, int passiveTarget, string message)
+    {
+        MethodCall call = OnlyCall(calls, owner, name, message);
+        Check.True(call.Offset >= passiveTarget, message + " lies after gate");
+    }
+
+    private static void RequireClosedPreGateRegion(MetadataImage image,
+        MethodShape awakeMethod, List<IlInstruction> instructions,
+        int passiveTarget)
+    {
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            IlInstruction instruction = instructions[index];
+            if (instruction.Offset >= passiveTarget) continue;
+            short opcode = instruction.OpCode.Value;
+            if (opcode == OpCodes.Call.Value
+                || opcode == OpCodes.Callvirt.Value
+                || opcode == OpCodes.Newobj.Value)
+            {
+                MethodCall call = image.MethodTokenCall(instruction);
+                Check.True(IsAllowedPreGateCall(call),
+                    "unexpected pre-Passive call: "
+                    + call.Owner + "::" + call.Name);
+                continue;
+            }
+            if (opcode == OpCodes.Ldfld.Value || opcode == OpCodes.Stfld.Value
+                || opcode == OpCodes.Ldsfld.Value || opcode == OpCodes.Stsfld.Value)
+            {
+                string field = image.FieldName(instruction);
+                Check.True(field == "log"
+                    || field.StartsWith("<>9__", StringComparison.Ordinal),
+                    "unexpected pre-Passive field access: " + field);
+                continue;
+            }
+            if (opcode == OpCodes.Ldstr.Value)
+            {
+                string value = image.StringLiteral(instruction);
+                Check.True(value == "dev.jlsor.ssr.oracle.cfg"
+                    || value == "invalid_mode",
+                    "unexpected pre-Passive string: " + value);
+                continue;
+            }
+            if (opcode == OpCodes.Ldftn.Value)
+            {
+                MethodCall target = image.MethodTokenCall(instruction);
+                bool legacy = target.Owner == "GameContract"
+                    && target.Name == "ValidateLegacySurface";
+                bool boot = target.Owner.StartsWith(
+                        "SsrOracle.Plugin.", StringComparison.Ordinal)
+                    && target.Name.IndexOf(
+                        "<Awake>", StringComparison.Ordinal) >= 0;
+                Check.True(legacy || boot,
+                    "unexpected pre-Passive delegate: "
+                    + target.Owner + "::" + target.Name);
+                continue;
+            }
+            if (instruction.HasBranchTarget)
+            {
+                Check.True(instruction.BranchTarget <= passiveTarget
+                    || IsReturnOffset(instructions, instruction.BranchTarget),
+                    "pre-Passive branch escapes closed region: "
+                    + instruction.OpCode.Name + " at "
+                    + instruction.Offset.ToString(CultureInfo.InvariantCulture)
+                    + " -> " + instruction.BranchTarget.ToString(
+                        CultureInfo.InvariantCulture) + ", gate "
+                    + passiveTarget.ToString(CultureInfo.InvariantCulture));
+                continue;
+            }
+            Check.True(IsAllowedPreGateStructuralOpcode(instruction.OpCode),
+                "unexpected pre-Passive opcode in " + awakeMethod.Owner
+                + "::" + awakeMethod.Name + ": " + instruction.OpCode.Name);
+        }
+    }
+
+    private static bool IsAllowedPreGateCall(MethodCall call)
+    {
+        if (call.Owner.StartsWith(
+                "SsrOracle.Plugin.<>c__DisplayClass", StringComparison.Ordinal)
+            && call.Name == ".ctor") return true;
+        return (call.Owner == "BepInEx.BaseUnityPlugin"
+                && call.Name == "get_Logger")
+            || (call.Owner == "SsrOracle.Plugin.BepInExLog"
+                && call.Name == ".ctor")
+            || (call.Owner == "PassiveLogReporter" && call.Name == ".ctor")
+            || (call.Owner == "BepInEx.Paths"
+                && call.Name == "get_ConfigPath")
+            || (call.Owner == "System.IO.Path" && call.Name == "Combine")
+            || (call.Owner == "OracleConfiguration" && call.Name == "Load")
+            || (call.Owner == "OracleConfigurationException"
+                && call.Name == "get_Code")
+            || (call.Owner == "PassiveLogReporter" && call.Name == "Failed")
+            || (call.Owner == "OracleConfiguration" && call.Name == "get_Mode")
+            || (call.Owner == "System.Action" && call.Name == ".ctor")
+            || (call.Owner == "PluginModePolicy" && call.Name == "StartOff");
+    }
+
+    private static bool IsReturnOffset(
+        List<IlInstruction> instructions, int offset)
+    {
+        for (int index = 0; index < instructions.Count; index++)
+            if (instructions[index].Offset == offset)
+                return instructions[index].OpCode.Value == OpCodes.Ret.Value;
+        return false;
+    }
+
+    private static bool IsAllowedPreGateStructuralOpcode(OpCode opcode)
+    {
+        string name = opcode.Name;
+        return name == "nop" || name == "ldnull" || name == "dup"
+            || name == "pop" || name == "ret" || name == "endfinally"
+            || name.StartsWith("ldarg", StringComparison.Ordinal)
+            || name.StartsWith("starg", StringComparison.Ordinal)
+            || name.StartsWith("ldloc", StringComparison.Ordinal)
+            || name.StartsWith("stloc", StringComparison.Ordinal)
+            || name.StartsWith("ldc.i4", StringComparison.Ordinal);
+    }
+
+    private static string[] S(string name, string returnType, params string[] parameters)
+    {
+        string[] result = new string[parameters.Length + 2];
+        result[0] = name; result[1] = returnType;
+        Array.Copy(parameters, 0, result, 2, parameters.Length);
+        return result;
+    }
+
+    private static void RequirePatch(
+        MetadataImage image, string owner, string[][] expected)
+    {
+        MethodShape[] methods = image.AllMethods(owner);
+        int callbacks = 0;
+        for (int index = 0; index < methods.Length; index++)
+            if (methods[index].Name != ".ctor" && methods[index].Name != "TargetMethod")
+                callbacks++;
+        Check.Equal(expected.Length, callbacks, owner + " callback count");
+        for (int index = 0; index < expected.Length; index++)
+        {
+            string[] value = expected[index];
+            ParameterShape[] parameters = new ParameterShape[value.Length - 2];
+            for (int parameter = 0; parameter < parameters.Length; parameter++)
+                parameters[parameter] = P(value[parameter + 2]);
+            RequireMethod(image, owner, value[0], "private", true, value[1], parameters);
+        }
+    }
+
+    private static void RequireTargetMethod(MetadataImage image,
+        string patch, string targetOwner, string targetName, int flags,
+        string returnType, params string[] parameterTypes)
+    {
+        MethodShape method = OnlyMethod(image, patch, "TargetMethod");
+        List<IlInstruction> instructions = image.Instructions(method);
+        List<string> typeTokens = new List<string>();
+        List<string> strings = new List<string>();
+        List<int> constants = new List<int>();
+        int newArrays = 0;
+        int stores = 0;
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            IlInstruction instruction = instructions[index];
+            if (instruction.OpCode.Value == OpCodes.Ldtoken.Value)
+                typeTokens.Add(image.TokenType(instruction));
+            else if (instruction.OpCode.Value == OpCodes.Ldstr.Value)
+                strings.Add(image.StringLiteral(instruction));
+            else if (instruction.OpCode.Value == OpCodes.Newarr.Value)
+            {
+                Check.Equal("System.Type", image.TokenType(instruction),
+                    patch + " parameter array element type");
+                newArrays++;
+            }
+            else if (instruction.OpCode.Value == OpCodes.Stelem_Ref.Value)
+                stores++;
+            int constant;
+            if (MetadataImage.TryConstant(instruction, out constant))
+                constants.Add(constant);
+        }
+        string[] expectedTypes = new string[parameterTypes.Length + 2];
+        expectedTypes[0] = targetOwner;
+        expectedTypes[1] = returnType;
+        Array.Copy(parameterTypes, 0, expectedTypes, 2, parameterTypes.Length);
+        RequireSequence(expectedTypes, typeTokens.ToArray(),
+            patch + " exact typeof vector");
+        RequireSequence(new string[] { targetName }, strings.ToArray(),
+            patch + " exact method name");
+        int[] expectedConstants = new int[parameterTypes.Length + 2];
+        expectedConstants[0] = flags;
+        expectedConstants[1] = parameterTypes.Length;
+        for (int index = 0; index < parameterTypes.Length; index++)
+            expectedConstants[index + 2] = index;
+        RequireIntSequence(expectedConstants, constants.ToArray(),
+            patch + " exact BindingFlags and parameter indexes");
+        Check.Equal(1, newArrays, patch + " exact parameter array");
+        Check.Equal(parameterTypes.Length, stores,
+            patch + " exact parameter array stores");
+        RequireCallCount(image.Calls(method), "PatchTarget", "Require", 1,
+            patch + " exact target helper");
+        RequireLastCallThenReturn(image, method, "PatchTarget", "Require",
+            patch + " returns exact target result");
+    }
+
+    private static void RequireObservedForwarding(MetadataImage image,
+        string patch, string callback, string controllerMethod,
+        string[] controllerParameters, string[] expectedFieldLoads)
+    {
+        MethodShape forwarding = ObservedDelegateTarget(
+            image, patch, callback);
+        List<MethodCall> calls = image.Calls(forwarding);
+        MethodCall controllerCall = OnlyCall(calls, "OracleController",
+            controllerMethod,
+            patch + "::" + callback + " exact controller forwarding");
+        RequireMethodCallSignature(controllerCall, controllerParameters,
+            patch + "::" + callback + " forwarding signature");
+        int controllerCalls = 0;
+        for (int index = 0; index < calls.Count; index++)
+            if (calls[index].Owner == "OracleController") controllerCalls++;
+        Check.Equal(1, controllerCalls,
+            patch + "::" + callback + " one controller call");
+        List<string> fields = new List<string>();
+        List<IlInstruction> instructions = image.Instructions(forwarding);
+        for (int index = 0; index < instructions.Count; index++)
+            if (instructions[index].OpCode.Value == OpCodes.Ldfld.Value)
+                fields.Add(image.FieldName(instructions[index]));
+        RequireSequence(expectedFieldLoads, fields.ToArray(),
+            patch + "::" + callback + " runtime argument order");
+    }
+
+    private static MethodShape ObservedDelegateTarget(
+        MetadataImage image, string patch, string callback)
+    {
+        MethodShape callbackMethod = OnlyMethod(image, patch, callback);
+        List<MethodCall> calls = image.Calls(callbackMethod);
+        MethodCall observe = OnlyCall(calls, "GameHooks", "Observe",
+            patch + "::" + callback + " uses firewall");
+        MethodCall action = null;
+        for (int index = 0; index < calls.Count; index++)
+            if (calls[index].Name == ".ctor"
+                && calls[index].Owner == "System.Action<OracleController>")
+            {
+                Check.True(action == null,
+                    patch + "::" + callback + " delegate construction duplicated");
+                action = calls[index];
+            }
+        if (action == null) throw new InvalidOperationException(
+            patch + "::" + callback + " delegate construction missing");
+        List<IlInstruction> instructions = image.Instructions(callbackMethod);
+        IlInstruction function = null;
+        for (int index = 0; index < instructions.Count; index++)
+            if (instructions[index].OpCode.Value == OpCodes.Ldftn.Value)
+            {
+                Check.True(function == null,
+                    patch + "::" + callback + " delegate target duplicated");
+                function = instructions[index];
+            }
+        if (function == null) throw new InvalidOperationException(
+            patch + "::" + callback + " delegate target missing");
+        int functionIndex = InstructionIndex(instructions, function.Offset);
+        int actionIndex = InstructionIndex(instructions, action.Offset);
+        int observeIndex = InstructionIndex(instructions, observe.Offset);
+        bool direct = observeIndex == actionIndex + 1;
+        bool exactCompilerCache = observeIndex == actionIndex + 3
+            && instructions[actionIndex + 1].OpCode.Value == OpCodes.Dup.Value
+            && instructions[actionIndex + 2].OpCode.Value == OpCodes.Stsfld.Value;
+        Check.True(actionIndex == functionIndex + 1
+            && (direct || exactCompilerCache),
+            patch + "::" + callback
+            + " contiguous delegate stack flow into Observe");
+        MethodShape target = image.MethodFromToken(function);
+        Check.True((target.Owner == patch
+                || target.Owner.StartsWith(patch + ".", StringComparison.Ordinal))
+            && target.Name.IndexOf(
+                "<" + callback + ">", StringComparison.Ordinal) >= 0,
+            patch + "::" + callback + " exact delegate target identity");
+        return target;
+    }
+
+    private static void RequireTokenStateWriteBack(MetadataImage image,
+        string patch, string enteredMethod, int outArgumentIndex)
+    {
+        MethodShape forwarding = ObservedDelegateTarget(image, patch, "Prefix");
+        MethodCall entered = OnlyCall(image.Calls(forwarding),
+            "OracleController", enteredMethod,
+            patch + " entered forwarding result");
+        List<IlInstruction> forwardingInstructions = image.Instructions(forwarding);
+        int enteredIndex = InstructionIndex(forwardingInstructions, entered.Offset);
+        Check.True(enteredIndex + 1 < forwardingInstructions.Count
+            && forwardingInstructions[enteredIndex + 1].OpCode.Value
+                == OpCodes.Stfld.Value
+            && image.FieldName(forwardingInstructions[enteredIndex + 1]) == "token",
+            patch + " entered result stored into captured token");
+        int capturedToken = forwardingInstructions[enteredIndex + 1].Token;
+
+        MethodShape prefix = OnlyMethod(image, patch, "Prefix");
+        List<MethodCall> prefixCalls = image.Calls(prefix);
+        MethodCall observe = OnlyCall(prefixCalls, "GameHooks", "Observe",
+            patch + " observe call");
+        MethodCall inert = OnlyCallBefore(prefixCalls, "HookToken", "Inert",
+            observe.Offset, patch + " pre-Observe inert call");
+        List<IlInstruction> instructions = image.Instructions(prefix);
+        int inertIndex = InstructionIndex(instructions, inert.Offset);
+        Check.True(inertIndex + 1 < instructions.Count
+            && instructions[inertIndex + 1].OpCode.Value == OpCodes.Stfld.Value
+            && image.FieldName(instructions[inertIndex + 1]) == "token"
+            && instructions[inertIndex + 1].Token == capturedToken,
+            patch + " inert token stored into captured token");
+        int observeIndex = InstructionIndex(instructions, observe.Offset);
+        Check.True(observeIndex + 6 == instructions.Count,
+            patch + " exact post-Observe out-state sequence length");
+        int stateArgument = -1;
+        Check.True(MetadataImage.TryArgumentIndex(
+            instructions[observeIndex + 1], out stateArgument),
+            patch + " immediate out __state argument load");
+        Check.Equal(outArgumentIndex, stateArgument,
+            patch + " exact Harmony out __state argument");
+        Check.True(IsLocalLoad(instructions[observeIndex + 2].OpCode)
+            && instructions[observeIndex + 3].OpCode.Value == OpCodes.Ldfld.Value
+            && image.FieldName(instructions[observeIndex + 3]) == "token"
+            && instructions[observeIndex + 3].Token == capturedToken
+            && instructions[observeIndex + 4].OpCode.Value == OpCodes.Stind_Ref.Value
+            && instructions[observeIndex + 5].OpCode.Value == OpCodes.Ret.Value,
+            patch + " contiguous captured token store through out __state");
+    }
+
+    private static bool IsLocalLoad(OpCode opcode)
+    {
+        return opcode.Name == "ldloc" || opcode.Name == "ldloc.s"
+            || opcode.Name == "ldloc.0" || opcode.Name == "ldloc.1"
+            || opcode.Name == "ldloc.2" || opcode.Name == "ldloc.3";
+    }
+
+    private static void RequireInertBeforeObserve(
+        MetadataImage image, string patch, int expectedKind)
+    {
+        MethodShape prefix = OnlyMethod(image, patch, "Prefix");
+        List<MethodCall> calls = image.Calls(prefix);
+        MethodCall inert = OnlyCall(calls, "HookToken", "Inert",
+            patch + " inert initialization");
+        MethodCall observe = OnlyCall(calls, "GameHooks", "Observe",
+            patch + " firewall");
+        Check.True(inert.Offset < observe.Offset,
+            patch + " inert token precedes observation");
+        List<IlInstruction> instructions = image.Instructions(prefix);
+        int inertIndex = InstructionIndex(instructions, inert.Offset);
+        int actual = 0;
+        Check.True(inertIndex > 0
+            && MetadataImage.TryConstant(instructions[inertIndex - 1], out actual),
+            patch + " inert kind is a literal");
+        Check.Equal(expectedKind, actual, patch + " exact inert HookKind");
+    }
+
+    private static void RequireDirectReturnCall(MetadataImage image,
+        string owner, string methodName, string callOwner, string callName,
+        int[] argumentIndexes)
+    {
+        MethodShape method = OnlyMethod(image, owner, methodName);
+        List<MethodCall> calls = image.Calls(method);
+        MethodCall call = OnlyCall(calls, callOwner, callName,
+            owner + "::" + methodName + " exact return call");
+        List<IlInstruction> instructions = image.Instructions(method);
+        int callIndex = InstructionIndex(instructions, call.Offset);
+        Check.True(callIndex >= argumentIndexes.Length,
+            owner + "::" + methodName + " argument count");
+        for (int index = 0; index < argumentIndexes.Length; index++)
+        {
+            int actual;
+            Check.True(MetadataImage.TryArgumentIndex(
+                instructions[callIndex - argumentIndexes.Length + index],
+                out actual), owner + "::" + methodName + " argument load");
+            Check.Equal(argumentIndexes[index], actual,
+                owner + "::" + methodName + " argument order");
+        }
+        Check.True(callIndex + 1 < instructions.Count
+            && instructions[callIndex + 1].OpCode.Value == OpCodes.Ret.Value
+            && callIndex + 2 == instructions.Count,
+            owner + "::" + methodName + " returns call result unchanged");
+    }
+
+    private static void RequireTrueReturn(
+        MetadataImage image, string owner, string methodName)
+    {
+        List<IlInstruction> instructions = image.Instructions(
+            OnlyMethod(image, owner, methodName));
+        int value = 0;
+        Check.True(instructions.Count == 2
+            && MetadataImage.TryConstant(instructions[0], out value)
+            && value == 1
+            && instructions[1].OpCode.Value == OpCodes.Ret.Value,
+            owner + "::" + methodName + " returns literal true");
+    }
+
+    private static void RequireNoOp(MetadataImage image,
+        string owner, string methodName, string message)
+    {
+        List<IlInstruction> instructions = image.Instructions(
+            OnlyMethod(image, owner, methodName));
+        Check.True(instructions.Count == 1
+            && instructions[0].OpCode.Value == OpCodes.Ret.Value, message);
+    }
+
+    private static MethodCall OnlyCall(List<MethodCall> calls,
+        string owner, string name, string message)
+    {
+        MethodCall found = null;
+        for (int index = 0; index < calls.Count; index++)
+        {
+            if (calls[index].Owner != owner || calls[index].Name != name) continue;
+            Check.True(found == null, message + " is duplicated");
+            found = calls[index];
+        }
+        if (found == null) throw new InvalidOperationException(message + " is missing");
+        return found;
+    }
+
+    private static MethodCall OnlyCallBefore(List<MethodCall> calls,
+        string owner, string name, int beforeOffset, string message)
+    {
+        MethodCall found = null;
+        for (int index = 0; index < calls.Count; index++)
+        {
+            if (calls[index].Offset >= beforeOffset
+                || calls[index].Owner != owner || calls[index].Name != name)
+                continue;
+            Check.True(found == null, message + " is duplicated");
+            found = calls[index];
+        }
+        if (found == null) throw new InvalidOperationException(message + " is missing");
+        return found;
+    }
+
+    private static List<MethodCall> CallsNamed(
+        List<MethodCall> calls, string owner, string name)
+    {
+        List<MethodCall> result = new List<MethodCall>();
+        for (int index = 0; index < calls.Count; index++)
+            if (calls[index].Owner == owner && calls[index].Name == name)
+                result.Add(calls[index]);
+        return result;
+    }
+
+    private static int FindConditionalBranch(List<IlInstruction> instructions,
+        int afterOffset, int beforeOffset, string message)
+    {
+        int found = -1;
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            IlInstruction instruction = instructions[index];
+            if (instruction.Offset <= afterOffset
+                || instruction.Offset >= beforeOffset
+                || instruction.OpCode.FlowControl != FlowControl.Cond_Branch)
+                continue;
+            Check.True(instruction.HasBranchTarget,
+                message + " has a decoded target");
+            Check.Equal(-1, found, message + " is unique");
+            found = index;
+        }
+        if (found < 0) throw new InvalidOperationException(message + " is missing");
+        return found;
+    }
+
+    private static int FirstConditionalBranchAfter(
+        List<IlInstruction> instructions, int afterOffset, string message)
+    {
+        for (int index = 0; index < instructions.Count; index++)
+            if (instructions[index].Offset > afterOffset
+                && instructions[index].OpCode.FlowControl
+                    == FlowControl.Cond_Branch)
+            {
+                Check.True(instructions[index].HasBranchTarget,
+                    message + " has a decoded target");
+                return index;
+            }
+        throw new InvalidOperationException(message + " is missing");
+    }
+
+    private static bool HasReturnBetween(List<IlInstruction> instructions,
+        int afterOffset, int beforeOffset)
+    {
+        for (int index = 0; index < instructions.Count; index++)
+            if (instructions[index].Offset > afterOffset
+                && instructions[index].Offset < beforeOffset
+                && instructions[index].OpCode.Value == OpCodes.Ret.Value)
+                return true;
+        return false;
+    }
+
+    private static void RequireMethodCallSignature(
+        MethodCall call, string[] parameters, string message)
+    {
+        Check.Equal(parameters.Length, call.Parameters.Length, message + " count");
+        for (int index = 0; index < parameters.Length; index++)
+            Check.Equal(parameters[index], call.Parameters[index],
+                message + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+    }
+
+    private static int InstructionIndex(
+        List<IlInstruction> instructions, int offset)
+    {
+        for (int index = 0; index < instructions.Count; index++)
+            if (instructions[index].Offset == offset) return index;
+        throw new InvalidOperationException("missing IL instruction offset");
+    }
+
+    private static void RequireLastCallThenReturn(MetadataImage image,
+        MethodShape method, string owner, string name, string message)
+    {
+        MethodCall call = OnlyCall(image.Calls(method), owner, name, message);
+        List<IlInstruction> instructions = image.Instructions(method);
+        int index = InstructionIndex(instructions, call.Offset);
+        Check.True(index + 1 < instructions.Count
+            && instructions[index + 1].OpCode.Value == OpCodes.Ret.Value
+            && index + 2 == instructions.Count, message);
+    }
+
+    private static void RequireIntSequence(
+        int[] expected, int[] actual, string message)
+    {
+        Check.Equal(expected.Length, actual.Length, message + " length");
+        for (int index = 0; index < expected.Length; index++)
+            Check.Equal(expected[index], actual[index],
+                message + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+    }
+
+    private static MethodShape OnlyMethod(
+        MetadataImage image, string owner, string name)
+    {
+        MethodShape[] methods = image.Methods(owner, name);
+        Check.Equal(1, methods.Length, owner + "::" + name + " count");
+        return methods[0];
+    }
+
+    private static void RequireOrderedCalls(
+        List<MethodCall> actual, string[] expected, string message)
+    {
+        int next = 0;
+        for (int index = 0; index < actual.Count && next < expected.Length; index++)
+            if (actual[index].Owner + "::" + actual[index].Name == expected[next]) next++;
+        Check.Equal(expected.Length, next, message);
+    }
+
+    private static void RequireCallCount(List<MethodCall> calls,
+        string owner, string name, int expected, string message)
+    {
+        int count = 0;
+        for (int index = 0; index < calls.Count; index++)
+            if (calls[index].Owner == owner && calls[index].Name == name) count++;
+        Check.Equal(expected, count, message);
+    }
+
+    private static void RequireSequence(
+        string[] expected, string[] actual, string message)
+    {
+        Check.Equal(expected.Length, actual.Length, message + " length");
+        for (int index = 0; index < expected.Length; index++)
+            Check.Equal(expected[index], actual[index],
+                message + "[" + index.ToString(CultureInfo.InvariantCulture) + "]");
+    }
+
+    private static void RequireFalseFalseBeforeSave(MetadataImage image, MethodShape method)
+    {
+        List<IlInstruction> values = image.Instructions(method);
+        for (int index = 0; index < values.Count; index++)
+        {
+            IlInstruction instruction = values[index];
+            if (instruction.OpCode.Value != OpCodes.Callvirt.Value && instruction.OpCode.Value != OpCodes.Call.Value) continue;
+            MethodCall call = image.Calls(method).Find(delegate(MethodCall value) { return value.Offset == instruction.Offset; });
+            if (call == null || call.Owner != "GameState" || call.Name != "Save") continue;
+            int first; int second;
+            if (index < 2 || !MetadataImage.TryConstant(values[index - 2], out first)
+                || !MetadataImage.TryConstant(values[index - 1], out second)
+                || first != 0 || second != 0)
+                throw new InvalidOperationException("Save arguments are not false,false");
+            return;
+        }
+        throw new InvalidOperationException("Save call is missing");
+    }
+
+    private static void RequireGameCall(List<MethodCall> calls, string owner,
+        string name, string returnType, string[] parameters)
+    {
+        int matches = 0;
+        for (int index = 0; index < calls.Count; index++)
+        {
+            MethodCall call = calls[index];
+            if (call.Owner != owner || call.Name != name || call.ReturnType != returnType
+                || call.Parameters.Length != parameters.Length) continue;
+            bool same = true;
+            for (int parameter = 0; parameter < parameters.Length; parameter++)
+                same &= call.Parameters[parameter] == parameters[parameter];
+            if (same) matches++;
+        }
+        Check.Equal(1, matches, owner + "::" + name);
+    }
+
+    private static void RequireMethod(MetadataImage image, string owner,
+        string name, string visibility, bool isStatic, string returnType,
+        params ParameterShape[] parameters)
+    { RequireMethodShape(image.Methods(owner, name), new MethodShape(default(MethodDefinitionHandle), owner, name, visibility, isStatic, returnType, parameters)); }
+    private static void RequireField(MetadataImage image, string owner,
+        string name, string visibility, bool isStatic, string fieldType)
+    { RequireFieldShape(image.Fields(owner, name), new FieldShape(owner, name, visibility, isStatic, fieldType)); }
+    private static void RequireEnumShape(EnumShape[] actual, EnumShape expected)
+    { for (int i = 0; i < actual.Length; i++) if (actual[i].Name == expected.Name && actual[i].Value == expected.Value) return; throw new InvalidOperationException("missing enum shape"); }
+    internal static MethodShape RequireMethodShape(MethodShape[] actual, MethodShape expected)
+    { MethodShape found = null; for (int i = 0; i < actual.Length; i++) { MethodShape value = actual[i]; if (!MethodMatches(value, expected)) continue; if (found != null) throw new InvalidOperationException("duplicate method shape"); found = value; } if (found == null) throw new InvalidOperationException("missing method shape"); return found; }
+    internal static FieldShape RequireFieldShape(FieldShape[] actual, FieldShape expected)
+    { FieldShape found = null; for (int i = 0; i < actual.Length; i++) { FieldShape value = actual[i]; if (value.Owner != expected.Owner || value.Name != expected.Name || value.Visibility != expected.Visibility || value.IsStatic != expected.IsStatic || value.FieldType != expected.FieldType) continue; if (found != null) throw new InvalidOperationException("duplicate field shape"); found = value; } if (found == null) throw new InvalidOperationException("missing field shape"); return found; }
+    private static bool MethodMatches(MethodShape actual, MethodShape expected)
+    { if (actual.Owner != expected.Owner || actual.Name != expected.Name || actual.Visibility != expected.Visibility || actual.IsStatic != expected.IsStatic || actual.ReturnType != expected.ReturnType || actual.Parameters.Length != expected.Parameters.Length) return false; for (int i = 0; i < actual.Parameters.Length; i++) if (actual.Parameters[i].Type != expected.Parameters[i].Type) return false; return true; }
+}

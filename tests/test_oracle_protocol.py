@@ -469,7 +469,7 @@ RUN_LINE = (
     f'{{"kind":"run","schema_version":{SCHEMA_VERSION},'
     f'"run_id":"{RUN_ID}","mode":"passive",'
     f'"game_assembly_sha256":"{ASSEMBLY_HASH}",'
-    '"plugin_version":"0.2.0","input_sha256":null,'
+    '"plugin_version":"0.3.0","input_sha256":null,'
     f'"expected_input_count":{EXPECTED_INPUT_COUNT},'
     '"started_at_utc":"2026-07-31T19:09:50.3199100Z"}'
 ).encode("utf-8")
@@ -749,7 +749,7 @@ BAD_RUN_SEMANTIC_LINES = [
         id="assembly-nonhex",
     ),
     pytest.param(
-        RUN_LINE.replace(b'"plugin_version":"0.2.0"', b'"plugin_version":"0.1.0"'),
+        RUN_LINE.replace(b'"plugin_version":"0.3.0"', b'"plugin_version":"0.2.0"'),
         id="plugin-version",
     ),
     pytest.param(
