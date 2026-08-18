@@ -588,6 +588,8 @@ internal static class AssemblySurfaceTests
             delegate { ExactRequiredFields(options.AssemblyPath); });
         tests.Add("assembly", "metadata matcher rejects near misses",
             SyntheticMatcherRejectsNearMisses);
+        tests.Add("assembly", "replay native ABI remains exact",
+            delegate { ReplayNativeAbiRemainsExact(options.AssemblyPath); });
         tests.Add("plugin", "game adapter call surface is passive",
             delegate { AdapterCallSurface(options.PluginPath); });
         tests.Add("plugin", "controller crosses authorized update boundary",
@@ -600,6 +602,10 @@ internal static class AssemblySurfaceTests
             delegate { BepInPluginIdentity(options.PluginPath); });
         tests.Add("plugin", "typed modes and owner teardown are closed",
             delegate { TypedModeAndOwnerOnlyTeardown(options.PluginPath); });
+        tests.Add("plugin", "adapter replay call surface is exact",
+            delegate { AdapterReplayCallSurfaceIsExact(options.PluginPath); });
+        tests.Add("plugin", "player input override is replay only",
+            delegate { PlayerInputOverrideIsReplayOnly(options.PluginPath); });
     }
 
     private static ParameterShape P(string type) { return new ParameterShape(type); }
@@ -679,6 +685,23 @@ internal static class AssemblySurfaceTests
         Check.Throws<InvalidOperationException>(delegate { RequireEnumShape(new EnumShape[] { new EnumShape("None", 7) }, new EnumShape("None", 8)); }, "enum value");
     }
 
+    private static void ReplayNativeAbiRemainsExact(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--assembly"))
+        {
+            RequireSoleMethod(image, "Game", "Playerinputstring", "private",
+                false, "Direction");
+            RequireSoleMethod(image, "Game", "DoPlayerInput", "private",
+                false, "System.Void");
+            RequireSoleMethod(image, "GameState", "ProcessInput", "public",
+                false, "System.Boolean", P("Direction"));
+            RequireSoleMethod(image, "Game", "DoUndo", "public", false,
+                "System.Void");
+            RequireSoleMethod(image, "Game", "RestorePrevState", "private",
+                false, "System.Void", P("GameState.BakStruct"));
+        }
+    }
+
     private static void AdapterCallSurface(string path)
     {
         using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
@@ -688,6 +711,7 @@ internal static class AssemblySurfaceTests
             MethodShape saveOwner = null;
             for (int index = 0; index < methods.Length; index++)
             {
+                if (methods[index].Name == "InvokeUndo") continue;
                 List<MethodCall> calls = image.Calls(methods[index]);
                 for (int call = 0; call < calls.Count; call++)
                 {
@@ -704,6 +728,120 @@ internal static class AssemblySurfaceTests
             RequireGameCall(gameCalls, "GameState", "Save", "System.String", new string[] { "System.Boolean", "System.Boolean" });
             if (saveOwner == null) throw new InvalidOperationException("Save owner missing");
             RequireFalseFalseBeforeSave(image, saveOwner);
+        }
+    }
+
+    private static void AdapterReplayCallSurfaceIsExact(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            RequireSoleMethod(image, "IOracleGameAdapter", "InvokeUndo",
+                "public", false, "System.Void", P("System.Object"));
+            RequireSoleMethod(image, "GameAdapter", "InvokeUndo", "public",
+                false, "System.Void", P("System.Object"));
+            MethodShape[] methods = image.AllMethods("GameAdapter");
+            List<MethodCall> gameCalls = new List<MethodCall>();
+            for (int index = 0; index < methods.Length; index++)
+            {
+                List<MethodCall> calls = image.Calls(methods[index]);
+                for (int call = 0; call < calls.Count; call++)
+                    if (calls[call].Owner == "Game"
+                        || calls[call].Owner == "GameState")
+                        gameCalls.Add(calls[call]);
+            }
+            Check.Equal(3, gameCalls.Count,
+                "exact passive-plus-replay direct game call count");
+            RequireGameCall(gameCalls, "GameState", "Moving",
+                "System.Boolean", new string[0]);
+            RequireGameCall(gameCalls, "GameState", "Save", "System.String",
+                new string[] { "System.Boolean", "System.Boolean" });
+            RequireGameCall(gameCalls, "Game", "DoUndo", "System.Void",
+                new string[0]);
+
+            int directProcessInput = 0;
+            string[] types = image.AllTypeNames();
+            for (int type = 0; type < types.Length; type++)
+            {
+                MethodShape[] ownerMethods = image.AllMethods(types[type]);
+                for (int method = 0; method < ownerMethods.Length; method++)
+                {
+                    List<MethodCall> calls = image.Calls(ownerMethods[method]);
+                    for (int call = 0; call < calls.Count; call++)
+                        if (calls[call].Owner == "GameState"
+                            && calls[call].Name == "ProcessInput")
+                            directProcessInput++;
+                }
+            }
+            Check.Equal(0, directProcessInput,
+                "plugin never directly calls GameState.ProcessInput");
+        }
+    }
+
+    private static void PlayerInputOverrideIsReplayOnly(string path)
+    {
+        using (MetadataImage image = MetadataImage.Open(path, "--plugin"))
+        {
+            Check.Equal(0, image.Methods(
+                "GameHooks", "AllowNativePlayerInput").Length,
+                "legacy unconditional player-input gate is absent");
+            MethodShape hook = RequireSoleMethod(image, "GameHooks",
+                "TryOverridePlayerInput", "assembly", true, "System.Boolean",
+                P("System.Int32&"));
+            MethodParameterMetadata[] hookParameters =
+                image.ParameterMetadata(hook);
+            Check.Equal("rawDirection", hookParameters[0].Name,
+                "hook raw direction parameter name");
+            Check.True(hookParameters[0].IsOut,
+                "hook raw direction is out");
+
+            MethodShape prefix = RequireSoleMethod(image,
+                "GamePlayerinputstringPatch", "Prefix", "private", true,
+                "System.Boolean", P("Direction&"));
+            MethodParameterMetadata[] prefixParameters =
+                image.ParameterMetadata(prefix);
+            Check.Equal("__result", prefixParameters[0].Name,
+                "Harmony result parameter name");
+            Check.False(prefixParameters[0].IsOut,
+                "Harmony result parameter is ref");
+            List<MethodCall> prefixCalls = image.Calls(prefix);
+            RequireCallCount(prefixCalls, "GameHooks",
+                "TryOverridePlayerInput", 1,
+                "Playerinputstring prefix consults one replay gate");
+            Check.Equal(1, prefixCalls.Count,
+                "Playerinputstring prefix has no other call path");
+            RequirePlayerInputPrefixControlFlow(image, prefix);
+
+            List<MethodCall> hookCalls = image.Calls(hook);
+            RequireCallCount(hookCalls, "GameHooks", "ReadController", 1,
+                "override reads published controller once");
+            RequireCallCount(hookCalls, "OracleController",
+                "TryOverridePlayerInput", 1,
+                "override delegates to controller once");
+            RequireCallCount(hookCalls, "OracleController", "ObserverFailed", 1,
+                "override exception selects observer failure once");
+
+            MethodShape updateFinalize = RequireSoleMethod(
+                image, "GameHooks", "FinalizeUpdate", "assembly", true,
+                "System.Exception", P("System.Exception"));
+            int updateThrewTargets = 0;
+            int ordinaryFailureTargets = 0;
+            List<IlInstruction> finalizeInstructions =
+                image.Instructions(updateFinalize);
+            for (int index = 0; index < finalizeInstructions.Count; index++)
+            {
+                if (finalizeInstructions[index].OpCode.Value
+                    != OpCodes.Ldftn.Value) continue;
+                MethodCall target = image.MethodTokenCall(
+                    finalizeInstructions[index]);
+                if (target.Owner == "OracleController"
+                    && target.Name == "UpdateThrew") updateThrewTargets++;
+                if (target.Owner == "OracleController"
+                    && target.Name == "GameMethodFailed") ordinaryFailureTargets++;
+            }
+            Check.Equal(1, updateThrewTargets,
+                "Update finalizer uses replay-aware failure action");
+            Check.Equal(0, ordinaryFailureTargets,
+                "Update finalizer bypasses ordinary game failure action");
         }
     }
 
@@ -749,6 +887,7 @@ internal static class AssemblySurfaceTests
                 "ProcessInputReturned::MovementScheduled",
                 "UndoReturned::CurrentMovementScheduled"
             }, movementOwners.ToArray(), "movement reads stay on normal returns");
+            RequireReplayControllerRouting(image);
         }
     }
 
@@ -788,7 +927,7 @@ internal static class AssemblySurfaceTests
             });
             RequirePatch(image, "GamePlayerinputstringPatch", new string[][]
             {
-                S("Prefix", "System.Boolean"),
+                S("Prefix", "System.Boolean", "Direction&"),
                 S("Postfix", "System.Void", "Direction")
             });
             RequirePatch(image, "GameStateProcessInputPatch", new string[][]
@@ -843,12 +982,6 @@ internal static class AssemblySurfaceTests
             RequireTargetMethod(image, "GameSetGameStatePatch", "Game",
                 "SetGameState", (int)(BindingFlags.Instance | BindingFlags.Public),
                 "System.Void", "GameState");
-
-            RequireNoOp(image, "OracleController", "UpdateEntered",
-                "Update entered remains observation-safe");
-            RequireTrueReturn(image, "GameHooks", "AllowNativePlayerInput");
-            RequireDirectReturnCall(image, "GamePlayerinputstringPatch", "Prefix",
-                "GameHooks", "AllowNativePlayerInput", new int[0]);
 
             RequireObservedForwarding(image, "GameUpdatePatch", "Prefix",
                 "UpdateEntered", new string[] { "System.Object" },
@@ -932,10 +1065,20 @@ internal static class AssemblySurfaceTests
                             .Type.EndsWith("&", StringComparison.Ordinal);
                         if (byReference)
                         {
-                            Check.Equal("__state", parameters[parameter].Name,
-                                "only __state is by-ref");
-                            Check.True(parameters[parameter].IsOut,
-                                "by-ref __state is out");
+                            bool playerResult = patches[patch]
+                                    == "GamePlayerinputstringPatch"
+                                && methods[method].Name == "Prefix"
+                                && parameters[parameter].Name == "__result";
+                            if (playerResult)
+                                Check.False(parameters[parameter].IsOut,
+                                    "Playerinputstring __result is ref");
+                            else
+                            {
+                                Check.Equal("__state", parameters[parameter].Name,
+                                    "only __state or player __result is by-ref");
+                                Check.True(parameters[parameter].IsOut,
+                                    "by-ref __state is out");
+                            }
                         }
                     }
                 }
@@ -993,10 +1136,23 @@ internal static class AssemblySurfaceTests
         {
             Check.Equal(0, image.EnumValue("OracleMode", "Off"), "Off mode");
             Check.Equal(1, image.EnumValue("OracleMode", "Passive"), "Passive mode");
+            Check.Equal(2, image.EnumValue("OracleMode", "Replay"), "Replay mode");
+            string[] allowedReplayTypes = new string[]
+            {
+                "IReplayDriver", "IReplayInputBytes", "ReplayInput",
+                "FileReplayInputBytes", "ReplayConfiguration",
+                "IReplayUpdateAccess", "ReplayCoordinator",
+                "OracleController.AdapterReplayUpdateAccess"
+            };
             string[] types = image.AllTypeNames();
             for (int index = 0; index < types.Length; index++)
-                Check.False(types[index].IndexOf("Replay", StringComparison.OrdinalIgnoreCase) >= 0,
-                    "no replay type");
+            {
+                if (types[index].IndexOf("Replay", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Check.True(Array.IndexOf(allowedReplayTypes, types[index]) >= 0,
+                        "only planned replay types are present: " + types[index]);
+                }
+            }
             Check.Equal("dev.jlsor.ssr.oracle.passive",
                 image.StringConstant("GameHooks", "HarmonyOwner"), "passive owner");
 
@@ -1005,8 +1161,8 @@ internal static class AssemblySurfaceTests
             RequireCallCount(awake, "OracleConfiguration", "Load", 1, "config loaded once");
             RequireCallCount(awake, "PluginModePolicy", "StartOff", 1,
                 "Off uses legacy policy");
-            RequireCallCount(awake, "OracleController", "Start", 1,
-                "Passive starts controller");
+            RequireCallCount(awake, "OracleController", "Start", 2,
+                "both active modes start one controller branch");
             RequireAwakeModeControlFlow(image, awakeMethod, awake);
 
             List<MethodCall> destroy = image.Calls(
@@ -1030,62 +1186,416 @@ internal static class AssemblySurfaceTests
     private static void RequireAwakeModeControlFlow(MetadataImage image,
         MethodShape awakeMethod, List<MethodCall> calls)
     {
+        List<IlInstruction> instructions = image.Instructions(awakeMethod);
         MethodCall load = OnlyCall(calls, "OracleConfiguration", "Load",
             "Awake config load");
         List<MethodCall> modeCalls = CallsNamed(
             calls, "OracleConfiguration", "get_Mode");
-        Check.Equal(2, modeCalls.Count, "Awake exact mode reads");
+        Check.Equal(5, modeCalls.Count, "Awake exact typed mode gates");
         MethodCall startOff = OnlyCall(calls, "PluginModePolicy", "StartOff",
             "Awake Off policy");
-        MethodCall start = OnlyCall(calls, "OracleController", "Start",
-            "Awake passive controller start");
         Check.True(load.Offset < modeCalls[0].Offset,
             "configuration load precedes Off gate");
-        Check.True(modeCalls[0].Offset < startOff.Offset
-            && startOff.Offset < modeCalls[1].Offset
-            && modeCalls[1].Offset < start.Offset,
-            "Off return and Passive gate precede controller start");
+        Check.True(modeCalls[0].Offset < startOff.Offset,
+            "Off policy follows the Off gate");
 
-        List<IlInstruction> instructions = image.Instructions(awakeMethod);
-        int offBranch = FindConditionalBranch(
+        int offBranchIndex = FindConditionalBranch(
             instructions, modeCalls[0].Offset, startOff.Offset,
             "Off mode branch");
-        Check.True(instructions[offBranch].BranchTarget > startOff.Offset,
-            "Off branch skips only the Off path");
+        IlInstruction offBranch = instructions[offBranchIndex];
+        Check.True(IsBranchOnTrue(offBranch),
+            "non-Off value branches around the Off region");
         int startOffIndex = InstructionIndex(instructions, startOff.Offset);
         Check.True(startOffIndex + 1 < instructions.Count
-            && instructions[startOffIndex + 1].OpCode.Value == OpCodes.Ret.Value,
-            "Off policy returns before passive work");
-        Check.True(instructions[offBranch].BranchTarget
-            <= modeCalls[1].Offset,
-            "non-Off branch reaches Passive gate");
+            && instructions[startOffIndex + 1].OpCode.Value
+                == OpCodes.Ret.Value,
+            "Off StartOff region returns immediately");
+        Check.True(offBranch.BranchTarget
+                > instructions[startOffIndex + 1].Offset
+            && offBranch.BranchTarget <= modeCalls[1].Offset,
+            "non-Off target cannot enter or fall through the Off region");
 
-        int passiveBranch = FirstConditionalBranchAfter(
-            instructions, modeCalls[1].Offset, "Passive mode branch");
-        int passiveTarget = instructions[passiveBranch].BranchTarget;
-        Check.True(passiveTarget > instructions[passiveBranch].Offset
-            && passiveTarget <= start.Offset,
-            "Passive branch target enters passive construction");
-        Check.True(HasReturnBetween(instructions,
-            instructions[passiveBranch].Offset, passiveTarget),
-            "invalid mode returns before passive construction");
-        RequireClosedPreGateRegion(image, awakeMethod,
-            instructions, passiveTarget);
-        RequirePostGateCall(calls, "HarmonyLib.Harmony", ".ctor",
-            passiveTarget, "one post-gate Harmony construction");
-        RequirePostGateCall(calls, "GameAdapter", ".ctor",
-            passiveTarget, "one post-gate GameAdapter construction");
-        RequirePostGateCall(calls, "SsrOracle.Plugin.OracleRuntimeHost", ".ctor",
-            passiveTarget, "one post-gate runtime construction");
-        RequirePostGateCall(calls, "OracleController", ".ctor",
-            passiveTarget, "one post-gate controller construction");
-        RequirePostGateCall(calls, "OracleController", "Start",
-            passiveTarget, "one post-gate controller start");
+        int passiveValidBranch = RequireModeComparison(
+            instructions, modeCalls[1], 1, "Passive validity gate");
+        int replayValidBranch = RequireModeComparison(
+            instructions, modeCalls[2], 2, "Replay validity gate");
+        Check.True(IsBranchOnEqual(instructions[passiveValidBranch])
+            && IsBranchOnEqual(instructions[replayValidBranch]),
+            "Passive and Replay values branch around invalid reporting");
+        Check.Equal(instructions[passiveValidBranch].BranchTarget,
+            instructions[replayValidBranch].BranchTarget,
+            "both active modes enter one shared capability region");
+        int invalidString = OnlyStringInstruction(
+            image, instructions, "invalid_mode", "invalid mode marker");
+        int invalidFailed = FirstCallInstructionAfter(
+            instructions, invalidString, "invalid mode reporter");
+        MethodCall invalidCall = image.MethodTokenCall(
+            instructions[invalidFailed]);
+        Check.True(invalidCall.Owner == "PassiveLogReporter"
+                && invalidCall.Name == "Failed",
+            "invalid mode selects the bootstrap reporter");
+        Check.True(invalidFailed + 1 < instructions.Count
+            && instructions[invalidFailed + 1].OpCode.Value
+                == OpCodes.Ret.Value,
+            "invalid mode returns before active capabilities");
+        int activeTarget = instructions[passiveValidBranch].BranchTarget;
+        Check.True(activeTarget > instructions[invalidFailed + 1].Offset
+            && activeTarget <= modeCalls[3].Offset,
+            "active mode branches skip the complete invalid return region");
+        RequireActiveReporterSelection(image, instructions, calls,
+            modeCalls[3], activeTarget);
+
+        MethodCall validate = OnlyCall(calls,
+            "SsrOracle.Plugin.OracleRuntimeHost",
+            "ValidateAssemblyAndPassiveContract",
+            "replay pre-input runtime validation");
+        MethodCall inputLoad = OnlyCall(calls, "ReplayInput", "Load",
+            "replay exact input read");
+        Check.True(validate.Offset < inputLoad.Offset,
+            "runtime contract validates before replay input read");
+
+        List<MethodCall> constructors = CallsNamed(
+            calls, "OracleController", ".ctor");
+        Check.Equal(2, constructors.Count,
+            "one Passive and one Replay controller constructor branch");
+        MethodCall passiveConstructor = null;
+        MethodCall replayConstructor = null;
+        for (int index = 0; index < constructors.Count; index++)
+        {
+            MethodCall value = constructors[index];
+            if (value.Parameters.Length == 4
+                && value.Parameters[0] == "PassiveConfiguration")
+                passiveConstructor = value;
+            if (value.Parameters.Length == 5
+                && value.Parameters[0] == "ReplayConfiguration"
+                && value.Parameters[1] == "ReplayInput")
+                replayConstructor = value;
+        }
+        Check.True(passiveConstructor != null,
+            "Passive controller constructor is exact");
+        Check.True(replayConstructor != null,
+            "Replay controller constructor is exact");
+        Check.True(inputLoad.Offset < replayConstructor.Offset,
+            "input is loaded before Replay controller construction");
+        MethodCall harmonyConstructor = OnlyCall(calls,
+            "HarmonyLib.Harmony", ".ctor", "one active Harmony constructor");
+        MethodCall adapterConstructor = OnlyCall(calls,
+            "GameAdapter", ".ctor", "one active adapter constructor");
+        MethodCall runtimeConstructor = OnlyCall(calls,
+            "SsrOracle.Plugin.OracleRuntimeHost", ".ctor",
+            "one active runtime constructor");
+        Check.True(activeTarget <= harmonyConstructor.Offset
+            && activeTarget <= adapterConstructor.Offset
+            && activeTarget <= runtimeConstructor.Offset
+            && activeTarget <= passiveConstructor.Offset
+            && activeTarget <= replayConstructor.Offset,
+            "invalid modes cannot reach active capability construction");
+
+        MethodCall executionMode = modeCalls[4];
+        Check.True(executionMode.Offset < validate.Offset,
+            "Replay execution gate precedes Replay-only validation");
+        int executionBranch = RequireModeComparison(
+            instructions, executionMode, 2, "Replay execution gate");
+        Check.True(IsBranchOnNotEqual(instructions[executionBranch]),
+            "Replay equality routes every non-Replay mode to Passive");
+        int passiveTarget = instructions[executionBranch].BranchTarget;
+
+        List<MethodCall> starts = CallsNamed(
+            calls, "OracleController", "Start");
+        Check.Equal(2, starts.Count, "two exclusive active Start call sites");
+        List<MethodCall> runConstructors = CallsNamed(
+            calls, "RunRecord", ".ctor");
+        Check.Equal(2, runConstructors.Count,
+            "one Passive and one Replay Run constructor branch");
+        MethodCall passiveRun = null;
+        MethodCall replayRun = null;
+        for (int index = 0; index < runConstructors.Count; index++)
+        {
+            MethodCall value = runConstructors[index];
+            if (value.Parameters.Length == 3)
+                passiveRun = value;
+            if (value.Parameters.Length == 6
+                && value.Parameters[1] == "OracleMode")
+                replayRun = value;
+        }
+        Check.True(passiveRun != null, "Passive Run constructor is exact");
+        Check.True(replayRun != null, "Replay Run constructor is exact");
+
+        Check.True(instructions[executionBranch].Offset < validate.Offset
+            && validate.Offset < inputLoad.Offset
+            && inputLoad.Offset < replayConstructor.Offset
+            && replayConstructor.Offset < replayRun.Offset
+            && replayRun.Offset < starts[0].Offset
+            && starts[0].Offset < passiveTarget,
+            "Replay branch exclusively validates loads constructs runs and starts");
+        Check.True(passiveTarget <= passiveConstructor.Offset
+            && passiveConstructor.Offset < passiveRun.Offset
+            && passiveRun.Offset < starts[1].Offset,
+            "Passive branch exclusively constructs runs and starts without input");
+        RequireMutuallyExclusiveActiveExits(
+            instructions, starts[0], starts[1]);
         RequireCallCount(calls, "NdjsonTraceSink", "Create", 0,
             "Awake opens no sink directly");
         RequireCallCount(calls, "GameAdapter",
             "AuthenticateAndRedirectSavePath", 0,
             "Awake redirects no save path directly");
+    }
+
+    private static void RequireActiveReporterSelection(MetadataImage image,
+        List<IlInstruction> instructions, List<MethodCall> calls,
+        MethodCall modeCall, int activeTarget)
+    {
+        int reporterBranch = RequireModeComparison(
+            instructions, modeCall, 2, "active reporter Replay gate");
+        Check.True(IsBranchOnEqual(instructions[reporterBranch]),
+            "Replay alone selects the provisional Replay reporter");
+
+        List<MethodCall> reporterConstructors = CallsNamed(
+            calls, "PassiveLogReporter", ".ctor");
+        Check.Equal(2, reporterConstructors.Count,
+            "bootstrap and provisional reporter constructors only");
+        MethodCall bootstrap = null;
+        MethodCall provisional = null;
+        for (int index = 0; index < reporterConstructors.Count; index++)
+        {
+            MethodCall value = reporterConstructors[index];
+            if (value.Parameters.Length == 1
+                && value.Parameters[0] == "IPassiveLog")
+                bootstrap = value;
+            if (value.Parameters.Length == 3
+                && value.Parameters[0] == "IPassiveLog"
+                && value.Parameters[1] == "OracleMode"
+                && value.Parameters[2] == "System.Int32")
+                provisional = value;
+        }
+        Check.True(bootstrap != null,
+            "bootstrap Passive reporter constructor is exact");
+        Check.True(provisional != null,
+            "provisional Replay reporter constructor is exact");
+        Check.True(bootstrap.Offset < activeTarget
+            && instructions[reporterBranch].Offset
+                < instructions[reporterBranch].BranchTarget
+            && instructions[reporterBranch].BranchTarget
+                < provisional.Offset,
+            "Replay reporter construction lies only on the Replay edge");
+
+        int bootstrapIndex = InstructionIndex(instructions, bootstrap.Offset);
+        int logFieldToken = -1;
+        int bootstrapLocal = -1;
+        Check.True(bootstrapIndex > 0
+            && instructions[bootstrapIndex - 1].OpCode.Value
+                == OpCodes.Ldfld.Value
+            && image.FieldName(instructions[bootstrapIndex - 1]) == "log"
+            && (logFieldToken = instructions[bootstrapIndex - 1].Token) != 0
+            && bootstrapIndex + 1 < instructions.Count
+            && TryLocalStoreIndex(
+                instructions[bootstrapIndex + 1], out bootstrapLocal),
+            "bootstrap reporter stores one exact log-backed local");
+
+        int provisionalIndex = InstructionIndex(
+            instructions, provisional.Offset);
+        int provisionalMode = -1;
+        int provisionalCount = -1;
+        Check.True(provisionalIndex >= 4
+            && IsLocalLoad(instructions[provisionalIndex - 4].OpCode)
+            && instructions[provisionalIndex - 3].OpCode.Value
+                == OpCodes.Ldfld.Value
+            && instructions[provisionalIndex - 3].Token == logFieldToken
+            && MetadataImage.TryConstant(
+                instructions[provisionalIndex - 2], out provisionalMode)
+            && provisionalMode == 2
+            && MetadataImage.TryConstant(
+                instructions[provisionalIndex - 1], out provisionalCount)
+            && provisionalCount == 1,
+            "Replay edge constructs PassiveLogReporter(log, Replay, 1)");
+
+        int replaySelection = InstructionIndex(instructions,
+            instructions[reporterBranch].BranchTarget);
+        Check.Equal(provisionalIndex - 4, replaySelection,
+            "Replay branch target begins exact provisional constructor arguments");
+        int passiveSelection = NextNonNop(
+            instructions, reporterBranch + 1);
+        int selectedBootstrap = -1;
+        Check.True(TryLocalLoadIndex(
+                instructions[passiveSelection], out selectedBootstrap)
+            && selectedBootstrap == bootstrapLocal,
+            "Passive edge selects the existing bootstrap reporter");
+        int passiveJoinBranch = NextNonNop(
+            instructions, passiveSelection + 1);
+        Check.True(IsUnconditionalBranchOrLeave(
+                instructions[passiveJoinBranch]),
+            "Passive reporter selection branches to one join");
+        int passiveJoin = InstructionIndex(instructions,
+            instructions[passiveJoinBranch].BranchTarget);
+        int replayJoin = NextNonNop(instructions, provisionalIndex + 1);
+        Check.Equal(replayJoin, passiveJoin,
+            "Replay and Passive reporter edges share one exact join");
+        int activeReporterLocal = -1;
+        Check.True(TryLocalStoreIndex(
+                instructions[replayJoin], out activeReporterLocal),
+            "reporter selection join stores one active reporter local");
+        RequireReporterFailureUsesSelectedLocal(
+            image, instructions, calls, replayJoin, activeReporterLocal);
+    }
+
+    private static void RequireReporterFailureUsesSelectedLocal(
+        MetadataImage image, List<IlInstruction> instructions,
+        List<MethodCall> calls, int joinIndex, int activeReporterLocal)
+    {
+        int priorReporterCall = joinIndex;
+        int failedUses = 0;
+        int diagnosticUses = 0;
+        for (int index = 0; index < calls.Count; index++)
+        {
+            MethodCall call = calls[index];
+            if (call.Offset <= instructions[joinIndex].Offset
+                || call.Owner != "PassiveLogReporter"
+                || (call.Name != "Failed" && call.Name != "Diagnostic"))
+                continue;
+            int callIndex = InstructionIndex(instructions, call.Offset);
+            bool selected = false;
+            for (int instruction = priorReporterCall + 1;
+                instruction < callIndex; instruction++)
+            {
+                int loaded = -1;
+                if (TryLocalLoadIndex(
+                        instructions[instruction], out loaded)
+                    && loaded == activeReporterLocal)
+                    selected = true;
+            }
+            Check.True(selected,
+                "startup failure handlers use the selected reporter local");
+            if (call.Name == "Failed") failedUses++;
+            else diagnosticUses++;
+            priorReporterCall = callIndex;
+        }
+        Check.Equal(3, failedUses,
+            "three startup failure markers use selected reporter");
+        Check.Equal(3, diagnosticUses,
+            "three startup diagnostics use selected reporter");
+    }
+
+    private static void RequireMutuallyExclusiveActiveExits(
+        List<IlInstruction> instructions, MethodCall replayStart,
+        MethodCall passiveStart)
+    {
+        int replayStartIndex = InstructionIndex(
+            instructions, replayStart.Offset);
+        int passiveStartIndex = InstructionIndex(
+            instructions, passiveStart.Offset);
+        int replayPop = NextNonNop(instructions, replayStartIndex + 1);
+        int passivePop = NextNonNop(instructions, passiveStartIndex + 1);
+        Check.True(instructions[replayPop].OpCode.Value == OpCodes.Pop.Value
+            && instructions[passivePop].OpCode.Value == OpCodes.Pop.Value,
+            "both active Start results are discarded before branch exit");
+        int replayExit = NextNonNop(instructions, replayPop + 1);
+        int passiveExit = NextNonNop(instructions, passivePop + 1);
+        Check.True(IsUnconditionalBranchOrLeave(instructions[replayExit]),
+            "Replay Start exits unconditionally before Passive construction");
+        Check.True(IsUnconditionalBranchOrLeave(instructions[passiveExit]),
+            "Passive Start exits its complete active region");
+        Check.Equal(instructions[passiveExit].Offset,
+            instructions[replayExit].BranchTarget,
+            "Replay exits at the Passive region's unconditional exit boundary");
+        Check.True(instructions[replayExit].BranchTarget
+                > instructions[passivePop].Offset
+            && instructions[passiveExit].BranchTarget
+                > instructions[passiveExit].Offset,
+            "Replay exit target lies strictly beyond the complete Passive calls");
+        InstructionIndex(instructions,
+            instructions[replayExit].BranchTarget);
+    }
+
+    private static int NextNonNop(
+        List<IlInstruction> instructions, int start)
+    {
+        int index = start;
+        while (index < instructions.Count
+            && instructions[index].OpCode.Value == OpCodes.Nop.Value)
+            index++;
+        Check.True(index < instructions.Count,
+            "control-flow successor instruction exists");
+        return index;
+    }
+
+    private static bool IsUnconditionalBranchOrLeave(
+        IlInstruction instruction)
+    {
+        short opcode = instruction.OpCode.Value;
+        return instruction.HasBranchTarget
+            && (opcode == OpCodes.Br.Value
+                || opcode == OpCodes.Br_S.Value
+                || opcode == OpCodes.Leave.Value
+                || opcode == OpCodes.Leave_S.Value);
+    }
+
+    private static int RequireModeComparison(
+        List<IlInstruction> instructions, MethodCall modeCall,
+        int expectedMode, string message)
+    {
+        int callIndex = InstructionIndex(instructions, modeCall.Offset);
+        int actualMode = -1;
+        Check.True(callIndex + 2 < instructions.Count
+            && MetadataImage.TryConstant(
+                instructions[callIndex + 1], out actualMode)
+            && actualMode == expectedMode
+            && instructions[callIndex + 2].HasBranchTarget
+            && instructions[callIndex + 2].OpCode.FlowControl
+                == FlowControl.Cond_Branch,
+            message + " compares the exact enum value then branches");
+        return callIndex + 2;
+    }
+
+    private static bool IsBranchOnTrue(IlInstruction instruction)
+    {
+        return instruction.OpCode.Value == OpCodes.Brtrue.Value
+            || instruction.OpCode.Value == OpCodes.Brtrue_S.Value;
+    }
+
+    private static bool IsBranchOnEqual(IlInstruction instruction)
+    {
+        return instruction.OpCode.Value == OpCodes.Beq.Value
+            || instruction.OpCode.Value == OpCodes.Beq_S.Value;
+    }
+
+    private static bool IsBranchOnNotEqual(IlInstruction instruction)
+    {
+        return instruction.OpCode.Value == OpCodes.Bne_Un.Value
+            || instruction.OpCode.Value == OpCodes.Bne_Un_S.Value;
+    }
+
+    private static int OnlyStringInstruction(MetadataImage image,
+        List<IlInstruction> instructions, string value, string message)
+    {
+        int found = -1;
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            if (instructions[index].OpCode.Value != OpCodes.Ldstr.Value
+                || image.StringLiteral(instructions[index]) != value)
+                continue;
+            Check.Equal(-1, found, message + " is unique");
+            found = index;
+        }
+        if (found < 0)
+            throw new InvalidOperationException(message + " is missing");
+        return found;
+    }
+
+    private static int FirstCallInstructionAfter(
+        List<IlInstruction> instructions, int afterIndex, string message)
+    {
+        for (int index = afterIndex + 1; index < instructions.Count; index++)
+        {
+            short opcode = instructions[index].OpCode.Value;
+            if (opcode == OpCodes.Call.Value
+                || opcode == OpCodes.Callvirt.Value
+                || opcode == OpCodes.Newobj.Value)
+                return index;
+            if (instructions[index].HasBranchTarget
+                || opcode == OpCodes.Ret.Value)
+                break;
+        }
+        throw new InvalidOperationException(message + " is missing");
     }
 
     private static void RequireSoleControllerDispose(MetadataImage image)
@@ -1441,6 +1951,182 @@ internal static class AssemblySurfaceTests
             || opcode.Name == "ldloc.2" || opcode.Name == "ldloc.3";
     }
 
+    private static bool TryLocalAddressIndex(
+        IlInstruction instruction, out int value)
+    {
+        value = 0;
+        short opcode = instruction.OpCode.Value;
+        if ((opcode == OpCodes.Ldloca.Value
+                || opcode == OpCodes.Ldloca_S.Value)
+            && instruction.HasVariable)
+        {
+            value = instruction.VariableIndex;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryLocalLoadIndex(
+        IlInstruction instruction, out int value)
+    {
+        value = 0;
+        short opcode = instruction.OpCode.Value;
+        if (opcode == OpCodes.Ldloc_0.Value) return true;
+        if (opcode == OpCodes.Ldloc_1.Value) { value = 1; return true; }
+        if (opcode == OpCodes.Ldloc_2.Value) { value = 2; return true; }
+        if (opcode == OpCodes.Ldloc_3.Value) { value = 3; return true; }
+        if ((opcode == OpCodes.Ldloc.Value || opcode == OpCodes.Ldloc_S.Value)
+            && instruction.HasVariable)
+        {
+            value = instruction.VariableIndex;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryLocalStoreIndex(
+        IlInstruction instruction, out int value)
+    {
+        value = 0;
+        short opcode = instruction.OpCode.Value;
+        if (opcode == OpCodes.Stloc_0.Value) return true;
+        if (opcode == OpCodes.Stloc_1.Value) { value = 1; return true; }
+        if (opcode == OpCodes.Stloc_2.Value) { value = 2; return true; }
+        if (opcode == OpCodes.Stloc_3.Value) { value = 3; return true; }
+        if ((opcode == OpCodes.Stloc.Value || opcode == OpCodes.Stloc_S.Value)
+            && instruction.HasVariable)
+        {
+            value = instruction.VariableIndex;
+            return true;
+        }
+        return false;
+    }
+
+    private static void RequirePlayerInputPrefixControlFlow(
+        MetadataImage image, MethodShape prefix)
+    {
+        List<MethodCall> calls = image.Calls(prefix);
+        MethodCall gate = OnlyCall(calls, "GameHooks",
+            "TryOverridePlayerInput", "Playerinputstring replay gate");
+        List<IlInstruction> instructions = image.Instructions(prefix);
+        int gateIndex = InstructionIndex(instructions, gate.Offset);
+        int rawLocal = -1;
+        Check.True(gateIndex > 0
+            && TryLocalAddressIndex(instructions[gateIndex - 1], out rawLocal),
+            "Playerinputstring gate receives one raw-direction local by address");
+        Check.True(gateIndex + 1 < instructions.Count,
+            "Playerinputstring gate result has a consumer");
+
+        IlInstruction branch = instructions[gateIndex + 1];
+        bool branchesOnTrue = branch.OpCode.Value == OpCodes.Brtrue.Value
+            || branch.OpCode.Value == OpCodes.Brtrue_S.Value;
+        bool branchesOnFalse = branch.OpCode.Value == OpCodes.Brfalse.Value
+            || branch.OpCode.Value == OpCodes.Brfalse_S.Value;
+        Check.True(branch.HasBranchTarget
+            && (branchesOnTrue || branchesOnFalse),
+            "Playerinputstring gate result immediately controls two paths");
+
+        int fallthrough = gateIndex + 2;
+        int target = InstructionIndex(instructions, branch.BranchTarget);
+        int falseGate = branchesOnFalse ? target : fallthrough;
+        int trueGate = branchesOnTrue ? target : fallthrough;
+        RequireLiteralReturnPath(instructions, falseGate, 1,
+            "false Playerinputstring gate preserves native execution");
+        RequireRawDirectionStorePath(image, instructions, trueGate, rawLocal);
+    }
+
+    private static void RequireLiteralReturnPath(
+        List<IlInstruction> instructions, int start, int value, string message)
+    {
+        int actual = 0;
+        Check.True(start >= 0 && start + 1 < instructions.Count
+            && MetadataImage.TryConstant(instructions[start], out actual)
+            && actual == value
+            && instructions[start + 1].OpCode.Value == OpCodes.Ret.Value,
+            message);
+    }
+
+    private static void RequireRawDirectionStorePath(MetadataImage image,
+        List<IlInstruction> instructions, int start, int rawLocal)
+    {
+        int resultArgument = -1;
+        int storedLocal = -1;
+        int returnValue = -1;
+        Check.True(start >= 0 && start + 4 < instructions.Count
+            && MetadataImage.TryArgumentIndex(
+                instructions[start], out resultArgument)
+            && resultArgument == 0
+            && TryLocalLoadIndex(instructions[start + 1], out storedLocal)
+            && storedLocal == rawLocal,
+            "true Playerinputstring gate loads __result and exact raw local");
+        bool exactStore = instructions[start + 2].OpCode.Value
+                == OpCodes.Stind_I4.Value
+            || (instructions[start + 2].OpCode.Value == OpCodes.Stobj.Value
+                && image.TokenType(instructions[start + 2]) == "Direction");
+        Check.True(exactStore
+            && MetadataImage.TryConstant(
+                instructions[start + 3], out returnValue)
+            && returnValue == 0
+            && instructions[start + 4].OpCode.Value == OpCodes.Ret.Value,
+            "true Playerinputstring gate stores raw result and skips native execution");
+    }
+
+    private static void RequireReplayControllerRouting(MetadataImage image)
+    {
+        RequireSoleCallOrder(image, "PhysicalPollReturned", new string[]
+        {
+            "ReplayCoordinator", "PhysicalPollReturned",
+            "PassiveDriver", "PhysicalPollReturned"
+        });
+        RequireSoleCallOrder(image, "ProcessInputEntered", new string[]
+        {
+            "ReplayCoordinator", "ProcessInputEntered",
+            "IOracleRuntimeHost", "NowSeconds",
+            "PassiveDriver", "ProcessInputEntered"
+        });
+        RequireSoleCallOrder(image, "UndoEntered", new string[]
+        {
+            "ReplayCoordinator", "UndoEntered",
+            "IOracleGameAdapter", "TryGetState",
+            "IOracleRuntimeHost", "NowSeconds",
+            "PassiveDriver", "UndoEntered"
+        });
+        RequireSoleCallOrder(image, "RestoreObserved", new string[]
+        {
+            "ReplayCoordinator", "RestoreObserved",
+            "PassiveDriver", "RestoreObserved"
+        });
+        RequireSoleCallOrder(image, "UndoReturned", new string[]
+        {
+            "ReplayCoordinator", "UndoReturned",
+            "IOracleGameAdapter", "CurrentMovementScheduled",
+            "PassiveDriver", "UndoReturned"
+        });
+    }
+
+    private static void RequireSoleCallOrder(MetadataImage image,
+        string methodName, string[] ownerAndName)
+    {
+        Check.True(ownerAndName.Length > 0
+            && ownerAndName.Length % 2 == 0,
+            methodName + " route expectation is paired");
+        List<MethodCall> calls = image.Calls(OnlyMethod(
+            image, "OracleController", methodName));
+        int priorOffset = -1;
+        for (int index = 0; index < ownerAndName.Length; index += 2)
+        {
+            string owner = ownerAndName[index];
+            string name = ownerAndName[index + 1];
+            MethodCall call = OnlyCall(calls, owner, name,
+                "OracleController::" + methodName + " sole "
+                + owner + "::" + name + " route");
+            Check.True(call.Offset > priorOffset,
+                "OracleController::" + methodName
+                + " exact coordinator-first route order");
+            priorOffset = call.Offset;
+        }
+    }
+
     private static void RequireInertBeforeObserve(
         MetadataImage image, string patch, int expectedKind)
     {
@@ -1708,6 +2394,16 @@ internal static class AssemblySurfaceTests
         string name, string visibility, bool isStatic, string returnType,
         params ParameterShape[] parameters)
     { RequireMethodShape(image.Methods(owner, name), new MethodShape(default(MethodDefinitionHandle), owner, name, visibility, isStatic, returnType, parameters)); }
+    private static MethodShape RequireSoleMethod(MetadataImage image,
+        string owner, string name, string visibility, bool isStatic,
+        string returnType, params ParameterShape[] parameters)
+    {
+        MethodShape[] methods = image.Methods(owner, name);
+        Check.Equal(1, methods.Length, owner + "::" + name + " exact overload count");
+        return RequireMethodShape(methods, new MethodShape(
+            default(MethodDefinitionHandle), owner, name, visibility, isStatic,
+            returnType, parameters));
+    }
     private static void RequireField(MetadataImage image, string owner,
         string name, string visibility, bool isStatic, string fieldType)
     { RequireFieldShape(image.Fields(owner, name), new FieldShape(owner, name, visibility, isStatic, fieldType)); }

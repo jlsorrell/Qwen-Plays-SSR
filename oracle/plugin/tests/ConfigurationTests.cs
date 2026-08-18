@@ -20,6 +20,10 @@ internal static class ConfigurationTests
             PassiveFailuresAreTyped);
         tests.Add("config", "configuration reads are typed",
             ConfigurationReadsAreTyped);
+        tests.Add("config", "replay values and topology are exact",
+            ReplayValuesAndTopologyAreExact);
+        tests.Add("config", "replay failures are typed before input read",
+            ReplayFailuresAreTypedBeforeInputRead);
     }
 
     private static void OffGrammarIsExactAndReadOnly(string fixturePath)
@@ -38,6 +42,7 @@ internal static class ConfigurationTests
                 "/config.ini", source, resolver, out original);
             Check.Equal(OracleMode.Off, configuration.Mode, "off Mode");
             Check.Equal<PassiveConfiguration>(null, configuration.Passive, "off Passive");
+            Check.Equal<ReplayConfiguration>(null, configuration.Replay, "off Replay");
             Check.Equal(0, resolver.Calls.Count, "off resolver calls");
             Check.Bytes(bytes, original, "off retained bytes");
             Check.False(Object.ReferenceEquals(bytes, original), "off retained clone");
@@ -77,7 +82,7 @@ internal static class ConfigurationTests
 
     private static void UnsupportedModesAreTyped()
     {
-        string[] values = new string[] { "", "Passive", "replay", "anything" };
+        string[] values = new string[] { "", "Passive", "Replay", "anything" };
         for (int index = 0; index < values.Length; index++)
             AssertConfigCode("invalid_mode", Bytes("[Oracle]\nMode=" + values[index] + "\n"), new FakeConfigurationPathResolver());
     }
@@ -91,6 +96,7 @@ internal static class ConfigurationTests
             "/asked/output", "run-01", "/asked/save")), resolver);
         PassiveConfiguration passive = configuration.Passive;
         Check.Equal(OracleMode.Passive, configuration.Mode, "passive Mode");
+        Check.Equal<ReplayConfiguration>(null, configuration.Replay, "passive Replay");
         Check.Equal("/physical/output", passive.OutputDirectory, "canonical output");
         Check.Equal("run-01", passive.RunName, "run name");
         Check.Equal("/physical/output/run-01.ndjson", passive.TracePath, "trace path");
@@ -139,6 +145,134 @@ internal static class ConfigurationTests
         AssertReadFailure(new ThrowingConfigurationBytes(new InvalidOperationException()), typeof(InvalidOperationException), "unexpected");
     }
 
+    private static void ReplayValuesAndTopologyAreExact()
+    {
+        const string hash =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        FakeConfigurationPathResolver resolver = Resolver(
+            "/physical/output", "/physical/save", "/physical/input.dem");
+        OracleConfiguration configuration = OracleConfiguration.Parse(Bytes(
+            ReplayText("/asked/output", "replay-01", "/asked/save",
+                "/asked/input.dem", hash)), resolver);
+        ReplayConfiguration replay = configuration.Replay;
+        Check.Equal(OracleMode.Replay, configuration.Mode, "replay Mode");
+        Check.Equal<PassiveConfiguration>(null, configuration.Passive,
+            "replay Passive");
+        Check.True(replay != null, "replay values exist");
+        Check.Equal("/physical/output", replay.OutputDirectory,
+            "replay canonical output");
+        Check.Equal("replay-01", replay.RunName, "replay run name");
+        Check.Equal("/physical/output/replay-01.ndjson", replay.TracePath,
+            "replay trace path");
+        Check.Equal("/physical/save", replay.SaveDirectory,
+            "replay canonical save");
+        Check.Equal("/physical/input.dem", replay.InputPath,
+            "replay canonical input");
+        Check.Equal(hash, replay.ExpectedInitialSha256,
+            "replay expected initial hash");
+        Check.Equal(OracleProtocol.MaxSettleFrames, replay.MaxSettleFrames,
+            "replay settle frames");
+        Check.Equal((double)OracleProtocol.MaxSettleSeconds,
+            replay.MaxSettleSeconds, "replay settle seconds");
+        Check.Sequence(new string[] {
+            "directory:/asked/output", "directory:/asked/save",
+            "file:/asked/input.dem",
+            "contains:/physical/output:/physical/save",
+            "contains:/physical/save:/physical/output",
+            "contains:/physical/output:/physical/input.dem",
+            "contains:/physical/save:/physical/input.dem"
+        }, resolver.Calls, "replay resolver order");
+
+        FakeConfigurationPathResolver emptyHash = Resolver(
+            "/out", "/save", "/input.dem");
+        OracleConfiguration empty = OracleConfiguration.Parse(Bytes(ReplayText(
+            "/out", "run", "/save", "/input.dem", "")), emptyHash);
+        Check.Equal("", empty.Replay.ExpectedInitialSha256,
+            "empty expected initial hash");
+
+        AssertReplayTopology(new bool[] { true }, "output contains save");
+        AssertReplayTopology(new bool[] { false, true }, "save contains output");
+        AssertReplayTopology(new bool[] { false, false, true },
+            "output contains input");
+        AssertReplayTopology(new bool[] { false, false, false, true },
+            "save contains input");
+    }
+
+    private static void ReplayFailuresAreTypedBeforeInputRead()
+    {
+        const string hash =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        string replay = ReplayText("/out", "run", "/save", "/input.dem", hash);
+        string[] keys = new string[] {
+            "Mode", "OutputDirectory", "RunName", "SaveDirectory", "InputPath",
+            "MaxSettleFrames", "MaxSettleSeconds", "ExpectedInitialSha256"
+        };
+        for (int index = 0; index < keys.Length; index++)
+        {
+            int lineStart = replay.IndexOf("\n" + keys[index] + "=") + 1;
+            int lineEnd = replay.IndexOf('\n', lineStart) + 1;
+            AssertConfigCode("invalid_configuration",
+                Bytes(replay.Remove(lineStart, lineEnd - lineStart)),
+                new FakeConfigurationPathResolver());
+        }
+
+        string[] emptyDirectories = new string[] {
+            ReplayText("", "run", "/save", "/input.dem", hash),
+            ReplayText("/out", "run", "", "/input.dem", hash)
+        };
+        for (int index = 0; index < emptyDirectories.Length; index++)
+        {
+            FakeConfigurationPathResolver resolver =
+                new FakeConfigurationPathResolver();
+            AssertConfigCode("invalid_configuration",
+                Bytes(emptyDirectories[index]), resolver);
+            Check.Equal(0, resolver.Calls.Count,
+                "empty active directory prevents all resolver calls");
+        }
+
+        string[] invalid = new string[] {
+            replay + "Extra=x\n",
+            replay + "ExpectedPassiveInputs=3\n",
+            replay.Replace("MaxSettleFrames=600", "MaxSettleFrames=0600"),
+            replay.Replace("MaxSettleSeconds=30", "MaxSettleSeconds=30.0"),
+            replay.Replace(hash, "abc"),
+            replay.Replace(hash,
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeG"),
+            replay.Replace(hash,
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"),
+            ReplayText("/out", "../run", "/save", "/input.dem", hash),
+            ReplayText("/out", "run.ndjson", "/save", "/input.dem", hash),
+            ReplayText("/out", "run", "/save", "", hash),
+            PassiveText("/out", "run", "/save") + "InputPath=/input.dem\n"
+        };
+        for (int index = 0; index < invalid.Length; index++)
+            AssertConfigCode("invalid_configuration", Bytes(invalid[index]),
+                new FakeConfigurationPathResolver());
+
+        FakeConfigurationPathResolver failed = new FakeConfigurationPathResolver();
+        failed.Failure = new IOException("no path");
+        AssertConfigCode("invalid_path", Bytes(replay), failed);
+        Check.Sequence(new string[] { "directory:/out" }, failed.Calls,
+            "path failure occurs at first resolution");
+    }
+
+    private static void AssertReplayTopology(bool[] containment, string label)
+    {
+        FakeConfigurationPathResolver resolver = Resolver(
+            "/out", "/save", "/input.dem");
+        for (int index = 0; index < containment.Length; index++)
+            resolver.ContainsResults.Enqueue(containment[index]);
+        OracleConfigurationException error =
+            Check.Throws<OracleConfigurationException>(delegate {
+                OracleConfiguration.Parse(Bytes(ReplayText(
+                    "/out", "run", "/save", "/input.dem", "")), resolver);
+            }, label);
+        Check.Equal("invalid_path", error.Code, label + " code");
+        Check.True(error.InnerException != null, label + " cause");
+        Check.Equal(3, resolver.ResolutionCount,
+            label + " resolves all paths before topology");
+    }
+
     private static void AssertReadFailure(IConfigurationBytes source, Type inner, string label)
     {
         byte[] original;
@@ -167,8 +301,18 @@ internal static class ConfigurationTests
         FakeConfigurationPathResolver resolver = new FakeConfigurationPathResolver();
         resolver.Resolved.Enqueue(output); resolver.Resolved.Enqueue(save); return resolver;
     }
+    private static FakeConfigurationPathResolver Resolver(
+        string output, string save, string input)
+    {
+        FakeConfigurationPathResolver resolver = Resolver(output, save);
+        resolver.ResolvedFiles.Enqueue(input);
+        return resolver;
+    }
     private static string PassiveText(string output, string run, string save)
     { return "[Oracle]\nMode=passive\nOutputDirectory=" + output + "\nRunName=" + run + "\nSaveDirectory=" + save + "\nExpectedPassiveInputs=3\nMaxSettleFrames=600\nMaxSettleSeconds=30\n"; }
+    private static string ReplayText(string output, string run, string save,
+        string input, string expectedInitialSha256)
+    { return "[Oracle]\nMode=replay\nOutputDirectory=" + output + "\nRunName=" + run + "\nSaveDirectory=" + save + "\nInputPath=" + input + "\nMaxSettleFrames=600\nMaxSettleSeconds=30\nExpectedInitialSha256=" + expectedInitialSha256 + "\n"; }
     private static byte[] Bytes(string text) { return Encoding.UTF8.GetBytes(text); }
     private static string Hex(byte[] bytes) { StringBuilder result = new StringBuilder(); for (int i = 0; i < bytes.Length; i++) result.Append(bytes[i].ToString("x2")); return result.ToString(); }
 }
@@ -193,10 +337,15 @@ internal sealed class ThrowingConfigurationBytes : IConfigurationBytes
 internal sealed class FakeConfigurationPathResolver : IConfigurationPathResolver
 {
     internal readonly Queue<string> Resolved = new Queue<string>();
+    internal readonly Queue<string> ResolvedFiles = new Queue<string>();
+    internal readonly Queue<bool> ContainsResults = new Queue<bool>();
     internal readonly List<string> Calls = new List<string>();
     internal bool ContainsResult; internal Exception Failure;
+    internal int ResolutionCount;
     public string ResolveExistingDirectory(string requested)
-    { Calls.Add("directory:" + requested); if (Failure != null) throw Failure; return Resolved.Dequeue(); }
+    { Calls.Add("directory:" + requested); if (Failure != null) throw Failure; ResolutionCount++; return Resolved.Dequeue(); }
+    public string ResolveExistingFile(string requested)
+    { Calls.Add("file:" + requested); if (Failure != null) throw Failure; ResolutionCount++; return ResolvedFiles.Dequeue(); }
     public bool Contains(string parent, string candidate)
-    { Calls.Add("contains:" + parent + ":" + candidate); return ContainsResult; }
+    { Calls.Add("contains:" + parent + ":" + candidate); return ContainsResults.Count == 0 ? ContainsResult : ContainsResults.Dequeue(); }
 }

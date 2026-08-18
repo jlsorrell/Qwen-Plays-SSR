@@ -1,7 +1,13 @@
 using System;
 using System.Threading;
 
-internal sealed partial class PassiveDriver : IDisposable
+internal interface IReplayDriver
+{
+    bool IsReadyForReplay(object stateReference, int completedInputs);
+    bool TryFault(string code);
+}
+
+internal sealed partial class PassiveDriver : IDisposable, IReplayDriver
 {
     private const int NoTerminalOwner = 0;
     private const int FaultTerminalOwner = 1;
@@ -66,7 +72,9 @@ internal sealed partial class PassiveDriver : IDisposable
             "initial_settle_timeout",
             "settle_timeout",
             "state_replaced",
-            "save_path_changed"
+            "save_path_changed",
+            "initial_state_mismatch",
+            "replay_alignment_failed"
         };
 
     private sealed class PlayerPollContext
@@ -167,7 +175,7 @@ internal sealed partial class PassiveDriver : IDisposable
             throw new ArgumentNullException("sink");
         if (reporter == null)
             throw new ArgumentNullException("reporter");
-        if (expectedInputCount != OracleProtocol.ExpectedInputCount)
+        if (expectedInputCount <= 0)
             throw new ArgumentOutOfRangeException("expectedInputCount");
         if (maxSettleFrames < 2
             || maxSettleFrames > OracleProtocol.MaxSettleFrames)
@@ -242,6 +250,11 @@ internal sealed partial class PassiveDriver : IDisposable
     {
         if (run == null)
             throw new ArgumentNullException("run");
+        if (run.ExpectedInputCount != expectedInputCount)
+        {
+            throw new ArgumentException(
+                "Run expected_input_count does not match driver");
+        }
         if (Interlocked.CompareExchange(
             ref prepareAttempted, 1, 0) != 0)
         {
@@ -637,6 +650,29 @@ internal sealed partial class PassiveDriver : IDisposable
         if (Read(ref disposed) != 0 || Read(ref disabled) != 0)
             return false;
         return TryFaultInternal(code, FaultRequest.Derived());
+    }
+
+    bool IReplayDriver.IsReadyForReplay(
+        object stateReference, int expectedCompletedInputs)
+    {
+        lock (outputLeaseSync)
+        {
+            return IsObservationActive()
+                && phase == PassivePhase.Ready
+                && completedInputs == expectedCompletedInputs
+                && Object.ReferenceEquals(stableState, stateReference)
+                && outstandingUpdate == null
+                && playerPoll == null
+                && processInputContext == null
+                && undoContext == null
+                && stateSetContext == null
+                && !attemptPending;
+        }
+    }
+
+    bool IReplayDriver.TryFault(string code)
+    {
+        return TryFault(code);
     }
 
     internal void Disable()

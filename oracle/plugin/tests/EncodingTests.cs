@@ -11,6 +11,13 @@ internal static class ProtocolSamples
     internal static readonly RunRecord Run = new RunRecord(
         RunId, OracleProtocol.ExpectedAssemblySha256,
         new DateTime(2026, 7, 31, 19, 9, 50, DateTimeKind.Utc).AddTicks(3199100));
+    internal const string ReplayInputSha256 =
+        "f8ace91df3cf40e0410cd9da8df1a2859a5a1aba66e423ed4bd951ba3c14ba7a";
+    internal static readonly RunRecord ReplayRun = new RunRecord(
+        RunId, OracleMode.Replay, OracleProtocol.ExpectedAssemblySha256,
+        ReplayInputSha256, 1,
+        new DateTime(2026, 7, 31, 19, 9, 50, DateTimeKind.Utc)
+            .AddTicks(3199100));
     internal static readonly InitialRecord Initial =
         new InitialRecord(RunId, InitialCapture);
     internal static readonly StepRecord Step0 =
@@ -21,6 +28,8 @@ internal static class ProtocolSamples
         new StepRecord(RunId, 2, OracleInput.Undo, true, false, 2, false, InitialCapture);
     internal static readonly EndRecord End = new EndRecord(
         RunId, 3, new DateTime(2026, 7, 31, 19, 11, 0, DateTimeKind.Utc));
+    internal static readonly EndRecord ReplayEnd = new EndRecord(
+        RunId, 1, new DateTime(2026, 7, 31, 19, 11, 0, DateTimeKind.Utc));
     internal static readonly ErrorRecord Error = new ErrorRecord(
         RunId, 1, OracleInput.North, "settle_timeout", 600, MovedCapture);
 
@@ -38,6 +47,7 @@ internal static class EncodingTests
         tests.Add("encoding", "golden fixture bytes", GoldenFixtures);
         tests.Add("encoding", "canonical string scalars", CanonicalStrings);
         tests.Add("encoding", "surrogates are rejected", RejectsSurrogates);
+        tests.Add("encoding", "replay run golden bytes", ReplayRunGoldenBytes);
     }
 
     private static byte[][] ReadFixtureLines(string path)
@@ -145,6 +155,34 @@ internal static class EncodingTests
             Check.Bytes(ReadFixtureLines(Path.Combine(
                 "tests", "fixtures", "oracle_trace", "passive-success.ndjson"))[0],
                 CanonicalJson.EncodeRun(ProtocolSamples.Run), "culture-invariant run");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = prior;
+        }
+    }
+
+    private static void ReplayRunGoldenBytes()
+    {
+        byte[][] replay = ReadFixtureLines(Path.Combine(
+            "tests", "fixtures", "oracle_trace", "replay-success.ndjson"));
+        byte[][] actual = new byte[][]
+        {
+            CanonicalJson.EncodeRun(ProtocolSamples.ReplayRun),
+            CanonicalJson.EncodeInitial(ProtocolSamples.Initial),
+            CanonicalJson.EncodeStep(ProtocolSamples.Step0),
+            CanonicalJson.EncodeEnd(ProtocolSamples.ReplayEnd)
+        };
+        Check.Equal(4, replay.Length, "replay fixture lines");
+        for (int index = 0; index < actual.Length; index++)
+            Check.Bytes(replay[index], actual[index], "replay line " + index);
+
+        CultureInfo prior = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("fr-FR");
+            Check.Bytes(replay[0], CanonicalJson.EncodeRun(ProtocolSamples.ReplayRun),
+                "culture-invariant replay run");
         }
         finally
         {

@@ -9,6 +9,8 @@ internal static class PassiveReporterTests
         tests.Add("reporter", "completion marker is exact", CompletionMarker);
         tests.Add("reporter", "failure markers are closed", FailureMarkers);
         tests.Add("reporter", "diagnostic is nonterminal", DiagnosticMarker);
+        tests.Add("reporter", "mode aware markers are exact",
+            ModeAwareMarkersAreExact);
     }
 
     private static void ReadyMarkers()
@@ -45,7 +47,8 @@ internal static class PassiveReporterTests
             "unexpected_input", "unscoped_process_input", "hook_order_mismatch",
             "game_method_exception", "observer_exception", "capture_failed",
             "record_too_large", "initial_settle_timeout", "settle_timeout",
-            "state_replaced", "save_path_changed" };
+            "state_replaced", "save_path_changed", "initial_state_mismatch",
+            "replay_alignment_failed" };
         string[] markerCodes = new string[] {
             "invalid_mode", "invalid_configuration", "invalid_assembly",
             "invalid_reflection", "invalid_path", "trace_exists",
@@ -75,6 +78,43 @@ internal static class PassiveReporterTests
             log.Events.ToArray(), "diagnostic marker");
         Check.Throws<ArgumentNullException>(delegate { reporter.Diagnostic(null); },
             "null diagnostic rejected");
+    }
+
+    private static void ModeAwareMarkersAreExact()
+    {
+        FakePassiveLog log = new FakePassiveLog();
+        PassiveLogReporter replay = new PassiveLogReporter(
+            log, OracleMode.Replay, 2);
+        replay.Ready(0);
+        replay.Ready(1);
+        replay.Diagnostic("detail");
+        replay.Failed("initial_state_mismatch");
+        replay.Complete();
+        Check.Sequence(new string[]
+        {
+            "Info:SSR oracle replay trace ready: 0/2",
+            "Info:SSR oracle replay trace ready: 1/2",
+            "Warning:SSR oracle replay diagnostic: detail",
+            "Error:SSR oracle replay trace failed: initial_state_mismatch",
+            "Info:SSR oracle replay trace complete"
+        }, log.Events.ToArray(), "replay marker bytes");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate { replay.Ready(2); }, "replay complete Ready rejected");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveLogReporter(log, OracleMode.Off, 1);
+            }, "Off reporter rejected");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveLogReporter(log, OracleMode.Replay, 0);
+            }, "zero replay count rejected");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveLogReporter(log, OracleMode.Passive, 2);
+            }, "non-three passive count rejected");
     }
 }
 

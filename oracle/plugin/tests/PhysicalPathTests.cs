@@ -13,6 +13,8 @@ internal static class PhysicalPathTests
         tests.Add("path", "lexical paths are strict", LexicalPathsAreStrict);
         tests.Add("path", "symlink and nondirectory are rejected", SymlinkAndNondirectoryAreRejected);
         tests.Add("path", "two scan drift is rejected", TwoScanDriftIsRejected);
+        tests.Add("path", "existing regular files resolve canonically",
+            ExistingFilesResolveCanonically);
     }
     private static void ContainmentUsesComponentBoundary()
     {
@@ -110,6 +112,44 @@ internal static class PhysicalPathTests
                 Check.Equal("/real/a/b/c", ops.RealPath("/a/b/c"), "target real path");
             }
         }
+    }
+    private static void ExistingFilesResolveCanonically()
+    {
+        FakePhysicalPathOperations ops = Base();
+        ops.Kinds["/a"] = PhysicalPathKind.Directory;
+        ops.Kinds["/a/input.dem"] = PhysicalPathKind.File;
+        ops.Real["/a/input.dem"] = "/real/a/input.dem";
+        int between = 0;
+        string resolved = PhysicalPath.ResolveExistingFile(
+            "/a/input.dem", ops, delegate { between++; });
+        Check.Equal("/real/a/input.dem", resolved, "canonical regular file");
+        Check.Equal(1, between, "regular file scanned twice");
+        Check.Equal(6, ops.ClassifyCalls, "regular file classification count");
+
+        FakePhysicalPathOperations directory = Base();
+        directory.Kinds["/a"] = PhysicalPathKind.Directory;
+        OracleConfigurationException directoryError =
+            Check.Throws<OracleConfigurationException>(delegate {
+                PhysicalPath.ResolveExistingFile("/a", directory, null);
+            }, "directory is not a regular file");
+        Check.Equal("invalid_path", directoryError.Code, "directory file code");
+
+        FakePhysicalPathOperations missing = Base();
+        OracleConfigurationException missingError =
+            Check.Throws<OracleConfigurationException>(delegate {
+                PhysicalPath.ResolveExistingFile("/a", missing, null);
+            }, "missing regular file");
+        Check.Equal("invalid_path", missingError.Code, "missing file code");
+
+        FakePhysicalPathOperations drift = Base();
+        drift.Kinds["/a"] = PhysicalPathKind.File;
+        OracleConfigurationException driftError =
+            Check.Throws<OracleConfigurationException>(delegate {
+                PhysicalPath.ResolveExistingFile("/a", drift, delegate {
+                    drift.Kinds["/a"] = PhysicalPathKind.Missing;
+                });
+            }, "regular file drift");
+        Check.Equal("invalid_path", driftError.Code, "regular file drift code");
     }
     private static void AssertInvalid(string path, PhysicalPathKind kind)
     {

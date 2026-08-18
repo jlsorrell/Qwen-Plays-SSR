@@ -41,12 +41,17 @@ namespace SsrOracle
                     delegate { log.Info("SSR oracle boot probe loaded"); });
                 return;
             }
-            if (configuration.Mode != OracleMode.Passive)
+            if (configuration.Mode != OracleMode.Passive
+                && configuration.Mode != OracleMode.Replay)
             {
                 reporter.Failed("invalid_mode");
                 return;
             }
 
+            PassiveLogReporter activeReporter = configuration.Mode
+                    == OracleMode.Replay
+                ? new PassiveLogReporter(log, OracleMode.Replay, 1)
+                : reporter;
             try
             {
                 Harmony harmony = new Harmony(GameHooks.HarmonyOwner);
@@ -55,24 +60,46 @@ namespace SsrOracle
                 catch (Exception error)
                 { throw new PassiveStartupException("invalid_reflection", error); }
                 OracleRuntimeHost runtime = new OracleRuntimeHost(harmony);
-                controller = new OracleController(
-                    configuration.Passive, adapter, runtime, log);
-                string digest = HashLiveGameAssembly();
-                RunRecord run = new RunRecord(
-                    Guid.NewGuid().ToString("N"), digest, DateTime.UtcNow);
-                controller.Start(run);
+                if (configuration.Mode == OracleMode.Replay)
+                {
+                    runtime.ValidateAssemblyAndPassiveContract();
+                    ReplayInput input = ReplayInput.Load(
+                        configuration.Replay.InputPath,
+                        new FileReplayInputBytes());
+                    controller = new OracleController(
+                        configuration.Replay, input, adapter, runtime, log);
+                    controller.Start(new RunRecord(
+                        Guid.NewGuid().ToString("N"), OracleMode.Replay,
+                        HashLiveGameAssembly(), input.Sha256, input.Count,
+                        DateTime.UtcNow));
+                }
+                else
+                {
+                    controller = new OracleController(
+                        configuration.Passive, adapter, runtime, log);
+                    controller.Start(new RunRecord(
+                        Guid.NewGuid().ToString("N"), HashLiveGameAssembly(),
+                        DateTime.UtcNow));
+                }
+            }
+            catch (OracleConfigurationException error)
+            {
+                activeReporter.Failed(error.Code);
+                activeReporter.Diagnostic(error.InnerException == null
+                    ? error.GetType().FullName
+                    : error.InnerException.GetType().FullName);
             }
             catch (PassiveStartupException error)
             {
-                reporter.Failed(error.Code);
-                reporter.Diagnostic(error.InnerException == null
+                activeReporter.Failed(error.Code);
+                activeReporter.Diagnostic(error.InnerException == null
                     ? error.GetType().FullName
                     : error.InnerException.GetType().FullName);
             }
             catch (Exception error)
             {
-                reporter.Failed("invalid_reflection");
-                reporter.Diagnostic(error.GetType().FullName);
+                activeReporter.Failed("invalid_reflection");
+                activeReporter.Diagnostic(error.GetType().FullName);
             }
         }
 

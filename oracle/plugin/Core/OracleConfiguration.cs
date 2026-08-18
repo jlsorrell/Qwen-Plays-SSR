@@ -11,6 +11,7 @@ internal interface IConfigurationBytes
 internal interface IConfigurationPathResolver
 {
     string ResolveExistingDirectory(string requested);
+    string ResolveExistingFile(string requested);
     bool Contains(string parent, string candidate);
 }
 
@@ -49,13 +50,40 @@ internal sealed class PassiveConfiguration
     internal double MaxSettleSeconds { get; private set; }
 }
 
+internal sealed class ReplayConfiguration
+{
+    internal ReplayConfiguration(string outputDirectory, string runName,
+        string tracePath, string saveDirectory, string inputPath,
+        string expectedInitialSha256)
+    {
+        OutputDirectory = outputDirectory;
+        RunName = runName;
+        TracePath = tracePath;
+        SaveDirectory = saveDirectory;
+        InputPath = inputPath;
+        ExpectedInitialSha256 = expectedInitialSha256;
+        MaxSettleFrames = OracleProtocol.MaxSettleFrames;
+        MaxSettleSeconds = OracleProtocol.MaxSettleSeconds;
+    }
+    internal string OutputDirectory { get; private set; }
+    internal string RunName { get; private set; }
+    internal string TracePath { get; private set; }
+    internal string SaveDirectory { get; private set; }
+    internal string InputPath { get; private set; }
+    internal string ExpectedInitialSha256 { get; private set; }
+    internal int MaxSettleFrames { get; private set; }
+    internal double MaxSettleSeconds { get; private set; }
+}
+
 internal sealed class OracleConfiguration
 {
     private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
-    private OracleConfiguration(OracleMode mode, PassiveConfiguration passive)
-    { Mode = mode; Passive = passive; }
+    private OracleConfiguration(OracleMode mode, PassiveConfiguration passive,
+        ReplayConfiguration replay)
+    { Mode = mode; Passive = passive; Replay = replay; }
     internal OracleMode Mode { get; private set; }
     internal PassiveConfiguration Passive { get; private set; }
+    internal ReplayConfiguration Replay { get; private set; }
 
     internal static OracleConfiguration Load(string configPath,
         IConfigurationBytes source, IConfigurationPathResolver paths,
@@ -84,10 +112,13 @@ internal sealed class OracleConfiguration
         if (mode == "off")
         {
             RequireOnly(values, new string[] { "Mode", "OutputDirectory", "RunName", "SaveDirectory", "InputPath", "MaxSettleFrames", "MaxSettleSeconds", "ExpectedInitialSha256" });
-            return new OracleConfiguration(OracleMode.Off, null);
+            return new OracleConfiguration(OracleMode.Off, null, null);
         }
-        if (mode != "passive") throw Failure("invalid_mode", new FormatException("unsupported Mode"));
+        if (mode != "passive" && mode != "replay")
+            throw Failure("invalid_mode", new FormatException("unsupported Mode"));
         if (paths == null) throw new ArgumentNullException("paths");
+        if (mode == "replay")
+            return ParseReplay(values, paths);
         RequireOnly(values, new string[] { "Mode", "OutputDirectory", "RunName", "SaveDirectory", "ExpectedPassiveInputs", "MaxSettleFrames", "MaxSettleSeconds" });
         RequireExactKeys(values, new string[] { "Mode", "OutputDirectory", "RunName", "SaveDirectory", "ExpectedPassiveInputs", "MaxSettleFrames", "MaxSettleSeconds" });
         if (Require(values, "ExpectedPassiveInputs") != "3" || Require(values, "MaxSettleFrames") != "600" || Require(values, "MaxSettleSeconds") != "30")
@@ -101,7 +132,50 @@ internal sealed class OracleConfiguration
             if (paths.Contains(output, save) || paths.Contains(save, output))
                 throw new IOException("active directories overlap");
             string trace = Path.Combine(output, runName + ".ndjson");
-            return new OracleConfiguration(OracleMode.Passive, new PassiveConfiguration(output, runName, trace, save));
+            return new OracleConfiguration(OracleMode.Passive,
+                new PassiveConfiguration(output, runName, trace, save), null);
+        }
+        catch (OracleConfigurationException) { throw; }
+        catch (Exception error) { throw Failure("invalid_path", error); }
+    }
+
+    private static OracleConfiguration ParseReplay(
+        IDictionary<string, string> values, IConfigurationPathResolver paths)
+    {
+        string[] keys = new string[] {
+            "Mode", "OutputDirectory", "RunName", "SaveDirectory", "InputPath",
+            "MaxSettleFrames", "MaxSettleSeconds", "ExpectedInitialSha256"
+        };
+        RequireOnly(values, keys);
+        RequireExactKeys(values, keys);
+        if (Require(values, "MaxSettleFrames") != "600"
+            || Require(values, "MaxSettleSeconds") != "30")
+        {
+            throw Failure("invalid_configuration",
+                new FormatException("replay numeric values are not canonical"));
+        }
+        string runName = Require(values, "RunName");
+        RequireSafeRunName(runName);
+        string outputPath = Require(values, "OutputDirectory");
+        string savePath = Require(values, "SaveDirectory");
+        string inputPath = Require(values, "InputPath");
+        string expectedInitialSha256 = values["ExpectedInitialSha256"];
+        RequireOptionalSha256(expectedInitialSha256);
+        try
+        {
+            string output = paths.ResolveExistingDirectory(outputPath);
+            string save = paths.ResolveExistingDirectory(savePath);
+            string input = paths.ResolveExistingFile(inputPath);
+            if (paths.Contains(output, save) || paths.Contains(save, output))
+                throw new IOException("active directories overlap");
+            if (paths.Contains(output, input))
+                throw new IOException("replay input overlaps output directory");
+            if (paths.Contains(save, input))
+                throw new IOException("replay input overlaps save directory");
+            string trace = Path.Combine(output, runName + ".ndjson");
+            return new OracleConfiguration(OracleMode.Replay, null,
+                new ReplayConfiguration(output, runName, trace, save, input,
+                    expectedInitialSha256));
         }
         catch (OracleConfigurationException) { throw; }
         catch (Exception error) { throw Failure("invalid_path", error); }
@@ -154,6 +228,12 @@ internal sealed class OracleConfiguration
     { for (int index = 0; index < required.Length; index++) if (!values.ContainsKey(required[index])) throw Failure("invalid_configuration", new FormatException("missing key: " + required[index])); }
     private static void RequireSafeRunName(string value)
     { if (value == "." || value == ".." || value.IndexOf('/') >= 0 || value.IndexOf('\\') >= 0 || value.IndexOf('\0') >= 0 || Path.GetFileName(value) != value || value.EndsWith(".ndjson", StringComparison.Ordinal)) throw Failure("invalid_configuration", new FormatException("unsafe RunName")); }
+    private static void RequireOptionalSha256(string value)
+    {
+        if (value.Length == 0) return;
+        try { OracleValidation.Sha256(value, "ExpectedInitialSha256"); }
+        catch (Exception error) { throw Failure("invalid_configuration", error); }
+    }
     private static OracleConfigurationException Failure(string code, Exception error)
     { return new OracleConfigurationException(code, error); }
 }

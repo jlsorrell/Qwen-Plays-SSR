@@ -102,9 +102,12 @@ internal sealed class TestRegistry
             new TestIdentity("protocol", "closed error tables"),
             new TestIdentity("protocol", "record constructor boundaries"),
             new TestIdentity("protocol", "capture value equality"),
+            new TestIdentity("protocol", "run mode relations are exact"),
+            new TestIdentity("protocol", "dynamic driver count is bound to run"),
             new TestIdentity("encoding", "golden fixture bytes"),
             new TestIdentity("encoding", "canonical string scalars"),
             new TestIdentity("encoding", "surrogates are rejected"),
+            new TestIdentity("encoding", "replay run golden bytes"),
             new TestIdentity("encoding", "capture signature is exact"),
             new TestIdentity("encoding", "record line limit includes LF"),
             new TestIdentity("sink", "factory arguments are exact"),
@@ -155,6 +158,53 @@ internal sealed class TestRegistry
             new TestIdentity("driver-terminal", "first fault wins race"),
             new TestIdentity(
                 "driver-terminal", "Dispose and late callbacks are final"),
+            new TestIdentity(
+                "replay-input", "exact bytes own hash and are immutable"),
+            new TestIdentity(
+                "replay-input", "all five tokens preserve file order"),
+            new TestIdentity(
+                "replay-input", "blank ASCII lines do not create tokens"),
+            new TestIdentity(
+                "replay-input", "UTF8 BOM NUL and malformed text are rejected"),
+            new TestIdentity(
+                "replay-input", "unknown and empty streams are rejected"),
+            new TestIdentity(
+                "replay-input", "input source is read exactly once"),
+            new TestIdentity(
+                "replay-coordinator",
+                "initial signature owns before Ready and arming"),
+            new TestIdentity(
+                "replay-coordinator",
+                "real neutral poll is required and physical input is suppressed"),
+            new TestIdentity(
+                "replay-coordinator", "cardinal traverses one owning update"),
+            new TestIdentity(
+                "replay-coordinator",
+                "missing duplicate and mismatched traversal fault"),
+            new TestIdentity(
+                "replay-coordinator", "Undo invokes once and Restore stays native"),
+            new TestIdentity(
+                "replay-coordinator", "refused cardinal remains one durable token"),
+            new TestIdentity(
+                "replay-coordinator",
+                "advance waits for Ready and final Complete has no repeat"),
+            new TestIdentity(
+                "replay-coordinator", "fault disable and late callbacks are inert"),
+            new TestIdentity(
+                "controller-replay", "passive preserves native input"),
+            new TestIdentity(
+                "controller-replay", "replay construction binds dynamic run"),
+            new TestIdentity(
+                "controller-replay", "capture reaches signature before Ready"),
+            new TestIdentity(
+                "controller-replay",
+                "update alignment precedes driver observation"),
+            new TestIdentity(
+                "controller-replay", "cardinal hook lifecycle is routed once"),
+            new TestIdentity(
+                "controller-replay", "Undo uses adapter and existing hooks"),
+            new TestIdentity(
+                "controller-replay", "failure and teardown never reissue input"),
             new TestIdentity("config", "off grammar is exact and read only"),
             new TestIdentity(
                 "config", "off malformed inputs are rejected"),
@@ -162,6 +212,10 @@ internal sealed class TestRegistry
             new TestIdentity("config", "passive values are canonical"),
             new TestIdentity("config", "passive failures are typed"),
             new TestIdentity("config", "configuration reads are typed"),
+            new TestIdentity(
+                "config", "replay values and topology are exact"),
+            new TestIdentity(
+                "config", "replay failures are typed before input read"),
             new TestIdentity("path", "containment uses component boundary"),
             new TestIdentity("path", "existing paths resolve canonically"),
             new TestIdentity("path", "missing suffix is preserved"),
@@ -169,6 +223,8 @@ internal sealed class TestRegistry
             new TestIdentity(
                 "path", "symlink and nondirectory are rejected"),
             new TestIdentity("path", "two scan drift is rejected"),
+            new TestIdentity(
+                "path", "existing regular files resolve canonically"),
             new TestIdentity(
                 "observation", "all thirteen gates are required"),
             new TestIdentity(
@@ -207,11 +263,14 @@ internal sealed class TestRegistry
             new TestIdentity("reporter", "completion marker is exact"),
             new TestIdentity("reporter", "failure markers are closed"),
             new TestIdentity("reporter", "diagnostic is nonterminal"),
+            new TestIdentity("reporter", "mode aware markers are exact"),
             new TestIdentity("assembly", "pinned Assembly-CSharp hash"),
             new TestIdentity("assembly", "exact ten observed methods"),
             new TestIdentity("assembly", "exact required game fields"),
             new TestIdentity(
                 "assembly", "metadata matcher rejects near misses"),
+            new TestIdentity(
+                "assembly", "replay native ABI remains exact"),
             new TestIdentity(
                 "plugin", "game adapter call surface is passive"),
             new TestIdentity(
@@ -222,7 +281,11 @@ internal sealed class TestRegistry
                 "plugin", "PE CLR and direct references are pinned"),
             new TestIdentity("plugin", "BepInPlugin identity is exact"),
             new TestIdentity(
-                "plugin", "typed modes and owner teardown are closed")
+                "plugin", "typed modes and owner teardown are closed"),
+            new TestIdentity(
+                "plugin", "adapter replay call surface is exact"),
+            new TestIdentity(
+                "plugin", "player input override is replay only")
         };
 
     private readonly List<TestCase> tests = new List<TestCase>();

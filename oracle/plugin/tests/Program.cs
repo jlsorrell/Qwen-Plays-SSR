@@ -14,6 +14,9 @@ private static int Main(string[] args)
         CaptureSignatureTests.Register(tests);
         TraceSinkTests.Register(tests);
         PassiveDriverTests.Register(tests);
+        ReplayInputTests.Register(tests);
+        ReplayCoordinatorTests.Register(tests);
+        ControllerReplayTests.Register(tests);
         ConfigurationTests.Register(tests, options);
         PhysicalPathTests.Register(tests);
         GameObservationTests.Register(tests);
@@ -23,21 +26,24 @@ private static int Main(string[] args)
         AssemblySurfaceTests.Register(tests, options);
         tests.VerifyManifest(new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            { "protocol", 4 },
-            { "encoding", 5 },
+            { "protocol", 6 },
+            { "encoding", 6 },
             { "sink", 6 },
             { "driver-boundary", 2 },
             { "driver-initial", 8 },
             { "driver-input", 8 },
             { "driver-terminal", 6 },
-            { "config", 6 },
-            { "path", 6 },
+            { "replay-input", 6 },
+            { "replay-coordinator", 8 },
+            { "controller-replay", 7 },
+            { "config", 8 },
+            { "path", 7 },
             { "observation", 5 },
             { "boundary", 5 },
             { "startup", 7 },
-            { "reporter", 4 },
-            { "assembly", 4 },
-            { "plugin", 6 }
+            { "reporter", 5 },
+            { "assembly", 5 },
+            { "plugin", 8 }
         });
         int result = tests.Run(options.Cohort);
         if (result != 0)

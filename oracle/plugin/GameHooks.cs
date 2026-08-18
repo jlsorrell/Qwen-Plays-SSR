@@ -37,7 +37,19 @@ internal static class GameHooks
             delegate { callback(value); }, value.ObserverFailed);
     }
 
-    internal static bool AllowNativePlayerInput() { return true; }
+    internal static bool TryOverridePlayerInput(out int rawDirection)
+    {
+        rawDirection = 8;
+        OracleController value = ReadController();
+        if (value == null) return false;
+        try { return value.TryOverridePlayerInput(out rawDirection); }
+        catch
+        {
+            rawDirection = 8;
+            value.ObserverFailed();
+            return true;
+        }
+    }
 
     internal static Exception Finalize(HookToken token, Exception original)
     {
@@ -52,7 +64,7 @@ internal static class GameHooks
         OracleController value = ReadController();
         if (value == null) return original;
         return PatchBoundary.FinalizeUpdate(
-            original, value.GameMethodFailed, value.ObserverFailed);
+            original, value.UpdateThrew, value.ObserverFailed);
     }
 }
 
@@ -127,8 +139,13 @@ internal static class GamePlayerinputstringPatch
             BindingFlags.Instance | BindingFlags.NonPublic,
             typeof(Direction), new Type[0]);
     }
-    private static bool Prefix()
-    { return GameHooks.AllowNativePlayerInput(); }
+    private static bool Prefix(ref Direction __result)
+    {
+        int rawDirection;
+        if (!GameHooks.TryOverridePlayerInput(out rawDirection)) return true;
+        __result = (Direction)rawDirection;
+        return false;
+    }
     private static void Postfix(Direction __result)
     {
         GameHooks.Observe(delegate(OracleController value)

@@ -158,4 +158,13 @@ internal sealed class GameAdapter : IOracleGameAdapter
         catch (Exception error)
         { throw new CaptureException("game-state capture failed", error); }
     }
+
+    public void InvokeUndo(object gameValue)
+    {
+        Game game = gameValue as Game;
+        if (game == null) throw new CaptureException("missing game");
+        try { game.DoUndo(); }
+        catch (Exception error)
+        { throw new CaptureException("native Undo failed", error); }
+    }
 }

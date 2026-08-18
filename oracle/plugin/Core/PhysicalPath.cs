@@ -23,10 +23,13 @@ internal static class PhysicalPath
         internal PhysicalPathKind FinalKind;
     }
     internal static string ResolveExistingDirectory(string requested) { return ResolveExistingDirectory(requested, MacPhysicalPathOperations.Instance, null); }
+    internal static string ResolveExistingFile(string requested) { return ResolveExistingFile(requested, MacPhysicalPathOperations.Instance, null); }
     internal static PhysicalPathIdentity ResolvePossiblyAbsent(string requested) { return ResolvePossiblyAbsent(requested, MacPhysicalPathOperations.Instance, null); }
     internal static bool Contains(string parent, string candidate) { if (parent == "/") return candidate.StartsWith("/", StringComparison.Ordinal); return candidate == parent || candidate.StartsWith(parent + "/", StringComparison.Ordinal); }
     internal static string ResolveExistingDirectory(string requested, IPhysicalPathOperations operations, Action betweenScans)
     { ScanResult result = Resolve(requested, operations, betweenScans); if (!result.Identity.Exists || result.FinalKind != PhysicalPathKind.Directory) throw Failure(new IOException("directory does not exist")); return result.Identity.CanonicalPath; }
+    internal static string ResolveExistingFile(string requested, IPhysicalPathOperations operations, Action betweenScans)
+    { ScanResult result = Resolve(requested, operations, betweenScans); if (!result.Identity.Exists || result.FinalKind != PhysicalPathKind.File) throw Failure(new IOException("file does not exist")); return result.Identity.CanonicalPath; }
     internal static PhysicalPathIdentity ResolvePossiblyAbsent(string requested, IPhysicalPathOperations operations, Action betweenScans)
     { return Resolve(requested, operations, betweenScans).Identity; }
     private static ScanResult Resolve(string requested, IPhysicalPathOperations operations, Action betweenScans)
@@ -66,6 +69,7 @@ internal sealed class PhysicalConfigurationPathResolver : IConfigurationPathReso
     internal static readonly PhysicalConfigurationPathResolver Instance = new PhysicalConfigurationPathResolver();
     private PhysicalConfigurationPathResolver() { }
     public string ResolveExistingDirectory(string requested) { return PhysicalPath.ResolveExistingDirectory(requested); }
+    public string ResolveExistingFile(string requested) { return PhysicalPath.ResolveExistingFile(requested); }
     public bool Contains(string parent, string candidate) { return PhysicalPath.Contains(parent, candidate); }
 }
 internal sealed class MacPhysicalPathOperations : IPhysicalPathOperations

@@ -16,6 +16,7 @@ internal interface IOracleGameAdapter
     bool MovementScheduled(object stateReference);
     bool CurrentMovementScheduled(object game);
     CaptureRecord Capture(object verifiedState);
+    void InvokeUndo(object game);
 }
 
 internal interface IOracleRuntimeHost
