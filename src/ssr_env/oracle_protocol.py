@@ -4,6 +4,7 @@ import argparse
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -242,6 +243,7 @@ class _CanonicalJsonReader:
 
 
 InputName = Literal["North", "South", "West", "East", "Undo"]
+ModeName = Literal["passive", "replay"]
 TerminalOutcome = Literal["success", "error"]
 
 
@@ -250,6 +252,10 @@ class RunHeader:
     run_id: str
     game_assembly_sha256: str
     started_at_utc: str
+    mode: ModeName = "passive"
+    plugin_version: str = "0.3.0"
+    input_sha256: str | None = None
+    expected_input_count: int = EXPECTED_INPUT_COUNT
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +346,12 @@ _ERROR_MESSAGES: Mapping[str, str] = MappingProxyType(
         "settle_timeout": "input did not settle",
         "state_replaced": "game state identity changed",
         "save_path_changed": "isolated save path changed",
+        "initial_state_mismatch": (
+            "initial replay state did not match the configured signature"
+        ),
+        "replay_alignment_failed": (
+            "replay input did not traverse the native call path"
+        ),
     }
 )
 
@@ -528,8 +540,7 @@ def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
     schema_version, run_id = _validate_common(
         reader, values, expected_kind="run"
     )
-    if cast(str, values["mode"]) != "passive":
-        _record_error(reader, "mode must be 'passive'")
+    mode = cast(str, values["mode"])
     assembly_text = cast(str, values["game_assembly_sha256"])
     assembly_hash = _located(
         reader,
@@ -537,15 +548,32 @@ def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
     )
     if assembly_hash != EXPECTED_ASSEMBLY_SHA256:
         _record_error(reader, "game_assembly_sha256 is not the reviewed hash")
-    if cast(str, values["plugin_version"]) != "0.2.0":
-        _record_error(reader, "plugin_version must be '0.2.0'")
-    if values["input_sha256"] is not None:
-        _record_error(reader, "input_sha256 must be null in passive mode")
-    if cast(int, values["expected_input_count"]) != EXPECTED_INPUT_COUNT:
-        _record_error(
+    plugin_version = cast(str, values["plugin_version"])
+    if plugin_version != "0.3.0":
+        _record_error(reader, "plugin_version must be '0.3.0'")
+    input_sha256 = cast(str | None, values["input_sha256"])
+    expected_count_value = cast(int, values["expected_input_count"])
+    expected_count = _located(
+        reader,
+        lambda: _nonnegative(
+            expected_count_value,
+            field="expected_input_count",
+        ),
+    )
+    if mode == "passive":
+        if input_sha256 is not None or expected_count != EXPECTED_INPUT_COUNT:
+            _record_error(reader, "passive Run relation is not canonical")
+    elif mode == "replay":
+        if input_sha256 is None:
+            _record_error(reader, "replay input_sha256 is required")
+        input_sha256 = _located(
             reader,
-            f"expected_input_count must be {EXPECTED_INPUT_COUNT}",
+            lambda: _validate_hash(input_sha256, field="input_sha256"),
         )
+        if expected_count <= 0:
+            _record_error(reader, "replay expected_input_count must be positive")
+    else:
+        _record_error(reader, "mode must be 'passive' or 'replay'")
     started_at_utc = cast(str, values["started_at_utc"])
     _located(
         reader,
@@ -559,6 +587,10 @@ def _decode_run(reader: _CanonicalJsonReader) -> _DecodedLine:
             run_id=run_id,
             game_assembly_sha256=assembly_hash,
             started_at_utc=started_at_utc,
+            mode=cast(ModeName, mode),
+            plugin_version=plugin_version,
+            input_sha256=input_sha256,
+            expected_input_count=expected_count,
         ),
     )
 
@@ -791,8 +823,13 @@ def read_oracle_trace_stream(
         if isinstance(record, StepRecord):
             if initial is None:
                 _sequence_error(source, "step record requires an initial record")
-            if len(steps) >= EXPECTED_INPUT_COUNT:
-                _sequence_error(source, "trace contains more than three steps")
+            if len(steps) >= header.expected_input_count:
+                if header.expected_input_count == EXPECTED_INPUT_COUNT:
+                    _sequence_error(source, "trace contains more than three steps")
+                _sequence_error(
+                    source,
+                    "trace contains more steps than Run expected_input_count",
+                )
             if record.input_index != len(steps):
                 _sequence_error(source, "step input_index is not contiguous")
             steps.append(record)
@@ -800,10 +837,20 @@ def read_oracle_trace_stream(
         if isinstance(record, EndRecord):
             if initial is None:
                 _sequence_error(source, "end record requires an initial record")
-            if len(steps) != EXPECTED_INPUT_COUNT:
-                _sequence_error(source, "success requires exactly three steps")
-            if record.input_count != EXPECTED_INPUT_COUNT:
-                _sequence_error(source, "end input_count must be three")
+            if len(steps) != header.expected_input_count:
+                if header.expected_input_count == EXPECTED_INPUT_COUNT:
+                    _sequence_error(source, "success requires exactly three steps")
+                _sequence_error(
+                    source,
+                    "success step count must equal Run expected_input_count",
+                )
+            if record.input_count != header.expected_input_count:
+                if header.expected_input_count == EXPECTED_INPUT_COUNT:
+                    _sequence_error(source, "end input_count must be three")
+                _sequence_error(
+                    source,
+                    "end input_count must equal Run expected_input_count",
+                )
             if _timestamp_key(
                 record.finished_at_utc, field="finished_at_utc"
             ) < _timestamp_key(header.started_at_utc, field="started_at_utc"):
@@ -828,7 +875,7 @@ def read_oracle_trace_stream(
     if terminal is None:
         _sequence_error(source, "trace has no terminal end or error record")
     if isinstance(terminal, EndRecord):
-        if initial is None or len(steps) != EXPECTED_INPUT_COUNT:
+        if initial is None or len(steps) != header.expected_input_count:
             _sequence_error(source, "success terminal shape is incomplete")
     outcome: TerminalOutcome = (
         "success" if isinstance(terminal, EndRecord) else "error"
@@ -857,7 +904,59 @@ def read_oracle_trace(path: Path) -> OracleRun:
 _DIRECTIONS = frozenset({"North", "South", "West", "East"})
 
 
+def _parse_replay_input(payload: bytes) -> tuple[InputName, ...]:
+    if payload.startswith(b"\xef\xbb\xbf"):
+        raise OracleProtocolError("replay input UTF-8 BOM is forbidden")
+    try:
+        text = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise OracleProtocolError("replay input is not strict UTF-8") from exc
+    if "\x00" in text:
+        raise OracleProtocolError("replay input NUL is forbidden")
+    tokens: list[InputName] = []
+    for line in text.split("\n"):
+        token = line.strip(" \t\r\f\v")
+        if not token:
+            continue
+        if token not in INPUT_NAMES:
+            raise OracleProtocolError("replay input token is not canonical")
+        tokens.append(cast(InputName, token))
+    if not tokens:
+        raise OracleProtocolError("replay input token stream is empty")
+    return tuple(tokens)
+
+
+def require_replay_success(trace: OracleRun, input_bytes: bytes) -> None:
+    if trace.header.mode != "replay":
+        raise OracleProtocolError("replay success requires replay mode")
+    if trace.outcome != "success" or not isinstance(trace.terminal, EndRecord):
+        raise OracleProtocolError("replay success requires an end record")
+    if trace.initial is None:
+        raise OracleProtocolError("replay success requires an initial record")
+    tokens = _parse_replay_input(input_bytes)
+    digest = hashlib.sha256(input_bytes).hexdigest()
+    if digest != trace.header.input_sha256:
+        raise OracleProtocolError("replay input SHA-256 does not match Run")
+    if len(tokens) != trace.header.expected_input_count:
+        raise OracleProtocolError("replay token count does not match Run")
+    if len(trace.steps) != len(tokens):
+        raise OracleProtocolError("replay success step count is incomplete")
+    if trace.terminal.input_count != len(tokens):
+        raise OracleProtocolError("replay end count does not match input")
+    for index, (step, token) in enumerate(zip(trace.steps, tokens)):
+        if step.input_index != index or step.input != token:
+            raise OracleProtocolError("replay Step does not match input token")
+        if step.state_replaced:
+            raise OracleProtocolError("replay state_replaced must be false")
+
+
 def require_passive_success(trace: OracleRun) -> None:
+    if trace.header.mode != "passive":
+        raise OracleProtocolError("passive success requires passive mode")
+    if trace.header.input_sha256 is not None:
+        raise OracleProtocolError("passive success requires a null input hash")
+    if trace.header.expected_input_count != EXPECTED_INPUT_COUNT:
+        raise OracleProtocolError("passive success requires expected count three")
     if trace.outcome != "success" or not isinstance(trace.terminal, EndRecord):
         raise OracleProtocolError("passive success requires an end record")
     if trace.initial is None:
@@ -933,6 +1032,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="accept either structurally valid terminal shape",
     )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        help="exact replay input bytes for replay success validation",
+    )
     parser.add_argument("trace", type=Path)
     arguments = parser.parse_args(argv)
 
@@ -942,9 +1046,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
+    if trace.header.mode == "passive" and arguments.input is not None:
+        parser.error("--input is valid only for replay traces")
+
     if not arguments.structural_only:
         try:
-            require_passive_success(trace)
+            if trace.header.mode == "replay":
+                if trace.outcome != "success" or not isinstance(
+                    trace.terminal, EndRecord
+                ):
+                    require_replay_success(trace, b"")
+                if arguments.input is None:
+                    parser.error(
+                        "--input is required for replay success validation"
+                    )
+                try:
+                    input_bytes = arguments.input.read_bytes()
+                except OSError as exc:
+                    raise OracleProtocolError(
+                        f"{arguments.input}: could not read replay input: {exc}"
+                    ) from exc
+                require_replay_success(trace, input_bytes)
+            else:
+                require_passive_success(trace)
         except OracleProtocolError as exc:
             sys.stderr.write(f"error: {exc}\n")
             return 1

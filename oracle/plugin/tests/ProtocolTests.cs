@@ -9,6 +9,8 @@ internal static class ProtocolTests
         tests.Add("protocol", "closed error tables", ClosedErrorTables);
         tests.Add("protocol", "record constructor boundaries", RecordBoundaries);
         tests.Add("protocol", "capture value equality", CaptureValueEquality);
+        tests.Add("protocol", "run mode relations are exact", RunModeRelationsAreExact);
+        tests.Add("protocol", "dynamic driver count is bound to run", DynamicCountIsBoundToRun);
     }
 
     private static void ClosedErrorTables()
@@ -28,7 +30,9 @@ internal static class ProtocolTests
             { "initial_settle_timeout", "initial capture did not settle" },
             { "settle_timeout", "input did not settle" },
             { "state_replaced", "game state identity changed" },
-            { "save_path_changed", "isolated save path changed" }
+            { "save_path_changed", "isolated save path changed" },
+            { "initial_state_mismatch", "initial replay state did not match the configured signature" },
+            { "replay_alignment_failed", "replay input did not traverse the native call path" }
         };
         for (int index = 0; index < pairs.GetLength(0); index++)
         {
@@ -126,6 +130,191 @@ internal static class ProtocolTests
         Check.False(left.Equals(null), "null inequality");
     }
 
+    private static void RunModeRelationsAreExact()
+    {
+        DateTime utc = new DateTime(
+            2026, 7, 31, 19, 9, 50, DateTimeKind.Utc).AddTicks(3199100);
+        RunRecord legacyPassive = new RunRecord(
+            ProtocolSamples.RunId, OracleProtocol.ExpectedAssemblySha256, utc);
+        RunRecord explicitPassive = new RunRecord(
+            ProtocolSamples.RunId, OracleMode.Passive,
+            OracleProtocol.ExpectedAssemblySha256, null,
+            OracleProtocol.ExpectedInputCount, utc);
+        Check.Bytes(
+            CanonicalJson.EncodeRun(legacyPassive),
+            CanonicalJson.EncodeRun(explicitPassive),
+            "passive overload bytes remain identical");
+        Check.Equal(OracleMode.Passive, legacyPassive.Mode, "legacy mode");
+        Check.Equal(
+            OracleProtocol.ExpectedInputCount,
+            legacyPassive.ExpectedInputCount,
+            "legacy passive count");
+        Check.True(legacyPassive.InputSha256 == null, "legacy passive hash");
+
+        RunRecord replay = ProtocolSamples.ReplayRun;
+        Check.Equal(OracleMode.Replay, replay.Mode, "replay mode");
+        Check.Equal(ProtocolSamples.ReplayInputSha256, replay.InputSha256,
+            "replay hash");
+        Check.Equal(1, replay.ExpectedInputCount, "replay count");
+        Check.Equal(1, ProtocolSamples.ReplayEnd.InputCount, "replay End count");
+
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Off,
+                    OracleProtocol.ExpectedAssemblySha256, null, 1, utc);
+            },
+            "off Run mode");
+        Check.Throws<ArgumentNullException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Replay,
+                    OracleProtocol.ExpectedAssemblySha256, null, 1, utc);
+            },
+            "replay null hash");
+        Check.Throws<ArgumentException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Replay,
+                    OracleProtocol.ExpectedAssemblySha256,
+                    ProtocolSamples.ReplayInputSha256.ToUpperInvariant(), 1, utc);
+            },
+            "replay uppercase hash");
+        Check.Throws<ArgumentException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Replay,
+                    OracleProtocol.ExpectedAssemblySha256,
+                    ProtocolSamples.ReplayInputSha256.Substring(1), 1, utc);
+            },
+            "replay short hash");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Replay,
+                    OracleProtocol.ExpectedAssemblySha256,
+                    ProtocolSamples.ReplayInputSha256, 0, utc);
+            },
+            "replay zero count");
+        Check.Throws<ArgumentException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Passive,
+                    OracleProtocol.ExpectedAssemblySha256,
+                    ProtocolSamples.ReplayInputSha256,
+                    OracleProtocol.ExpectedInputCount, utc);
+            },
+            "passive non-null hash");
+        Check.Throws<ArgumentException>(
+            delegate
+            {
+                new RunRecord(
+                    ProtocolSamples.RunId, OracleMode.Passive,
+                    OracleProtocol.ExpectedAssemblySha256, null, 2, utc);
+            },
+            "passive non-three count");
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new EndRecord(ProtocolSamples.RunId, 0, utc);
+            },
+            "zero End count");
+    }
+
+    private static void DynamicCountIsBoundToRun()
+    {
+        IList<string> compatibleEvents = new List<string>();
+        FakeTraceSink compatibleSink = new FakeTraceSink(compatibleEvents);
+        PassiveDriver compatible = new PassiveDriver(
+            compatibleSink,
+            new FakePassiveReporter(compatibleEvents),
+            1,
+            OracleProtocol.MaxSettleFrames,
+            OracleProtocol.MaxSettleSeconds);
+        Check.True(compatible.Prepare(ProtocolSamples.ReplayRun),
+            "replay count one prepares");
+        Check.True(compatible.Activate(), "replay count one activates");
+        Check.Equal(1, compatibleSink.RunCalls, "replay Run reaches sink once");
+
+        IList<string> mismatchEvents = new List<string>();
+        FakeTraceSink mismatchSink = new FakeTraceSink(mismatchEvents);
+        PassiveDriver mismatch = new PassiveDriver(
+            mismatchSink,
+            new FakePassiveReporter(mismatchEvents),
+            2,
+            OracleProtocol.MaxSettleFrames,
+            OracleProtocol.MaxSettleSeconds);
+        ArgumentException mismatchError = Check.Throws<ArgumentException>(
+            delegate { mismatch.Prepare(ProtocolSamples.ReplayRun); },
+            "mismatched replay count rejects before Run write");
+        Check.Equal(
+            "Run expected_input_count does not match driver",
+            mismatchError.Message,
+            "mismatched replay count message");
+        Check.Equal(0, mismatchSink.RunCalls,
+            "mismatched replay count makes zero sink calls");
+        RunRecord matchingCount = new RunRecord(
+            ProtocolSamples.RunId, OracleMode.Replay,
+            OracleProtocol.ExpectedAssemblySha256,
+            ProtocolSamples.ReplayInputSha256, 2,
+            ProtocolSamples.ReplayRun.StartedAtUtc);
+        Check.True(mismatch.Prepare(matchingCount),
+            "mismatch leaves Prepare available for matching Run");
+        Check.Equal(1, mismatchSink.RunCalls,
+            "matching replay Run reaches sink once after mismatch");
+        Check.Same(matchingCount, mismatchSink.RunRecords[0],
+            "matching replay Run is retained after mismatch");
+
+        Check.Throws<ArgumentOutOfRangeException>(
+            delegate
+            {
+                new PassiveDriver(
+                    new FakeTraceSink(new List<string>()),
+                    new FakePassiveReporter(new List<string>()),
+                    0,
+                    OracleProtocol.MaxSettleFrames,
+                    OracleProtocol.MaxSettleSeconds);
+            },
+            "zero expected count rejected");
+
+        IList<string> passiveEvents = new List<string>();
+        FakeTraceSink passiveSink = new FakeTraceSink(passiveEvents);
+        PassiveDriver passive = new PassiveDriver(
+            passiveSink,
+            new FakePassiveReporter(passiveEvents),
+            OracleProtocol.ExpectedInputCount,
+            OracleProtocol.MaxSettleFrames,
+            OracleProtocol.MaxSettleSeconds);
+        Check.True(passive.Prepare(ProtocolSamples.Run), "passive still prepares");
+        Check.Equal(
+            OracleProtocol.ExpectedInputCount,
+            passiveSink.RunRecords[0].ExpectedInputCount,
+            "passive still receives exactly three inputs");
+
+        DriverFixture ready = DriverFixture.Ready();
+        IReplayDriver replayDriver = (IReplayDriver)ready.Driver;
+        Check.True(replayDriver.IsReadyForReplay(ready.State, 0),
+            "durable ready state and count are replay-ready");
+        Check.False(replayDriver.IsReadyForReplay(ready.OtherState, 0),
+            "different durable state is not replay-ready");
+        Check.False(replayDriver.IsReadyForReplay(ready.State, 1),
+            "different durable count is not replay-ready");
+        HookToken stateSet = ready.Driver.StateSetEntered(
+            ready.State, ready.State);
+        Check.True(stateSet.Active, "same-state StateSet context opens");
+        Check.False(replayDriver.IsReadyForReplay(ready.State, 0),
+            "unresolved StateSet is not replay-ready");
+        ready.Driver.StateSetReturned(stateSet, ready.State, 4.0);
+        Check.True(replayDriver.IsReadyForReplay(ready.State, 0),
+            "matching StateSet return restores replay readiness");
+    }
+
     private static void RegistryManifestIsExact()
     {
         TestRegistry registry = new TestRegistry();
@@ -192,7 +381,7 @@ internal static class ProtocolTests
             registry,
             new Dictionary<string, int>(StringComparer.Ordinal)
             {
-                { "protocol", 5 }
+                { "protocol", 7 }
             });
 
         bool missingRejected = RejectsManifest(

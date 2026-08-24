@@ -394,6 +394,12 @@ def test_error_code_message_table_is_exact_private_and_immutable() -> None:
         "settle_timeout": "input did not settle",
         "state_replaced": "game state identity changed",
         "save_path_changed": "isolated save path changed",
+        "initial_state_mismatch": (
+            "initial replay state did not match the configured signature"
+        ),
+        "replay_alignment_failed": (
+            "replay input did not traverse the native call path"
+        ),
     }
     with pytest.raises(TypeError):
         _ERROR_MESSAGES["capture_failed"] = "changed"  # type: ignore[index]
@@ -469,7 +475,7 @@ RUN_LINE = (
     f'{{"kind":"run","schema_version":{SCHEMA_VERSION},'
     f'"run_id":"{RUN_ID}","mode":"passive",'
     f'"game_assembly_sha256":"{ASSEMBLY_HASH}",'
-    '"plugin_version":"0.2.0","input_sha256":null,'
+    '"plugin_version":"0.3.0","input_sha256":null,'
     f'"expected_input_count":{EXPECTED_INPUT_COUNT},'
     '"started_at_utc":"2026-07-31T19:09:50.3199100Z"}'
 ).encode("utf-8")
@@ -749,7 +755,7 @@ BAD_RUN_SEMANTIC_LINES = [
         id="assembly-nonhex",
     ),
     pytest.param(
-        RUN_LINE.replace(b'"plugin_version":"0.2.0"', b'"plugin_version":"0.1.0"'),
+        RUN_LINE.replace(b'"plugin_version":"0.3.0"', b'"plugin_version":"0.2.0"'),
         id="plugin-version",
     ),
     pytest.param(
@@ -1898,3 +1904,578 @@ def test_golden_error_fixture_is_structural_only(
         '"record_count":4,"step_count":1}\n'
     )
     assert captured.err == ""
+
+
+REPLAY_INPUT_BYTES = b"West\n"
+REPLAY_INPUT_SHA256 = (
+    "f8ace91df3cf40e0410cd9da8df1a2859a5a1aba66e423ed4bd951ba3c14ba7a"
+)
+TWO_REPLAY_INPUTS_SHA256 = (
+    "6194d9297d0ad77ee76ccebb7034d120d2e59093152f59e7bbaf87642f086dac"
+)
+REPLAY_RUN_LINE = (
+    f'{{"kind":"run","schema_version":{SCHEMA_VERSION},'
+    f'"run_id":"{RUN_ID}","mode":"replay",'
+    f'"game_assembly_sha256":"{ASSEMBLY_HASH}",'
+    '"plugin_version":"0.3.0",'
+    f'"input_sha256":"{REPLAY_INPUT_SHA256}",'
+    '"expected_input_count":1,'
+    '"started_at_utc":"2026-07-31T19:09:50.3199100Z"}'
+).encode("utf-8")
+REPLAY_RUN_COUNT_TWO_LINE = REPLAY_RUN_LINE.replace(
+    REPLAY_INPUT_SHA256.encode("ascii"), TWO_REPLAY_INPUTS_SHA256.encode("ascii")
+).replace(b'"expected_input_count":1', b'"expected_input_count":2')
+REPLAY_END_LINE = END_LINE.replace(b'"input_count":3', b'"input_count":1')
+REPLAY_END_COUNT_TWO_LINE = END_LINE.replace(
+    b'"input_count":3', b'"input_count":2'
+)
+REPLAY_SUCCESS_TRACE_BYTES = _trace_bytes(
+    REPLAY_RUN_LINE,
+    INITIAL_LINE,
+    STEP0_LINE,
+    REPLAY_END_LINE,
+)
+REPLAY_ERROR_TRACE_BYTES = _trace_bytes(REPLAY_RUN_LINE, RUN_ONLY_ERROR_LINE)
+
+
+def _read_replay_fixture() -> OracleRun:
+    return read_oracle_trace(FIXTURE_DIRECTORY / "replay-success.ndjson")
+
+
+def test_run_header_retains_mode_version_hash_and_dynamic_count() -> None:
+    passive = RunHeader(
+        run_id=RUN_ID,
+        game_assembly_sha256=ASSEMBLY_HASH,
+        started_at_utc="2026-07-31T19:09:50.3199100Z",
+    )
+    assert passive.mode == "passive"
+    assert passive.plugin_version == "0.3.0"
+    assert passive.input_sha256 is None
+    assert passive.expected_input_count == 3
+
+    replay = _decode_record(REPLAY_RUN_LINE, 1, source="replay-run")
+    assert replay.record == RunHeader(
+        run_id=RUN_ID,
+        game_assembly_sha256=ASSEMBLY_HASH,
+        started_at_utc="2026-07-31T19:09:50.3199100Z",
+        mode="replay",
+        plugin_version="0.3.0",
+        input_sha256=REPLAY_INPUT_SHA256,
+        expected_input_count=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        REPLAY_RUN_LINE.replace(b'"mode":"replay"', b'"mode":"off"'),
+        REPLAY_RUN_LINE.replace(b'"mode":"replay"', b'"mode":"unknown"'),
+        RUN_LINE.replace(
+            b'"input_sha256":null',
+            b'"input_sha256":"' + b"0" * 64 + b'"',
+        ),
+        RUN_LINE.replace(b'"expected_input_count":3', b'"expected_input_count":2'),
+        REPLAY_RUN_LINE.replace(
+            b'"input_sha256":"' + REPLAY_INPUT_SHA256.encode("ascii") + b'"',
+            b'"input_sha256":null',
+        ),
+        REPLAY_RUN_LINE.replace(REPLAY_INPUT_SHA256.encode("ascii"), b"0" * 63),
+        REPLAY_RUN_LINE.replace(REPLAY_INPUT_SHA256.encode("ascii"), b"A" * 64),
+        REPLAY_RUN_LINE.replace(
+            b'"expected_input_count":1', b'"expected_input_count":0'
+        ),
+    ],
+    ids=[
+        "off",
+        "unknown",
+        "passive-hash",
+        "passive-count",
+        "replay-null-hash",
+        "replay-short-hash",
+        "replay-uppercase-hash",
+        "replay-zero-count",
+    ],
+)
+def test_run_decoder_rejects_noncanonical_mode_relations(payload: bytes) -> None:
+    with pytest.raises(OracleProtocolError):
+        _decode_record(payload, 1, source="bad-run-relation")
+
+
+def test_trace_stream_accepts_replay_fixture_structurally() -> None:
+    trace = _read_replay_fixture()
+    assert trace.header.mode == "replay"
+    assert trace.header.input_sha256 == REPLAY_INPUT_SHA256
+    assert trace.header.expected_input_count == 1
+    assert trace.outcome == "success"
+    assert len(trace.steps) == 1
+    assert isinstance(trace.terminal, EndRecord)
+    assert trace.terminal.input_count == 1
+
+
+@pytest.mark.parametrize(
+    ("steps", "error_line", "expected_count"),
+    [
+        ((), ERROR_INDEX_0_LINE, 0),
+        ((STEP0_LINE,), ERROR_LINE, 1),
+        ((STEP0_LINE, STEP1_LINE), ERROR_INDEX_2_LINE, 2),
+    ],
+    ids=["zero", "one", "two"],
+)
+def test_replay_error_accepts_every_prefix_through_header_count(
+    steps: tuple[bytes, ...], error_line: bytes, expected_count: int
+) -> None:
+    trace = read_oracle_trace_stream(
+        io.BytesIO(
+            _trace_bytes(
+                REPLAY_RUN_COUNT_TWO_LINE,
+                INITIAL_LINE,
+                *steps,
+                error_line,
+            )
+        ),
+        source=f"replay-error-prefix-{expected_count}",
+    )
+    assert trace.outcome == "error"
+    assert len(trace.steps) == expected_count
+
+
+def test_replay_success_requires_header_count_steps_and_matching_end() -> None:
+    trace = read_oracle_trace_stream(
+        io.BytesIO(
+            _trace_bytes(
+                REPLAY_RUN_COUNT_TWO_LINE,
+                INITIAL_LINE,
+                STEP0_LINE,
+                STEP1_LINE,
+                REPLAY_END_COUNT_TWO_LINE,
+            )
+        ),
+        source="replay-count-two",
+    )
+    assert len(trace.steps) == 2
+    assert isinstance(trace.terminal, EndRecord)
+    assert trace.terminal.input_count == 2
+
+    with pytest.raises(OracleProtocolError, match="expected_input_count"):
+        read_oracle_trace_stream(
+            io.BytesIO(
+                _trace_bytes(
+                    REPLAY_RUN_COUNT_TWO_LINE,
+                    INITIAL_LINE,
+                    STEP0_LINE,
+                    REPLAY_END_COUNT_TWO_LINE,
+                )
+            ),
+            source="replay-short-success",
+        )
+    with pytest.raises(OracleProtocolError, match="expected_input_count"):
+        read_oracle_trace_stream(
+            io.BytesIO(
+                _trace_bytes(
+                    REPLAY_RUN_LINE,
+                    INITIAL_LINE,
+                    STEP0_LINE,
+                    STEP1_LINE,
+                    ERROR_INDEX_2_LINE,
+                )
+            ),
+            source="replay-long-error-prefix",
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "tokens"),
+    [
+        (
+            b"North\nSouth\nWest\nEast\nUndo\n",
+            ("North", "South", "West", "East", "Undo"),
+        ),
+        (b" \tNorth\r\n\fSouth\v\n\n", ("North", "South")),
+    ],
+    ids=["canonical", "ascii-trim-and-blank-lines"],
+)
+def test_replay_input_parser_accepts_only_canonical_tokens_after_ascii_trim(
+    payload: bytes, tokens: tuple[str, ...]
+) -> None:
+    assert oracle_protocol._parse_replay_input(payload) == tokens
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"\xef\xbb\xbfWest\n", "BOM"),
+        (b"W\xffest\n", "strict UTF-8"),
+        (b"West\x00\n", "NUL"),
+        (b"west\n", "not canonical"),
+        ("\u00a0West\u00a0\n".encode("utf-8"), "not canonical"),
+        (b" \t\r\n\f\v\n", "empty"),
+    ],
+    ids=["bom", "invalid-utf8", "nul", "wrong-case", "non-ascii-trim", "empty"],
+)
+def test_replay_input_parser_rejects_noncanonical_bytes(
+    payload: bytes, message: str
+) -> None:
+    with pytest.raises(OracleProtocolError, match=message):
+        oracle_protocol._parse_replay_input(payload)
+
+
+def test_require_replay_success_accepts_exact_fixture_and_input_bytes() -> None:
+    assert oracle_protocol.require_replay_success(
+        _read_replay_fixture(), REPLAY_INPUT_BYTES
+    ) is None
+
+
+def test_require_replay_success_rejects_passive_trace() -> None:
+    with pytest.raises(OracleProtocolError, match="requires replay mode"):
+        oracle_protocol.require_replay_success(
+            read_oracle_trace(FIXTURE_DIRECTORY / "passive-success.ndjson"),
+            REPLAY_INPUT_BYTES,
+        )
+
+
+def test_require_passive_success_rejects_replay_trace() -> None:
+    with pytest.raises(OracleProtocolError, match="requires passive mode"):
+        require_passive_success(_read_replay_fixture())
+
+
+@pytest.mark.parametrize(
+    ("case", "payload", "message"),
+    [
+        (
+            "hash",
+            b"East\n",
+            "SHA-256 does not match",
+        ),
+        (
+            "token-count",
+            b"West\nEast\n",
+            "token count does not match",
+        ),
+        (
+            "index",
+            REPLAY_INPUT_BYTES,
+            "Step does not match",
+        ),
+        (
+            "token",
+            REPLAY_INPUT_BYTES,
+            "Step does not match",
+        ),
+        (
+            "state-replaced",
+            REPLAY_INPUT_BYTES,
+            "state_replaced must be false",
+        ),
+    ],
+    ids=["hash", "token-count", "index", "token", "state-replaced"],
+)
+def test_require_replay_success_rejects_broken_input_relations(
+    case: str, payload: bytes, message: str
+) -> None:
+    trace = _read_replay_fixture()
+    if case == "token-count":
+        trace = replace(
+            trace,
+            header=replace(trace.header, input_sha256=TWO_REPLAY_INPUTS_SHA256),
+        )
+    elif case == "index":
+        trace = _replace_step(trace, 0, replace(trace.steps[0], input_index=1))
+    elif case == "token":
+        trace = _replace_step(trace, 0, replace(trace.steps[0], input="East"))
+    elif case == "state-replaced":
+        trace = _replace_step(
+            trace, 0, replace(trace.steps[0], state_replaced=True)
+        )
+    with pytest.raises(OracleProtocolError, match=message):
+        oracle_protocol.require_replay_success(trace, payload)
+
+
+def test_require_replay_success_rejects_incomplete_steps_and_wrong_end_count() -> None:
+    trace = _read_replay_fixture()
+    two_token_header = replace(
+        trace.header,
+        input_sha256=TWO_REPLAY_INPUTS_SHA256,
+        expected_input_count=2,
+    )
+    with pytest.raises(OracleProtocolError, match="step count is incomplete"):
+        oracle_protocol.require_replay_success(
+            replace(trace, header=two_token_header), b"West\nEast\n"
+        )
+    with pytest.raises(OracleProtocolError, match="end count does not match"):
+        oracle_protocol.require_replay_success(
+            replace(trace, terminal=replace(trace.terminal, input_count=2)),
+            REPLAY_INPUT_BYTES,
+        )
+
+
+def test_main_replay_default_reads_input_once_and_reports_success(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "one.dem"
+    read_paths: list[Path] = []
+
+    def read_bytes_once(path: Path) -> bytes:
+        assert path == input_path
+        read_paths.append(path)
+        return REPLAY_INPUT_BYTES
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes_once)
+    assert main(
+        [
+            "--input",
+            str(input_path),
+            str(FIXTURE_DIRECTORY / "replay-success.ndjson"),
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        '{"error_code":null,"outcome":"success",'
+        '"record_count":4,"step_count":1}\n'
+    )
+    assert captured.err == ""
+    assert read_paths == [input_path]
+
+
+def test_main_replay_default_requires_input_as_usage_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main([str(FIXTURE_DIRECTORY / "replay-success.ndjson")])
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage: oracle_trace_check.py" in captured.err
+    assert "--input is required for replay success validation" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("payload", "supply_input", "expected"),
+    [
+        (
+            REPLAY_SUCCESS_TRACE_BYTES,
+            False,
+            '{"error_code":null,"outcome":"success",'
+            '"record_count":4,"step_count":1}\n',
+        ),
+        (
+            REPLAY_SUCCESS_TRACE_BYTES,
+            True,
+            '{"error_code":null,"outcome":"success",'
+            '"record_count":4,"step_count":1}\n',
+        ),
+        (
+            REPLAY_ERROR_TRACE_BYTES,
+            False,
+            '{"error_code":"capture_failed","outcome":"error",'
+            '"record_count":2,"step_count":0}\n',
+        ),
+        (
+            REPLAY_ERROR_TRACE_BYTES,
+            True,
+            '{"error_code":"capture_failed","outcome":"error",'
+            '"record_count":2,"step_count":0}\n',
+        ),
+    ],
+    ids=["success-absent", "success-supplied", "error-absent", "error-supplied"],
+)
+def test_main_replay_structural_only_is_input_optional_and_read_free(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    payload: bytes,
+    supply_input: bool,
+    expected: str,
+) -> None:
+    input_path = tmp_path / "must-not-open.dem"
+    trace_path = _write_trace(tmp_path, "replay.ndjson", payload)
+
+    def fail_if_read(path: Path) -> bytes:
+        raise AssertionError(f"unexpected input read: {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_if_read)
+    arguments = ["--structural-only"]
+    if supply_input:
+        arguments.extend(("--input", str(input_path)))
+    arguments.append(str(trace_path))
+    assert main(arguments) == 0
+    captured = capsys.readouterr()
+    assert captured.out == expected
+    assert captured.err == ""
+
+
+def test_main_passive_rejects_supplied_input_without_reading_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "must-not-open.dem"
+
+    def fail_if_read(path: Path) -> bytes:
+        raise AssertionError(f"unexpected input read: {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_if_read)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "--input",
+                str(input_path),
+                str(FIXTURE_DIRECTORY / "passive-success.ndjson"),
+            ]
+        )
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage: oracle_trace_check.py" in captured.err
+    assert "--input is valid only for replay traces" in captured.err
+
+
+def test_golden_replay_fixture_bytes_are_exact_lf_without_bom() -> None:
+    payload = (FIXTURE_DIRECTORY / "replay-success.ndjson").read_bytes()
+    assert payload == REPLAY_SUCCESS_TRACE_BYTES
+    assert payload.endswith(b"\n")
+    assert b"\r" not in payload
+    assert not payload.startswith(b"\xef\xbb\xbf")
+
+
+RAW_REPLAY_INPUT_BYTES = b" \tWest\r\n"
+RAW_REPLAY_INPUT_SHA256 = (
+    "26970d68ce4f3a5f178c1d98bfc8d78bbdc99abf0d98ab6003dca668de565f97"
+)
+
+
+def test_require_replay_success_hashes_exact_unnormalized_input_bytes() -> None:
+    assert RAW_REPLAY_INPUT_SHA256 != REPLAY_INPUT_SHA256
+    trace = _read_replay_fixture()
+    trace = replace(
+        trace,
+        header=replace(trace.header, input_sha256=RAW_REPLAY_INPUT_SHA256),
+    )
+    assert oracle_protocol.require_replay_success(
+        trace, RAW_REPLAY_INPUT_BYTES
+    ) is None
+
+
+def test_require_passive_success_rejects_non_null_hash_before_relations() -> None:
+    trace = _relation_trace()
+    trace = replace(
+        trace,
+        header=replace(trace.header, input_sha256=REPLAY_INPUT_SHA256),
+    )
+    with pytest.raises(
+        OracleProtocolError,
+        match="^passive success requires a null input hash$",
+    ):
+        require_passive_success(trace)
+
+
+def test_require_passive_success_rejects_non_three_count_before_relations() -> None:
+    trace = _relation_trace()
+    trace = replace(
+        trace,
+        header=replace(trace.header, expected_input_count=2),
+    )
+    with pytest.raises(
+        OracleProtocolError,
+        match="^passive success requires expected count three$",
+    ):
+        require_passive_success(trace)
+
+
+def test_require_replay_success_rejects_error_before_input_relations() -> None:
+    trace = _read_replay_fixture()
+    trace = replace(
+        trace,
+        terminal=ErrorRecord(
+            input_index=1,
+            input="West",
+            code="capture_failed",
+            message="game-state capture failed",
+            settle_frames=0,
+            last_capture=trace.steps[0].capture,
+        ),
+        outcome="error",
+    )
+    with pytest.raises(
+        OracleProtocolError,
+        match="^replay success requires an end record$",
+    ):
+        oracle_protocol.require_replay_success(trace, REPLAY_INPUT_BYTES)
+
+
+def test_require_replay_success_rejects_missing_initial_before_input_relations(
+) -> None:
+    trace = replace(_read_replay_fixture(), initial=None)
+    with pytest.raises(
+        OracleProtocolError,
+        match="^replay success requires an initial record$",
+    ):
+        oracle_protocol.require_replay_success(trace, REPLAY_INPUT_BYTES)
+
+
+def test_main_passive_structural_only_rejects_supplied_input_without_reading(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "must-not-open.dem"
+    trace_path = _write_trace(tmp_path, "passive.ndjson", SUCCESS_TRACE_BYTES)
+
+    def fail_if_read(path: Path) -> bytes:
+        raise AssertionError(f"unexpected input read: {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_if_read)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "--structural-only",
+                "--input",
+                str(input_path),
+                str(trace_path),
+            ]
+        )
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage: oracle_trace_check.py" in captured.err
+    assert "--input is valid only for replay traces" in captured.err
+
+
+def test_main_replay_error_without_input_is_protocol_failure_without_read(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace_path = _write_trace(
+        tmp_path, "replay-error.ndjson", REPLAY_ERROR_TRACE_BYTES
+    )
+
+    def fail_if_read(path: Path) -> bytes:
+        raise AssertionError(f"unexpected input read: {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_if_read)
+    assert main([str(trace_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: replay success requires an end record\n"
+
+
+def test_main_replay_error_with_input_is_protocol_failure_without_read(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "must-not-open.dem"
+    trace_path = _write_trace(
+        tmp_path, "replay-error.ndjson", REPLAY_ERROR_TRACE_BYTES
+    )
+
+    def fail_if_read(path: Path) -> bytes:
+        raise AssertionError(f"unexpected input read: {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_if_read)
+    assert main(["--input", str(input_path), str(trace_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: replay success requires an end record\n"

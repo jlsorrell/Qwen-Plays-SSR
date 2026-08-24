@@ -37,11 +37,19 @@ internal static class CanonicalJson
         {
             WriteAscii(output, "{\"kind\":\"run\",\"schema_version\":1,\"run_id\":");
             WriteString(output, record.RunId);
-            WriteAscii(output, ",\"mode\":\"passive\",\"game_assembly_sha256\":");
+            WriteAscii(output, ",\"mode\":");
+            WriteString(output,
+                record.Mode == OracleMode.Passive ? "passive" : "replay");
+            WriteAscii(output, ",\"game_assembly_sha256\":");
             WriteString(output, record.GameAssemblySha256);
             WriteAscii(output, ",\"plugin_version\":");
             WriteString(output, record.PluginVersion);
-            WriteAscii(output, ",\"input_sha256\":null,\"expected_input_count\":");
+            WriteAscii(output, ",\"input_sha256\":");
+            if (record.InputSha256 == null)
+                WriteAscii(output, "null");
+            else
+                WriteString(output, record.InputSha256);
+            WriteAscii(output, ",\"expected_input_count\":");
             WriteInt(output, record.ExpectedInputCount);
             WriteAscii(output, ",\"started_at_utc\":");
             WriteTimestamp(output, record.StartedAtUtc);

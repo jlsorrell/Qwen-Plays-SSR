@@ -5,7 +5,7 @@ using System.Globalization;
 internal static class OracleProtocol
 {
     internal const int SchemaVersion = 1;
-    internal const string PluginVersion = "0.2.0";
+    internal const string PluginVersion = "0.3.0";
     internal const int ExpectedInputCount = 3;
     internal const int MaxSettleFrames = 600;
     internal const int MaxSettleSeconds = 30;
@@ -13,7 +13,7 @@ internal static class OracleProtocol
         "886660b51e0cc6358c8a2cd194d2fc7f2d26303c19dfb307d93b53a2fda1c564";
 }
 
-internal enum OracleMode { Off = 0, Passive = 1 }
+internal enum OracleMode { Off = 0, Passive = 1, Replay = 2 }
 internal enum OracleInput
 {
     North = 0,
@@ -56,6 +56,17 @@ internal static class OracleValidation
         Required(value, "gameAssemblySha256");
         if (value != OracleProtocol.ExpectedAssemblySha256)
             throw new ArgumentException("unexpected assembly SHA-256", "value");
+        return value;
+    }
+
+    internal static string Sha256(string value, string name)
+    {
+        Required(value, name);
+        if (value.Length != 64 || !IsLowerHex(value))
+        {
+            throw new ArgumentException(
+                "SHA-256 must be 64 lowercase hex digits", name);
+        }
         return value;
     }
 
@@ -224,15 +235,48 @@ internal sealed class RunRecord
         string runId,
         string gameAssemblySha256,
         DateTime startedAtUtc)
+        : this(
+            runId,
+            OracleMode.Passive,
+            gameAssemblySha256,
+            null,
+            OracleProtocol.ExpectedInputCount,
+            startedAtUtc)
     {
+    }
+
+    internal RunRecord(
+        string runId,
+        OracleMode mode,
+        string gameAssemblySha256,
+        string inputSha256,
+        int expectedInputCount,
+        DateTime startedAtUtc)
+    {
+        if (mode == OracleMode.Passive)
+        {
+            if (inputSha256 != null
+                || expectedInputCount != OracleProtocol.ExpectedInputCount)
+            {
+                throw new ArgumentException("invalid passive Run relation");
+            }
+        }
+        else if (mode == OracleMode.Replay)
+        {
+            OracleValidation.Sha256(inputSha256, "inputSha256");
+            if (expectedInputCount <= 0)
+                throw new ArgumentOutOfRangeException("expectedInputCount");
+        }
+        else
+            throw new ArgumentOutOfRangeException("mode");
         SchemaVersion = OracleProtocol.SchemaVersion;
         RunId = OracleValidation.RunId(runId);
-        Mode = OracleMode.Passive;
+        Mode = mode;
         GameAssemblySha256 = OracleValidation.AssemblySha256(
             gameAssemblySha256);
         PluginVersion = OracleProtocol.PluginVersion;
-        InputSha256 = null;
-        ExpectedInputCount = OracleProtocol.ExpectedInputCount;
+        InputSha256 = inputSha256;
+        ExpectedInputCount = expectedInputCount;
         StartedAtUtc = OracleValidation.Utc(startedAtUtc, "startedAtUtc");
     }
 
@@ -303,7 +347,7 @@ internal sealed class EndRecord
 {
     internal EndRecord(string runId, int inputCount, DateTime finishedAtUtc)
     {
-        if (inputCount != OracleProtocol.ExpectedInputCount)
+        if (inputCount <= 0)
             throw new ArgumentOutOfRangeException("inputCount");
         SchemaVersion = OracleProtocol.SchemaVersion;
         RunId = OracleValidation.RunId(runId);
@@ -394,7 +438,9 @@ internal static class OracleErrors
             { "initial_settle_timeout", new OracleError("initial_settle_timeout", "initial capture did not settle") },
             { "settle_timeout", new OracleError("settle_timeout", "input did not settle") },
             { "state_replaced", new OracleError("state_replaced", "game state identity changed") },
-            { "save_path_changed", new OracleError("save_path_changed", "isolated save path changed") }
+            { "save_path_changed", new OracleError("save_path_changed", "isolated save path changed") },
+            { "initial_state_mismatch", new OracleError("initial_state_mismatch", "initial replay state did not match the configured signature") },
+            { "replay_alignment_failed", new OracleError("replay_alignment_failed", "replay input did not traverse the native call path") }
         };
 
     internal static OracleError ForCode(string code)

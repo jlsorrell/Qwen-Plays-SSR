@@ -56,9 +56,9 @@ internal static class PassiveDriverInitialTests
         Check.Throws<ArgumentOutOfRangeException>(
             delegate
             {
-                new PassiveDriver(sink, reporter, 2, 600, 30.0);
+                new PassiveDriver(sink, reporter, 0, 600, 30.0);
             },
-            "wrong expected count rejected");
+            "zero expected count rejected");
         Check.Throws<ArgumentOutOfRangeException>(
             delegate
             {
