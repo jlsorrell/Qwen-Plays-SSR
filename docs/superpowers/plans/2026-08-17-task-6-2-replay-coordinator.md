@@ -71,6 +71,30 @@ schema-v1 NDJSON; macOS process groups and no-follow filesystem probes.
 - The live gate never rewrites that immutable implementation commit and never
   commits `.dem`, traces, saves, binaries, logs, or operational evidence.
 
+### Fresh-gate identity-contract prerequisite
+
+Every future gate root must pass the tracked gate-id contract checker before
+its helper hashes, source manifest, runbook, or approval packet are frozen.
+Run this from the repository root, replacing `<fresh-gate-root>` with the new
+root only:
+
+```bash
+/Users/jlsor/Documents/Research/SSR/.venv/bin/python tools/check_replay_gate_id_contract.py <fresh-gate-root>/gate_command_once.py <fresh-gate-root>/gate_live_monitor.py
+```
+
+Required output:
+
+```text
+gate_id_contract=matched pattern=[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z
+```
+
+The recorder's literal `SAFE_ID` regex is canonical for `gate_id`. The fresh
+monitor copy must assign that same literal regex to `_SAFE_ID`, including
+mixed-case identifiers such as `gate-ztIoOAH2`. A mismatch stops preparation.
+Correct only the unfrozen fresh copy, rerun its helper tests and this checker,
+then freeze new hashes. Never repair or reuse an older prepared, consumed, or
+sealed gate root.
+
 ## File map
 
 ### Core production
